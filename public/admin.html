@@ -1068,8 +1068,9 @@
               window.location = "/index.html";
               return;
             }
-            localStorage.removeItem("sas_session");
-            localStorage.removeItem("sas_user");
+            // Синхронизируем обе сессии
+            localStorage.setItem("sas_session", session);
+            localStorage.setItem("sas_user", JSON.stringify(res.user));
             showAdmin(res.user);
           } else {
             localStorage.removeItem("admin_session");
@@ -1106,10 +1107,11 @@
             return;
           }
 
-          localStorage.removeItem("sas_session");
-          localStorage.removeItem("sas_user");
+          // Сохраняем обе сессии — и admin и sas
           session = data.token;
           localStorage.setItem("admin_session", session);
+          localStorage.setItem("sas_session", session);
+          localStorage.setItem("sas_user", JSON.stringify(data.user));
           showAdmin(data.user);
         } catch (e) {
           document.getElementById("loginErr").textContent = "Blad polaczenia";

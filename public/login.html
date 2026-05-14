@@ -154,7 +154,12 @@
         fetch("/admin/me", { headers: { "x-session": session } })
           .then((r) => r.json())
           .then((d) => {
-            if (d.ok) redirect(d.user);
+            if (d.ok) {
+              if (d.user.is_admin) {
+                localStorage.setItem("admin_session", session);
+              }
+              redirect(d.user);
+            }
           })
           .catch(() => {});
       }
@@ -182,11 +187,17 @@
               "Nieprawidlowy login lub haslo";
             return;
           }
-          localStorage.removeItem("sas_session");
-          localStorage.removeItem("sas_user");
-          localStorage.removeItem("admin_session");
+          // Сохраняем sas_session всегда
           localStorage.setItem("sas_session", data.token);
           localStorage.setItem("sas_user", JSON.stringify(data.user));
+
+          // Если админ — сохраняем и admin_session
+          if (data.user.is_admin) {
+            localStorage.setItem("admin_session", data.token);
+          } else {
+            localStorage.removeItem("admin_session");
+          }
+
           redirect(data.user);
         } catch (e) {
           document.getElementById("err").textContent =
@@ -195,8 +206,6 @@
       }
 
       function redirect(user) {
-        // Очищаем все старые сессии
-        localStorage.removeItem("admin_session");
         if (user.is_admin) {
           window.location = "/admin.html";
         } else {

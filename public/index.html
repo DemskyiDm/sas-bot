@@ -1,0 +1,2308 @@
+<!DOCTYPE html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SAS Logistic — Panel</title>
+    <style>
+      :root {
+        --bg: #0f1117;
+        --surface: #161b27;
+        --surface2: #1e2535;
+        --border: #2a3347;
+        --accent: #3b82f6;
+        --accent2: #f59e0b;
+        --green: #22c55e;
+        --red: #ef4444;
+        --blue: #60a5fa;
+        --purple: #a78bfa;
+        --orange: #fb923c;
+        --text: #e2e8f0;
+        --text2: #94a3b8;
+        --text3: #4b5563;
+        --mono: "Courier New", monospace;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        display: flex;
+      }
+
+      .sidebar {
+        width: 210px;
+        min-height: 100vh;
+        background: var(--surface);
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0;
+      }
+      .logo {
+        padding: 18px 16px 14px;
+        border-bottom: 1px solid var(--border);
+      }
+      .logo-tag {
+        font-family: var(--mono);
+        font-size: 9px;
+        color: var(--accent);
+        letter-spacing: 2px;
+        margin-bottom: 3px;
+      }
+      .logo-name {
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      .nav {
+        padding: 12px 8px;
+        flex: 1;
+      }
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        color: var(--text2);
+        margin-bottom: 2px;
+        transition: all 0.15s;
+        user-select: none;
+      }
+      .nav-item:hover {
+        background: var(--surface2);
+        color: var(--text);
+      }
+      .nav-item.active {
+        background: rgba(59, 130, 246, 0.12);
+        color: var(--accent);
+      }
+
+      .main {
+        margin-left: 210px;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+      }
+      .topbar {
+        height: 50px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        padding: 0 20px;
+        gap: 12px;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+      }
+      .topbar-title {
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .topbar-right {
+        margin-left: auto;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+
+      select,
+      input[type="text"] {
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        color: var(--text);
+        font-size: 12px;
+        padding: 5px 10px;
+        border-radius: 5px;
+        outline: none;
+      }
+      select:focus,
+      input:focus {
+        border-color: var(--accent);
+      }
+
+      .btn {
+        padding: 6px 14px;
+        border-radius: 5px;
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.15s;
+      }
+      .btn-primary {
+        background: var(--accent);
+        color: #fff;
+      }
+      .btn-primary:hover {
+        background: #2563eb;
+      }
+      .btn-ghost {
+        background: transparent;
+        color: var(--text2);
+        border: 1px solid var(--border);
+      }
+      .btn-ghost:hover {
+        background: var(--surface2);
+        color: var(--text);
+      }
+      .btn-sm {
+        padding: 3px 10px;
+        font-size: 11px;
+      }
+      .btn-red {
+        background: rgba(239, 68, 68, 0.1);
+        color: var(--red);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+      }
+
+      .content {
+        padding: 18px 20px;
+        flex: 1;
+      }
+
+      .stats-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+      .stat-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px 16px;
+        position: relative;
+        overflow: hidden;
+      }
+      .stat-card::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 2px;
+      }
+      .stat-card.blue::before {
+        background: var(--blue);
+      }
+      .stat-card.green::before {
+        background: var(--green);
+      }
+      .stat-card.red::before {
+        background: var(--red);
+      }
+      .stat-card.orange::before {
+        background: var(--orange);
+      }
+      .stat-label {
+        font-size: 10px;
+        color: var(--text2);
+        font-family: var(--mono);
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        margin-bottom: 6px;
+      }
+      .stat-value {
+        font-size: 28px;
+        font-family: var(--mono);
+        font-weight: 700;
+        line-height: 1;
+        margin-bottom: 3px;
+      }
+      .stat-card.blue .stat-value {
+        color: var(--blue);
+      }
+      .stat-card.green .stat-value {
+        color: var(--green);
+      }
+      .stat-card.red .stat-value {
+        color: var(--red);
+      }
+      .stat-card.orange .stat-value {
+        color: var(--orange);
+      }
+      .stat-sub {
+        font-size: 11px;
+        color: var(--text3);
+      }
+
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+        margin-bottom: 16px;
+      }
+
+      .card-count {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text2);
+        background: var(--surface2);
+        padding: 2px 8px;
+        border-radius: 4px;
+      }
+      .card-actions {
+        margin-left: auto;
+        display: flex;
+        gap: 8px;
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      th {
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 500;
+        color: var(--text3);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        padding: 9px 14px;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface2);
+        white-space: nowrap;
+      }
+      td {
+        padding: 8px 14px;
+        border-bottom: 1px solid rgba(42, 51, 71, 0.5);
+        vertical-align: middle;
+      }
+      tr:last-child td {
+        border-bottom: none;
+      }
+      tr:hover td {
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .worker-name {
+        font-weight: 500;
+        font-size: 13px;
+      }
+      .worker-id {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--text3);
+        margin-top: 1px;
+      }
+
+      .day-cells {
+        display: flex;
+        gap: 2px;
+        flex-wrap: nowrap;
+      }
+      .day-cell {
+        width: 20px;
+        height: 20px;
+        border-radius: 3px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--mono);
+        font-size: 8px;
+        font-weight: 600;
+        flex-shrink: 0;
+        cursor: pointer;
+        transition: transform 0.1s;
+        position: relative;
+      }
+      .day-cell:hover {
+        transform: scale(1.25);
+        z-index: 5;
+      }
+      .day-cell.filled {
+        background: rgba(34, 197, 94, 0.2);
+        color: var(--green);
+      }
+      .day-cell.empty {
+        background: rgba(239, 68, 68, 0.15);
+        color: var(--red);
+      }
+      .day-cell.wz {
+        background: rgba(232, 158, 221, 0.25);
+        color: #e49edd;
+      }
+      .day-cell.url {
+        background: rgba(147, 196, 125, 0.25);
+        color: #93c47d;
+      }
+      .day-cell.l4 {
+        background: rgba(159, 197, 232, 0.25);
+        color: #9fc5e8;
+      }
+      .day-cell.nn {
+        background: rgba(224, 102, 102, 0.25);
+        color: #e06666;
+      }
+      .day-cell.black {
+        background: #1a1a1a;
+        color: var(--text3);
+      }
+      .day-cell.future {
+        opacity: 0.2;
+        background: transparent;
+        color: var(--text3);
+      }
+
+      .hours-sum {
+        font-family: var(--mono);
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--accent2);
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-family: var(--mono);
+      }
+      .badge-green {
+        background: rgba(34, 197, 94, 0.1);
+        color: var(--green);
+      }
+      .badge-red {
+        background: rgba(239, 68, 68, 0.1);
+        color: var(--red);
+      }
+      .badge-orange {
+        background: rgba(251, 146, 60, 0.1);
+        color: var(--orange);
+      }
+      .badge-blue {
+        background: rgba(96, 165, 250, 0.1);
+        color: var(--blue);
+      }
+      .badge-dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+
+      .missing-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 12px;
+        border-radius: 6px;
+        background: var(--surface2);
+        margin: 4px 14px;
+        border-left: 3px solid var(--red);
+      }
+      .missing-item.warn {
+        border-left-color: var(--orange);
+      }
+      .missing-name {
+        flex: 1;
+        font-size: 12px;
+        font-weight: 500;
+      }
+      .missing-days {
+        font-size: 10px;
+        color: var(--text2);
+        font-family: var(--mono);
+        margin-top: 2px;
+      }
+      .missing-count {
+        font-family: var(--mono);
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--red);
+      }
+      .missing-item.warn .missing-count {
+        color: var(--orange);
+      }
+
+      .facility-tabs {
+        display: flex;
+        gap: 4px;
+        overflow-x: auto;
+      }
+      .ftab {
+        padding: 6px 14px 10px;
+        font-size: 12px;
+        color: var(--text2);
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        white-space: nowrap;
+        transition: all 0.15s;
+      }
+      .ftab:hover {
+        color: var(--text);
+      }
+      .ftab.active {
+        color: var(--accent);
+        border-bottom-color: var(--accent);
+      }
+
+      .leg {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 10px;
+        color: var(--text2);
+        font-family: var(--mono);
+      }
+      .leg-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+      }
+
+      .loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 40px;
+        color: var(--text2);
+        font-size: 13px;
+      }
+      .spinner {
+        width: 20px;
+        height: 20px;
+        border: 2px solid var(--border);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-right: 10px;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 100;
+        display: none;
+        align-items: center;
+        justify-content: center;
+      }
+      .modal-overlay.open {
+        display: flex;
+      }
+      .modal {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 20px;
+        width: 320px;
+        max-width: 90vw;
+      }
+      .modal-title {
+        font-size: 14px;
+        font-weight: 600;
+        margin-bottom: 16px;
+      }
+      .modal-field {
+        margin-bottom: 12px;
+      }
+      .modal-label {
+        font-size: 11px;
+        color: var(--text2);
+        font-family: var(--mono);
+        margin-bottom: 5px;
+      }
+      .modal-input {
+        width: 100%;
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        color: var(--text);
+        padding: 7px 10px;
+        border-radius: 5px;
+        font-size: 13px;
+        outline: none;
+      }
+      .modal-input:focus {
+        border-color: var(--accent);
+      }
+      .modal-btns {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        margin-top: 16px;
+      }
+      .modal-abs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .abs-btn {
+        padding: 8px;
+        border-radius: 5px;
+        border: 1px solid var(--border);
+        background: var(--surface2);
+        color: var(--text);
+        cursor: pointer;
+        font-size: 12px;
+        text-align: center;
+        transition: all 0.15s;
+      }
+      .abs-btn:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      ::-webkit-scrollbar {
+        width: 4px;
+        height: 4px;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 2px;
+      }
+      .pagination {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 12px;
+        border-top: 1px solid var(--border);
+      }
+      .page-btn {
+        padding: 4px 10px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        background: var(--surface2);
+        color: var(--text2);
+        cursor: pointer;
+        font-size: 12px;
+        font-family: var(--mono);
+        transition: all 0.15s;
+      }
+      .page-btn:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .page-btn.active {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+      }
+      .page-btn:disabled {
+        opacity: 0.3;
+        cursor: default;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+      <div class="logo">
+        <div class="logo-tag">SAS LOGISTIC</div>
+        <div class="logo-name">Panel Koordynatora</div>
+      </div>
+      <div class="nav">
+        <div class="nav-item active" onclick="showPage('hours')">
+          📊 Godziny
+        </div>
+        <div class="nav-item" onclick="showPage('missing')">
+          ⚠️ Braki
+          <span
+            id="missingBadge"
+            style="
+              margin-left: auto;
+              background: var(--red);
+              color: #fff;
+              font-size: 9px;
+              padding: 1px 6px;
+              border-radius: 10px;
+              display: none;
+            "
+          ></span>
+        </div>
+        <div class="nav-item" onclick="showPage('advances')">💰 Zaliczki</div>
+        <div class="nav-item" onclick="showPage('workers')">👥 Pracownicy</div>
+        <div class="nav-item" onclick="showPage('history')">📋 Historia</div>
+        <div
+          id="adminLink"
+          class="nav-item"
+          onclick="window.location='/admin.html'"
+          style="display: none"
+        >
+          ⚙️ Admin panel
+        </div>
+      </div>
+      <div
+        style="
+          padding: 12px 10px;
+          border-top: 1px solid var(--border);
+          margin-top: auto;
+        "
+      >
+        <div
+          style="
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 10px;
+          "
+        >
+          <div
+            id="userAvatar"
+            style="
+              width: 28px;
+              height: 28px;
+              background: var(--accent);
+              border-radius: 50%;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              font-size: 11px;
+              font-weight: 700;
+              flex-shrink: 0;
+            "
+          >
+            D
+          </div>
+          <div>
+            <div id="userName" style="font-size: 12px; font-weight: 500">—</div>
+            <div
+              id="userRole"
+              style="
+                font-size: 10px;
+                color: var(--text2);
+                font-family: var(--mono);
+              "
+            >
+              koordynator
+            </div>
+          </div>
+        </div>
+        <button
+          onclick="doLogout()"
+          style="
+            width: 100%;
+            margin-top: 4px;
+            padding: 7px;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text2);
+            border-radius: 5px;
+            font-size: 12px;
+            cursor: pointer;
+          "
+        >
+          Wyloguj
+        </button>
+      </div>
+    </div>
+
+    <!-- MAIN -->
+    <div class="main">
+      <div class="topbar">
+        <span class="topbar-title" id="pageTitle">Przegląd godzin</span>
+        <div class="topbar-right">
+          <select id="monthSelect" onchange="loadAll()"></select>
+          <select id="facilitySelect" onchange="loadAll()">
+            <option value="">Wszystkie obiekty</option>
+          </select>
+          <button class="btn btn-primary" onclick="sendReminders()">
+            📨 Przypomnienia
+          </button>
+        </div>
+      </div>
+
+      <div class="content">
+        <!-- STATS -->
+        <div class="stats-row" id="statsRow">
+          <div class="stat-card blue">
+            <div class="stat-label">Pracownicy</div>
+            <div class="stat-value" id="statWorkers">—</div>
+            <div class="stat-sub">aktywnych</div>
+          </div>
+          <div class="stat-card green">
+            <div class="stat-label">Godziny</div>
+            <div class="stat-value" id="statHours">—</div>
+            <div class="stat-sub">w tym miesiacu</div>
+          </div>
+          <div class="stat-card red">
+            <div class="stat-label">Braki</div>
+            <div class="stat-value" id="statMissing">—</div>
+            <div class="stat-sub">osob z brakami</div>
+          </div>
+          <div class="stat-card orange">
+            <div class="stat-label">Zaliczki</div>
+            <div class="stat-value" id="statAdvances">—</div>
+            <div class="stat-sub">oczekujacych</div>
+          </div>
+        </div>
+
+        <!-- PAGE: HOURS -->
+        <div id="pageHours">
+          <div class="card">
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                border-bottom: 1px solid var(--border);
+              "
+            >
+              <div id="facilityTabs" style="flex: 1"></div>
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+                  padding: 0 14px;
+                  white-space: nowrap;
+                "
+              >
+                <span style="font-size: 11px; color: var(--text3)"
+                  >Zapisów:</span
+                >
+                <select
+                  id="hoursPageSize"
+                  onchange="changeHoursPageSize()"
+                  style="width: 70px"
+                >
+                  <option value="10">10</option>
+                  <option value="20">20</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                  <option value="99999">Wszystkie</option>
+                </select>
+              </div>
+            </div>
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 8px 14px;
+                border-bottom: 1px solid var(--border);
+              "
+            >
+              <div style="display: flex; align-items: center; gap: 8px">
+                <span style="font-size: 13px; font-weight: 600"
+                  >Lista pracownikow</span
+                >
+                <span class="card-count" id="workerCount">0 os.</span>
+                <input
+                  type="text"
+                  id="searchInput"
+                  placeholder="Szukaj..."
+                  style="width: 130px; margin-left: 4px"
+                  oninput="filterTable()"
+                />
+              </div>
+              <div style="display: flex; gap: 12px; align-items: center">
+                <div class="leg">
+                  <div
+                    class="leg-dot"
+                    style="background: rgba(34, 197, 94, 0.4)"
+                  ></div>
+                  Godziny
+                </div>
+                <div class="leg">
+                  <div
+                    class="leg-dot"
+                    style="background: rgba(239, 68, 68, 0.3)"
+                  ></div>
+                  Brak
+                </div>
+                <div class="leg">
+                  <div
+                    class="leg-dot"
+                    style="background: rgba(232, 158, 221, 0.4)"
+                  ></div>
+                  WZ
+                </div>
+                <div class="leg">
+                  <div
+                    class="leg-dot"
+                    style="background: rgba(147, 196, 125, 0.4)"
+                  ></div>
+                  URL
+                </div>
+                <div class="leg">
+                  <div
+                    class="leg-dot"
+                    style="background: rgba(159, 197, 232, 0.4)"
+                  ></div>
+                  L4
+                </div>
+                <div class="leg">
+                  <div
+                    class="leg-dot"
+                    style="background: rgba(224, 102, 102, 0.4)"
+                  ></div>
+                  NN
+                </div>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Pracownik</th>
+                    <th>Status</th>
+                    <th style="min-width: 360px">Dni miesiaca</th>
+                    <th>Suma</th>
+                  </tr>
+                </thead>
+                <tbody id="workerTable">
+                  <tr>
+                    <td colspan="4">
+                      <div class="loading">
+                        <div class="spinner"></div>
+                        Ladowanie...
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div id="paginationHours"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PAGE: MISSING -->
+        <div id="pageMissing" style="display: none">
+          <div class="card">
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                padding: 14px 16px;
+                border-bottom: 1px solid var(--border);
+              "
+            >
+              <span style="font-size: 13px; font-weight: 600"
+                >Braki godzin</span
+              >
+              <span
+                class="card-count"
+                style="margin-left: 10px"
+                id="missingCount"
+                >0 os.</span
+              >
+              <div class="card-actions">
+                <button
+                  class="btn btn-primary btn-sm"
+                  onclick="sendReminders()"
+                >
+                  Wyslij wszystkim
+                </button>
+              </div>
+            </div>
+            <div id="missingList" style="padding-bottom: 12px">
+              <div class="loading">
+                <div class="spinner"></div>
+                Ladowanie...
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PAGE: ADVANCES -->
+        <div id="pageAdvances" style="display: none">
+          <div class="card">
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                padding: 14px 16px;
+                border-bottom: 1px solid var(--border);
+              "
+            >
+              <span style="font-size: 13px; font-weight: 600">Zaliczki</span>
+              <span
+                class="card-count"
+                style="margin-left: 10px"
+                id="advancesCount"
+                >0</span
+              >
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Pracownik</th>
+                    <th>Login</th>
+                    <th>Data wniosku</th>
+                    <th>Wyplata</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="advancesTable">
+                  <tr>
+                    <td colspan="5">
+                      <div class="loading">
+                        <div class="spinner"></div>
+                        Ladowanie...
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- PAGE: WORKERS -->
+        <div id="pageWorkers" style="display: none">
+          <div class="card">
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                padding: 14px 16px;
+                border-bottom: 1px solid var(--border);
+                gap: 10px;
+                flex-wrap: wrap;
+              "
+            >
+              <span style="font-size: 13px; font-weight: 600">Pracownicy</span>
+              <span class="card-count" id="workersCount">0</span>
+              <div
+                style="
+                  margin-left: auto;
+                  display: flex;
+                  gap: 8px;
+                  flex-wrap: wrap;
+                  align-items: center;
+                "
+              >
+                <input
+                  type="text"
+                  id="workersSearch"
+                  placeholder="Szukaj pracownika..."
+                  style="width: 180px"
+                  oninput="filterWorkers()"
+                />
+                <select
+                  id="workersFacilityFilter"
+                  onchange="filterWorkers()"
+                  style="width: 200px"
+                >
+                  <option value="">Wszystkie obiekty</option>
+                </select>
+                <select id="workersStatusFilter" onchange="filterWorkers()">
+                  <option value="">Wszystkie statusy</option>
+                  <option value="pracuje">Pracuje</option>
+                  <option value="zwolniony">Zwolniony</option>
+                  <option value="przeniesiony">Przeniesiony</option>
+                </select>
+                <select
+                  id="workersPageSize"
+                  onchange="changeWorkersPageSize()"
+                  style="width: 80px"
+                >
+                  <option value="10">10</option>
+                  <option value="20">20</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                  <option value="99999">Wszystkie</option>
+                </select>
+                <button
+                  class="btn btn-primary btn-sm"
+                  onclick="openWorkerModal(null)"
+                >
+                  + Dodaj
+                </button>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Imie i Nazwisko</th>
+                    <th>Obiekt</th>
+                    <th>Status</th>
+                    <th>Telegram</th>
+                    <th>BHP</th>
+                    <th>Akcje</th>
+                  </tr>
+                </thead>
+                <tbody id="workersTable">
+                  <tr>
+                    <td colspan="7">
+                      <div class="loading">
+                        <div class="spinner"></div>
+                        Ladowanie...
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div id="paginationWorkers"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PAGE: HISTORY -->
+        <div id="pageHistory" style="display: none">
+          <div class="card">
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                padding: 14px 16px;
+                border-bottom: 1px solid var(--border);
+                gap: 10px;
+                flex-wrap: wrap;
+              "
+            >
+              <span style="font-size: 13px; font-weight: 600"
+                >Historia pracownikow</span
+              >
+              <span class="card-count" id="historyCount">0</span>
+              <div
+                style="
+                  margin-left: auto;
+                  display: flex;
+                  gap: 8px;
+                  flex-wrap: wrap;
+                "
+              >
+                <input
+                  type="text"
+                  id="historySearch"
+                  placeholder="Szukaj pracownika..."
+                  style="width: 180px"
+                  oninput="filterHistory()"
+                />
+                <select
+                  id="historyFacilityFilter"
+                  onchange="filterHistory()"
+                  style="width: 200px"
+                >
+                  <option value="">Wszystkie obiekty</option>
+                </select>
+                <select id="historyStatusFilter" onchange="filterHistory()">
+                  <option value="">Wszystkie statusy</option>
+                  <option value="pracuje">Pracuje</option>
+                  <option value="zwolniony">Zwolniony</option>
+                  <option value="przeniesiony">Przeniesiony</option>
+                </select>
+                <select
+                  id="historyPageSize"
+                  onchange="changeHistoryPageSize()"
+                  style="width: 80px"
+                >
+                  <option value="10">10</option>
+                  <option value="20">20</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                  <option value="99999">Wszystkie</option>
+                </select>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Pracownik</th>
+                    <th>Obiekt</th>
+                    <th>Status</th>
+                    <th>BHP</th>
+                    <th>Ostatni dzień</th>
+                    <th>Import</th>
+                  </tr>
+                </thead>
+                <tbody id="historyTable">
+                  <tr>
+                    <td colspan="6">
+                      <div class="loading">
+                        <div class="spinner"></div>
+                        Ladowanie...
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div id="paginationHistory"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- EDIT MODAL -->
+    <div class="modal-overlay" id="editModal">
+      <div class="modal">
+        <div class="modal-title" id="modalTitle">Edytuj godziny</div>
+        <div class="modal-field">
+          <div class="modal-label">DATA</div>
+          <input class="modal-input" id="modalDate" type="date" readonly />
+        </div>
+        <div class="modal-field">
+          <div class="modal-label">GODZINY (lub wybierz nieobecnosc)</div>
+          <input
+            class="modal-input"
+            id="modalHours"
+            type="number"
+            min="0"
+            max="13"
+            step="0.25"
+            placeholder="np. 8"
+          />
+          <div class="modal-abs">
+            <div class="abs-btn" onclick="setAbs('WZ')">WZ — Dzien wolny</div>
+            <div class="abs-btn" onclick="setAbs('URL')">URL — Urlop</div>
+            <div class="abs-btn" onclick="setAbs('L4')">L4 — Zwolnienie</div>
+            <div class="abs-btn" onclick="setAbs('NN')">NN — Nieobecnosc</div>
+          </div>
+        </div>
+        <div class="modal-btns">
+          <button class="btn btn-ghost" onclick="closeModal()">Anuluj</button>
+          <button class="btn btn-primary" onclick="saveHours()">Zapisz</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- WORKER MODAL -->
+    <div class="modal-overlay" id="workerModal">
+      <div class="modal" style="width: 400px">
+        <div class="modal-title" id="workerModalTitle">Nowy pracownik</div>
+        <input type="hidden" id="wm_id" />
+        <div class="modal-field">
+          <div class="modal-label">LOGIN (ID z paszportu) *</div>
+          <input class="modal-input" id="wm_login" placeholder="np. GG283002" />
+        </div>
+        <div class="modal-field">
+          <div class="modal-label">IMIE I NAZWISKO *</div>
+          <input
+            class="modal-input"
+            id="wm_name"
+            placeholder="np. Kowalenko Oleksandr"
+          />
+        </div>
+        <div class="modal-field">
+          <div class="modal-label">OBIEKT</div>
+          <select class="modal-input" id="wm_facility"></select>
+        </div>
+        <div class="modal-field">
+          <div class="modal-label">STATUS</div>
+          <select class="modal-input" id="wm_status">
+            <option value="pracuje">Pracuje</option>
+            <option value="zwolniony">Zwolniony</option>
+            <option value="przeniesiony">Przeniesiony</option>
+          </select>
+        </div>
+        <div class="modal-field">
+          <div class="modal-label">DATA ROZPOCZECIA (BHP)</div>
+          <input class="modal-input" id="wm_bhp" type="date" />
+        </div>
+        <div
+          style="color: var(--red); font-size: 11px; margin-top: 4px"
+          id="wm_err"
+        ></div>
+        <div class="modal-btns">
+          <button class="btn btn-ghost" onclick="closeWorkerModal()">
+            Anuluj
+          </button>
+          <button class="btn btn-primary" onclick="saveWorker()">Zapisz</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- HISTORY MODAL -->
+    <div class="modal-overlay" id="historyModal">
+      <div
+        class="modal"
+        style="
+          width: 600px;
+          max-height: 80vh;
+          display: flex;
+          flex-direction: column;
+        "
+      >
+        <div
+          style="
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+          "
+        >
+          <div class="modal-title" id="historyModalTitle" style="margin: 0">
+            Historia pracownika
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="closeHistoryModal()">
+            ✕
+          </button>
+        </div>
+        <div id="historyContent" style="overflow-y: auto; flex: 1">
+          <div class="loading">
+            <div class="spinner"></div>
+            Ladowanie...
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let pageSizeWorkers = 10;
+      let pageSizeHistory = 10;
+      let pageSizeHours = 10;
+
+      function paginate(items, page, size) {
+        size = size || 10;
+        const total = items.length;
+        const pages = Math.ceil(total / size) || 1;
+        const start = (page - 1) * size;
+        const slice = items.slice(start, start + size);
+        return { slice, pages, total };
+      }
+
+      function renderPagination(
+        containerId,
+        currentPage,
+        totalPages,
+        onPageChange
+      ) {
+        if (totalPages <= 1) {
+          document.getElementById(containerId).innerHTML = "";
+          return;
+        }
+
+        const maxVisible = 5;
+        let start = Math.max(1, currentPage - 2);
+        let end = Math.min(totalPages, start + maxVisible - 1);
+        if (end - start < maxVisible - 1)
+          start = Math.max(1, end - maxVisible + 1);
+
+        let html = `
+    <div class="pagination">
+      <button class="page-btn" ${
+        currentPage === 1 ? "disabled" : ""
+      } onclick="${onPageChange}(${currentPage - 1})">←</button>`;
+
+        if (start > 1)
+          html += `<button class="page-btn" onclick="${onPageChange}(1)">1</button>${
+            start > 2 ? '<span style="color:var(--text3)">...</span>' : ""
+          }`;
+
+        for (let i = start; i <= end; i++) {
+          html += `<button class="page-btn ${
+            i === currentPage ? "active" : ""
+          }" onclick="${onPageChange}(${i})">${i}</button>`;
+        }
+
+        if (end < totalPages)
+          html += `${
+            end < totalPages - 1
+              ? '<span style="color:var(--text3)">...</span>'
+              : ""
+          }<button class="page-btn" onclick="${onPageChange}(${totalPages})">${totalPages}</button>`;
+
+        html += `
+      <button class="page-btn" ${
+        currentPage === totalPages ? "disabled" : ""
+      } onclick="${onPageChange}(${currentPage + 1})">→</button>
+      <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:8px">${currentPage}/${totalPages}</span>
+    </div>`;
+
+        document.getElementById(containerId).innerHTML = html;
+      }
+      // ── STATE ────────────────────────────────────────────────────
+      let allWorkers = [];
+      let facilities = [];
+      let currentFacility = "";
+      let editState = {};
+      let currentPage = "hours";
+      let SESSION = localStorage.getItem("sas_session");
+      let CURRENT_USER = JSON.parse(localStorage.getItem("sas_user") || "null");
+
+      // ── AUTH CHECK ────────────────────────────────────────────────
+      window.addEventListener("DOMContentLoaded", async () => {
+        if (!SESSION) {
+          window.location = "/login.html";
+          return;
+        }
+        try {
+          const res = await fetch("/admin/me", {
+            headers: { "x-session": SESSION },
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            window.location = "/login.html";
+            return;
+          }
+          CURRENT_USER = data.user;
+          localStorage.setItem("sas_user", JSON.stringify(CURRENT_USER));
+          document.getElementById("userName").textContent =
+            CURRENT_USER.full_name;
+          document.getElementById("userRole").textContent = CURRENT_USER.role;
+          document.getElementById("userAvatar").textContent =
+            CURRENT_USER.full_name.charAt(0).toUpperCase();
+          if (CURRENT_USER.is_admin)
+            document.getElementById("adminLink").style.display = "";
+        } catch (e) {
+          window.location = "/login.html";
+          return;
+        }
+        initMonthSelect();
+        loadFacilities();
+        loadAll();
+      });
+
+      function doLogout() {
+        fetch("/admin/logout", {
+          method: "POST",
+          headers: { "x-session": SESSION },
+        }).catch(() => {});
+        localStorage.removeItem("sas_session");
+        localStorage.removeItem("sas_user");
+        window.location = "/login.html";
+      }
+
+      async function apiFetch(url, options) {
+        const opts = options || {};
+        opts.headers = opts.headers || {};
+        opts.headers["x-session"] = SESSION;
+        const res = await fetch(url, opts);
+        if (res.status === 401) {
+          window.location = "/login.html";
+          return null;
+        }
+        return res.json();
+      }
+
+      function initMonthSelect() {
+        const sel = document.getElementById("monthSelect");
+        const now = new Date();
+        for (let i = 0; i < 6; i++) {
+          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+          const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+            2,
+            "0"
+          )}`;
+          const label = d.toLocaleString("pl", {
+            month: "long",
+            year: "numeric",
+          });
+          const opt = document.createElement("option");
+          opt.value = val;
+          opt.textContent = label;
+          if (i === 0) opt.selected = true;
+          sel.appendChild(opt);
+        }
+      }
+
+      // ── NAVIGATION ───────────────────────────────────────────────
+      function showPage(page) {
+        currentPage = page;
+        ["hours", "missing", "advances", "workers", "history"].forEach((p) => {
+          document.getElementById(
+            "page" + p.charAt(0).toUpperCase() + p.slice(1)
+          ).style.display = p === page ? "" : "none";
+        });
+        document.querySelectorAll(".nav-item").forEach((el, i) => {
+          el.classList.toggle(
+            "active",
+            ["hours", "missing", "advances", "workers", "history"][i] === page
+          );
+        });
+        const titles = {
+          hours: "Przeglad godzin",
+          missing: "Braki godzin",
+          advances: "Zaliczki",
+          workers: "Pracownicy",
+          history: "Historia pracownikow",
+        };
+        document.getElementById("pageTitle").textContent = titles[page];
+        loadPage(page);
+      }
+
+      async function loadAll() {
+        loadStats();
+        loadPage(currentPage);
+      }
+
+      async function loadPage(page) {
+        if (page === "hours") loadWorkers();
+        if (page === "missing") loadMissing();
+        if (page === "advances") loadAdvances();
+        if (page === "workers") loadWorkersPage();
+        if (page === "history") loadHistoryPage();
+      }
+
+      const cache = {};
+
+      function cacheKey() {
+        const month = document.getElementById("monthSelect")?.value || "";
+        const fid = document.getElementById("facilitySelect")?.value || "";
+        return `${month}_${fid}`;
+      }
+
+      function invalidateCache() {
+        Object.keys(cache).forEach((k) => delete cache[k]);
+      }
+
+      // ── STATS ────────────────────────────────────────────────────
+      async function loadStats() {
+        try {
+          const month = document.getElementById("monthSelect").value;
+          const fid = document.getElementById("facilitySelect").value;
+          const data_res = await apiFetch(
+            `/api/stats?month=${month}${fid ? "&facility_id=" + fid : ""}`
+          );
+          if (!data_res) return;
+          const { data } = data_res;
+          document.getElementById("statWorkers").textContent = data.workers;
+          document.getElementById("statHours").textContent = Math.round(
+            data.hours
+          );
+          document.getElementById("statMissing").textContent = data.missing;
+          document.getElementById("statAdvances").textContent = data.advances;
+          const badge = document.getElementById("missingBadge");
+          if (data.missing > 0) {
+            badge.textContent = data.missing;
+            badge.style.display = "";
+          } else badge.style.display = "none";
+        } catch (e) {
+          console.error(e);
+        }
+      } 
+      
+      // ── FACILITIES ───────────────────────────────────────────────
+      async function loadFacilities() {
+        try {
+          const res = await apiFetch("/api/facilities");
+          if (!res) return;
+          facilities = res.data;
+          const sel = document.getElementById("facilitySelect");
+          res.data.forEach((f) => {
+            const opt = document.createElement("option");
+            opt.value = f.id;
+            opt.textContent = `${f.name} (${f.worker_count})`;
+            sel.appendChild(opt);
+          });
+        } catch (e) {}
+      }
+
+      // ── WORKERS TABLE ────────────────────────────────────────────
+      async function loadWorkers() {
+        const month = document.getElementById("monthSelect").value;
+        const fid = document.getElementById("facilitySelect").value;
+        const url = `/api/workers?month=${month}${
+          fid ? "&facility_id=" + fid : ""
+        }`;
+        try {
+          const res = await apiFetch(url);
+          if (!res) return;
+          allWorkers = res.data;
+          renderTabs(res.data);
+          renderTable(res.data);
+        } catch (e) {
+          document.getElementById(
+            "workerTable"
+          ).innerHTML = `<tr><td colspan="4" style="color:var(--red);padding:20px">Blad: ${e.message}</td></tr>`;
+        }
+      }
+
+      function renderTabs(workers) {
+        const facs = {};
+        workers.forEach((w) => {
+          if (!facs[w.facility_id])
+            facs[w.facility_id] = { name: w.facility_name, count: 0 };
+          facs[w.facility_id].count++;
+        });
+        const tabs = document.getElementById("facilityTabs");
+        const facList = Object.entries(facs);
+
+        if (facList.length <= 5) {
+          tabs.innerHTML = `<div class="ftab ${
+            currentFacility === "" ? "active" : ""
+          }" onclick="filterFacility('')">Wszystkie</div>`;
+          facList.forEach(([id, f]) => {
+            tabs.innerHTML += `<div class="ftab ${
+              currentFacility == id ? "active" : ""
+            }" onclick="filterFacility(${id})">${
+              f.name
+            } <span style="color:var(--text3);font-size:10px">${
+              f.count
+            }</span></div>`;
+          });
+          return;
+        }
+
+        const selectedName =
+          currentFacility && facs[currentFacility]
+            ? `${facs[currentFacility].name} <span style="color:var(--text3);font-size:10px">${facs[currentFacility].count}</span>`
+            : `<span style="color:var(--text3)">Wybierz obiekt...</span>`;
+
+        tabs.innerHTML = `
+    <div style="padding:6px 16px;position:relative;user-select:none">
+      <div id="facDropBtn" onclick="toggleFacDrop()" style="
+        display:inline-flex;align-items:center;gap:8px;padding:6px 12px 10px;
+        font-size:12px;color:${
+          currentFacility ? "var(--accent)" : "var(--text2)"
+        };
+        cursor:pointer;border-bottom:2px solid ${
+          currentFacility ? "var(--accent)" : "transparent"
+        };
+        transition:all .15s;white-space:nowrap;">
+        🏭 ${selectedName}
+        <span id="facDropArrow" style="font-size:9px;transition:transform .2s">▼</span>
+      </div>
+      <div id="facDropMenu" style="
+        display:none;position:absolute;top:100%;left:16px;
+        background:var(--surface2);border:1px solid var(--border);
+        border-radius:8px;min-width:260px;max-height:400px;overflow-y:auto;
+        z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.4);padding:6px 0;">
+        <div onclick="filterFacility('');toggleFacDrop()" style="
+          display:flex;align-items:center;justify-content:space-between;
+          padding:8px 14px;font-size:12px;cursor:pointer;
+          color:${!currentFacility ? "var(--accent)" : "var(--text)"};
+          background:${
+            !currentFacility ? "rgba(59,130,246,.08)" : "transparent"
+          };">
+          <span>Wszystkie obiekty</span>
+          <span style="font-family:var(--mono);font-size:10px;color:var(--text3)">${
+            workers.length
+          }</span>
+        </div>
+        <div style="height:1px;background:var(--border);margin:4px 0"></div>
+        ${facList
+          .map(
+            ([id, f]) => `
+          <div onclick="filterFacility(${id});toggleFacDrop()" style="
+            display:flex;align-items:center;justify-content:space-between;
+            padding:8px 14px;font-size:12px;cursor:pointer;
+            color:${currentFacility == id ? "var(--accent)" : "var(--text2)"};
+            background:${
+              currentFacility == id ? "rgba(59,130,246,.08)" : "transparent"
+            };">
+            <span>${f.name}</span>
+            <span style="font-family:var(--mono);font-size:10px;color:var(--text3);background:var(--surface);padding:1px 7px;border-radius:10px">${
+              f.count
+            }</span>
+          </div>`
+          )
+          .join("")}
+      </div>
+    </div>`;
+      }
+
+      function toggleFacDrop() {
+        const menu = document.getElementById("facDropMenu");
+        const arrow = document.getElementById("facDropArrow");
+        if (!menu) return;
+        const isOpen = menu.style.display !== "none";
+        menu.style.display = isOpen ? "none" : "block";
+        if (arrow) arrow.style.transform = isOpen ? "" : "rotate(180deg)";
+      }
+
+      document.addEventListener("click", (e) => {
+        const btn = document.getElementById("facDropBtn");
+        const menu = document.getElementById("facDropMenu");
+        if (
+          menu &&
+          btn &&
+          !btn.contains(e.target) &&
+          !menu.contains(e.target)
+        ) {
+          menu.style.display = "none";
+          const arrow = document.getElementById("facDropArrow");
+          if (arrow) arrow.style.transform = "";
+        }
+      });
+
+      function filterFacility(id) {
+        currentFacility = id;
+        const filtered = id
+          ? allWorkers.filter((w) => w.facility_id == id)
+          : allWorkers;
+        renderTable(filtered);
+      }
+
+      function filterTable() {
+        pageHours = 1;
+        const q = document.getElementById("searchInput").value.toLowerCase();
+        const filtered = allWorkers.filter(
+          (w) =>
+            (currentFacility ? w.facility_id == currentFacility : true) &&
+            (w.full_name.toLowerCase().includes(q) || w.login.includes(q))
+        );
+        renderTable(filtered);
+      }
+
+      let pageHours = 1;
+
+      function renderTable(workers) {
+        document.getElementById("workerCount").textContent =
+          workers.length + " os.";
+        const { slice, pages } = paginate(workers, pageHours, pageSizeHours);
+
+        const month = document.getElementById("monthSelect").value;
+        const [year, mm] = month.split("-");
+        const daysInMonth = new Date(parseInt(year), parseInt(mm), 0).getDate();
+        const today = new Date();
+        const todayDay =
+          today.getFullYear() === parseInt(year) &&
+          today.getMonth() + 1 === parseInt(mm)
+            ? today.getDate()
+            : daysInMonth;
+
+        const tbody = document.getElementById("workerTable");
+        if (!slice.length) {
+          tbody.innerHTML = `<tr><td colspan="4" style="color:var(--text3);padding:20px;text-align:center">Brak pracownikow</td></tr>`;
+          document.getElementById("paginationHours").innerHTML = "";
+          return;
+        }
+
+        tbody.innerHTML = slice
+          .map((w) => {
+            const dayMap = {};
+            (w.hours || []).forEach((h) => {
+              const d = new Date(h.work_date);
+              dayMap[d.getDate()] = h;
+            });
+
+            const bhpDay = w.bhp_date ? new Date(w.bhp_date).getDate() : 1;
+            const bhpMm = w.bhp_date ? new Date(w.bhp_date).getMonth() + 1 : 0;
+            const bhpYr = w.bhp_date ? new Date(w.bhp_date).getFullYear() : 0;
+
+            let totalHours = 0;
+            let missingCount = 0;
+
+            const cells = Array.from({ length: daysInMonth }, (_, i) => {
+              const day = i + 1;
+              const isBeforeBhp =
+                w.bhp_date &&
+                (parseInt(year) < bhpYr ||
+                  (parseInt(year) === bhpYr && parseInt(mm) < bhpMm) ||
+                  (parseInt(year) === bhpYr &&
+                    parseInt(mm) === bhpMm &&
+                    day < bhpDay));
+              const isFuture = day > todayDay;
+              const h = dayMap[day];
+
+              if (isBeforeBhp)
+                return `<div class="day-cell black" title="${String(
+                  day
+                ).padStart(2, "0")}.${mm}">${String(day).padStart(
+                  2,
+                  "0"
+                )}</div>`;
+              if (isFuture)
+                return `<div class="day-cell future">${String(day).padStart(
+                  2,
+                  "0"
+                )}</div>`;
+
+              if (h) {
+                if (h.hours !== null) {
+                  totalHours += parseFloat(h.hours);
+                  return `<div class="day-cell filled" title="${String(
+                    day
+                  ).padStart(2, "0")}.${mm}: ${h.hours}h" onclick="openEdit(${
+                    w.id
+                  },'${year}-${mm}-${String(day).padStart(2, "0")}',${
+                    h.hours || 0
+                  },'${h.absence_type || ""}')">${h.hours}</div>`;
+                } else {
+                  return `<div class="day-cell ${h.absence_type.toLowerCase()}" title="${
+                    h.absence_type
+                  }" onclick="openEdit(${w.id},'${year}-${mm}-${String(
+                    day
+                  ).padStart(2, "0")}',null,'${h.absence_type}')">${
+                    h.absence_type
+                  }</div>`;
+                }
+              } else {
+                missingCount++;
+                return `<div class="day-cell empty" title="${String(
+                  day
+                ).padStart(2, "0")}.${mm} — brak" onclick="openEdit(${
+                  w.id
+                },'${year}-${mm}-${String(day).padStart(
+                  2,
+                  "0"
+                )}',null,'')">${String(day).padStart(2, "0")}</div>`;
+              }
+            }).join("");
+
+            const badge =
+              missingCount > 3
+                ? `<span class="badge badge-red"><span class="badge-dot"></span>brak ${missingCount}d</span>`
+                : missingCount > 0
+                ? `<span class="badge badge-orange"><span class="badge-dot"></span>brak ${missingCount}d</span>`
+                : `<span class="badge badge-green"><span class="badge-dot"></span>OK</span>`;
+
+            return `<tr>
+    <td><div class="worker-name">${w.full_name}</div><div class="worker-id">#${
+              w.login
+            }</div></td>
+    <td>${badge}</td>
+    <td><div class="day-cells">${cells}</div></td>
+    <td><span class="hours-sum">${totalHours.toFixed(1)}h</span></td>
+  </tr>`;
+          })
+          .join("");
+
+        renderPagination("paginationHours", pageHours, pages, "goPageHours");
+      }
+      function changeHoursPageSize() {
+        pageSizeHours = parseInt(
+          document.getElementById("hoursPageSize").value
+        );
+        pageHours = 1;
+        filterTable();
+      }
+      function goPageHours(p) {
+        pageHours = p;
+        const q = document.getElementById("searchInput").value.toLowerCase();
+        const filtered = allWorkers.filter(
+          (w) =>
+            (currentFacility ? w.facility_id == currentFacility : true) &&
+            (w.full_name.toLowerCase().includes(q) || w.login.includes(q))
+        );
+        renderTable(filtered);
+        document
+          .getElementById("workerTable")
+          .closest(".table-wrap").scrollTop = 0;
+      }
+      // ── MISSING ──────────────────────────────────────────────────
+      async function loadMissing() {
+        const fid = document.getElementById("facilitySelect").value;
+        const url = `/api/missing${fid ? "?facility_id=" + fid : ""}`;
+        try {
+          const res = await apiFetch(url);
+          if (!res) return;
+          const { data } = res;
+          document.getElementById("missingCount").textContent =
+            data.length + " os.";
+          const list = document.getElementById("missingList");
+          if (!data.length) {
+            list.innerHTML = `<div style="padding:20px;text-align:center;color:var(--green)">Wszystkie godziny uzupelnione!</div>`;
+            return;
+          }
+          list.innerHTML = data
+            .map((w) => {
+              const days = w.missing_dates
+                .map((d) => {
+                  const dt = new Date(d);
+                  return `${String(dt.getDate()).padStart(2, "0")}.${String(
+                    dt.getMonth() + 1
+                  ).padStart(2, "0")}`;
+                })
+                .join(", ");
+              return `<div class="missing-item ${
+                w.missing_count <= 2 ? "warn" : ""
+              }">
+        <div style="flex:1">
+          <div class="missing-name">${w.full_name}</div>
+          <div class="missing-days">${days}</div>
+        </div>
+        <div class="missing-count">${w.missing_count}d</div>
+        <button class="btn btn-red btn-sm" onclick="pingWorker(${
+          w.worker_id
+        })">Ping</button>
+      </div>`;
+            })
+            .join("");
+        } catch (e) {}
+      }
+
+      // ── ADVANCES ─────────────────────────────────────────────────
+      async function loadAdvances() {
+        try {
+          const res = await apiFetch("/api/advances");
+          if (!res) return;
+          const { data } = res;
+          document.getElementById("advancesCount").textContent = data.length;
+          const statusColor = {
+            pending: "orange",
+            approved: "green",
+            rejected: "red",
+            paid: "blue",
+          };
+          document.getElementById("advancesTable").innerHTML = data.length
+            ? data
+                .map(
+                  (a) => `
+      <tr>
+        <td><div class="worker-name">${a.full_name}</div></td>
+        <td><span style="font-family:var(--mono);font-size:11px;color:var(--text3)">#${
+          a.login
+        }</span></td>
+        <td>${new Date(a.requested_at).toLocaleDateString("pl")}</td>
+        <td>${
+          a.pay_date ? new Date(a.pay_date).toLocaleDateString("pl") : "—"
+        }</td>
+        <td><span class="badge badge-${statusColor[a.status] || "blue"}">${
+                    a.status
+                  }</span></td>
+      </tr>`
+                )
+                .join("")
+            : `<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:20px">Brak zaliczek</td></tr>`;
+        } catch (e) {}
+      }
+      let allWorkersData = [];
+
+      // ── WORKERS PAGE ─────────────────────────────────────────────
+
+      async function loadWorkersPage() {
+        const url = `/api/workers/all`;
+        try {
+          const res = await apiFetch(url);
+          if (!res) return;
+          allWorkersData = res.data;
+
+          // Заполняем фильтр объектов
+          const facSel = document.getElementById("workersFacilityFilter");
+          const facSet = new Set();
+          allWorkersData.forEach((w) => {
+            if (w.facility_name) facSet.add(w.facility_name);
+          });
+          facSel.innerHTML = '<option value="">Wszystkie obiekty</option>';
+          [...facSet].sort().forEach((name) => {
+            facSel.innerHTML += `<option value="${name}">${name}</option>`;
+          });
+
+          filterWorkers();
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      let pageWorkers = 1;
+
+      function filterWorkers(reset = true) {
+        if (reset) pageWorkers = 1;
+        const q = (
+          document.getElementById("workersSearch").value || ""
+        ).toLowerCase();
+        const fac = document.getElementById("workersFacilityFilter").value;
+        const status = document.getElementById("workersStatusFilter").value;
+
+        const filtered = allWorkersData.filter(
+          (w) =>
+            (!q ||
+              w.full_name.toLowerCase().includes(q) ||
+              w.login.toLowerCase().includes(q)) &&
+            (!fac || w.facility_name === fac) &&
+            (!status || w.status === status)
+        );
+
+        const { slice, pages } = paginate(
+          filtered,
+          pageWorkers,
+          pageSizeWorkers
+        );
+        document.getElementById("workersCount").textContent = filtered.length;
+
+        document.getElementById("workersTable").innerHTML =
+          slice
+            .map(
+              (w) => `
+    <tr>
+      <td><span style="font-family:var(--mono);font-size:11px">${
+        w.login
+      }</span></td>
+      <td class="worker-name">${w.full_name}</td>
+      <td style="color:var(--text2);font-size:12px">${
+        w.facility_name || "—"
+      }</td>
+      <td><span class="badge ${
+        w.status === "pracuje"
+          ? "badge-green"
+          : w.status === "przeniesiony"
+          ? "badge-orange"
+          : "badge-red"
+      }"><span class="badge-dot"></span>${w.status}</span></td>
+      <td style="font-family:var(--mono);font-size:11px;color:var(--text3)">${
+        w.telegram_chat_id ? "✅" : "—"
+      }</td>
+      <td style="font-size:11px;color:var(--text3)">${
+        w.bhp_date ? new Date(w.bhp_date).toLocaleDateString("pl") : "—"
+      }</td>
+      <td style="display:flex;gap:4px">
+        <button class="btn btn-ghost btn-sm" onclick='openWorkerModal(${JSON.stringify(
+          w
+        )})'>Edytuj</button>
+        <button class="btn btn-ghost btn-sm" onclick="openHistoryModal(${
+          w.id
+        },'${w.full_name
+                .replace(/'/g, "\\'")
+                .replace(/"/g, "&quot;")}')">Historia</button>
+      </td>
+    </tr>`
+            )
+            .join("") ||
+          `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
+
+        renderPagination(
+          "paginationWorkers",
+          pageWorkers,
+          pages,
+          "goPageWorkers"
+        );
+      }
+
+      function goPageWorkers(p) {
+        pageWorkers = p;
+        filterWorkers(false);
+      }
+
+      // ── WORKER MODAL ──────────────────────────────────────────────
+      async function openWorkerModal(worker) {
+        document.getElementById("wm_err").textContent = "";
+        const facSel = document.getElementById("wm_facility");
+        facSel.innerHTML = '<option value="">— brak —</option>';
+        const facRes = await apiFetch("/api/facilities");
+        if (facRes && facRes.data) {
+          facRes.data.forEach((f) => {
+            facSel.innerHTML += `<option value="${f.id}">${f.name}</option>`;
+          });
+        }
+        if (worker) {
+          document.getElementById("workerModalTitle").textContent =
+            "Edytuj pracownika";
+          document.getElementById("wm_id").value = worker.id;
+          document.getElementById("wm_login").value = worker.login;
+          document.getElementById("wm_name").value = worker.full_name;
+          document.getElementById("wm_status").value = worker.status;
+          document.getElementById("wm_bhp").value = worker.bhp_date
+            ? worker.bhp_date.substring(0, 10)
+            : "";
+          if (worker.facility_id) facSel.value = worker.facility_id;
+        } else {
+          document.getElementById("workerModalTitle").textContent =
+            "Nowy pracownik";
+          document.getElementById("wm_id").value = "";
+          document.getElementById("wm_login").value = "";
+          document.getElementById("wm_name").value = "";
+          document.getElementById("wm_status").value = "pracuje";
+          document.getElementById("wm_bhp").value = "";
+          facSel.value = "";
+        }
+        document.getElementById("workerModal").classList.add("open");
+      }
+
+      function closeWorkerModal() {
+        document.getElementById("workerModal").classList.remove("open");
+      }
+
+      async function saveWorker() {
+        const id = document.getElementById("wm_id").value;
+        const login = document.getElementById("wm_login").value.trim();
+        const fullName = document.getElementById("wm_name").value.trim();
+        const facId = document.getElementById("wm_facility").value;
+        const status = document.getElementById("wm_status").value;
+        const bhp = document.getElementById("wm_bhp").value;
+
+        if (!login || !fullName) {
+          document.getElementById("wm_err").textContent =
+            "Login i nazwisko sa wymagane";
+          return;
+        }
+
+        const body = {
+          login,
+          full_name: fullName,
+          facility_id: facId || null,
+          status,
+          bhp_date: bhp || null,
+        };
+        let res;
+        if (id) {
+          res = await apiFetch(`/admin/workers/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+        } else {
+          res = await apiFetch("/admin/workers", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+        }
+        if (!res || !res.ok) {
+          document.getElementById("wm_err").textContent =
+            res?.error || "Blad zapisu";
+          return;
+        }
+        closeWorkerModal();
+        loadWorkersPage();
+        loadWorkers();
+        loadStats();
+      }
+
+      // ── HISTORY MODAL ─────────────────────────────────────────────
+      async function openHistoryModal(workerId, workerName) {
+        document.getElementById(
+          "historyModalTitle"
+        ).textContent = `Historia: ${workerName}`;
+        document.getElementById("historyModal").classList.add("open");
+        document.getElementById("historyContent").innerHTML =
+          '<div class="loading"><div class="spinner"></div>Ladowanie...</div>';
+
+        const res = await apiFetch(`/api/workers/${workerId}/history`);
+        if (!res || !res.data || !res.data.length) {
+          document.getElementById("historyContent").innerHTML =
+            '<div style="padding:20px;text-align:center;color:var(--text3)">Brak historii</div>';
+          return;
+        }
+
+        const statusColor = {
+          pracuje: "badge-green",
+          zwolniony: "badge-red",
+          przeniesiony: "badge-orange",
+        };
+
+        document.getElementById("historyContent").innerHTML = `
+    <table style="width:100%;font-size:12px;border-collapse:collapse">
+      <thead>
+        <tr>
+          <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3);font-family:var(--mono);font-size:10px">OBIEKT</th>
+          <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3);font-family:var(--mono);font-size:10px">STATUS</th>
+          <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3);font-family:var(--mono);font-size:10px">BHP</th>
+          <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3);font-family:var(--mono);font-size:10px">OSTATNI DZIEŃ</th>
+          <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3);font-family:var(--mono);font-size:10px">IMPORT</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${res.data
+          .map(
+            (h) => `
+          <tr style="border-bottom:1px solid rgba(42,51,71,.3)">
+            <td style="padding:8px 12px;font-weight:500">${
+              h.facility_name || h.source_sheet || "—"
+            }</td>
+            <td style="padding:8px 12px"><span class="badge ${
+              statusColor[h.status] || "badge-blue"
+            }">${h.status}</span></td>
+            <td style="padding:8px 12px;font-family:var(--mono);font-size:11px;color:var(--text2)">${
+              h.bhp_date ? new Date(h.bhp_date).toLocaleDateString("pl") : "—"
+            }</td>
+            <td style="padding:8px 12px;font-family:var(--mono);font-size:11px;color:var(--text2)">${
+              h.last_work_date
+                ? new Date(h.last_work_date).toLocaleDateString("pl")
+                : "—"
+            }</td>
+            <td style="padding:8px 12px;font-size:11px;color:var(--text3)">${new Date(
+              h.imported_at
+            ).toLocaleDateString("pl")}</td>
+          </tr>`
+          )
+          .join("")}
+      </tbody>
+    </table>`;
+      }
+
+      function closeHistoryModal() {
+        document.getElementById("historyModal").classList.remove("open");
+      }
+
+      // ── EDIT MODAL ────────────────────────────────────────────────
+      function openEdit(workerId, date, hours, absence) {
+        editState = { workerId, date, hours, absence };
+        document.getElementById("modalDate").value = date;
+        document.getElementById("modalHours").value = hours || "";
+        document.getElementById("modalTitle").textContent = `Edytuj: ${date}`;
+        document.getElementById("editModal").classList.add("open");
+      }
+      function closeModal() {
+        document.getElementById("editModal").classList.remove("open");
+        editState = {};
+      }
+      function setAbs(code) {
+        editState.absence = code;
+        editState.hours = null;
+        document.getElementById("modalHours").value = "";
+        document
+          .querySelectorAll(".abs-btn")
+          .forEach((b) => (b.style.borderColor = ""));
+        event.target.style.borderColor = "var(--accent)";
+      }
+      async function saveHours() {
+        const hours = document.getElementById("modalHours").value;
+        const body = {
+          worker_id: editState.workerId,
+          work_date: editState.date,
+          hours: hours ? parseFloat(hours) : null,
+          absence_type: hours ? null : editState.absence || null,
+        };
+        try {
+          await apiFetch("/api/hours", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          closeModal();
+          loadWorkers();
+          loadStats();
+        } catch (e) {
+          alert("Blad: " + e.message);
+        }
+      }
+
+      // ── PING / REMINDERS ─────────────────────────────────────────
+      async function pingWorker(workerId) {
+        await apiFetch(`/api/remind/${workerId}`, { method: "POST" });
+        alert("Przypomnienie wyslane!");
+      }
+      async function sendReminders() {
+        if (
+          !confirm("Wyslac przypomnienia do wszystkich pracownikow z brakami?")
+        )
+          return;
+        await apiFetch("/trigger/reminders", { method: "POST" });
+        alert("Przypomnienia wyslane!");
+      }
+
+      // ── HISTORY PAGE ──────────────────────────────────────────────
+      let allHistory = [];
+
+      async function loadHistoryPage() {
+        try {
+          const res = await apiFetch("/api/history");
+          if (!res) return;
+          allHistory = res.data;
+
+          const facSel = document.getElementById("historyFacilityFilter");
+          const facSet = new Set();
+          allHistory.forEach((h) => {
+            if (h.facility_name) facSet.add(h.facility_name);
+          });
+          facSel.innerHTML = '<option value="">Wszystkie obiekty</option>';
+          [...facSet].sort().forEach((name) => {
+            facSel.innerHTML += `<option value="${name}">${name}</option>`;
+          });
+
+          filterHistory();
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      let pageHistory = 1;
+
+      function filterHistory(reset = true) {
+        if (reset) pageHistory = 1;
+        const q = (
+          document.getElementById("historySearch").value || ""
+        ).toLowerCase();
+        const fac = document.getElementById("historyFacilityFilter").value;
+        const status = document.getElementById("historyStatusFilter").value;
+        const filtered = allHistory.filter(
+          (h) =>
+            (!q ||
+              h.full_name.toLowerCase().includes(q) ||
+              h.login.toLowerCase().includes(q)) &&
+            (!fac || h.facility_name === fac) &&
+            (!status || h.status === status)
+        );
+
+        const { slice, pages } = paginate(
+          filtered,
+          pageHistory,
+          pageSizeHistory
+        );
+        document.getElementById("historyCount").textContent = filtered.length;
+        const statusColor = {
+          pracuje: "badge-green",
+          zwolniony: "badge-red",
+          przeniesiony: "badge-orange",
+        };
+
+        document.getElementById("historyTable").innerHTML =
+          slice
+            .map(
+              (h) => `
+    <tr>
+      <td><div class="worker-name">${
+        h.full_name
+      }</div><div class="worker-id">#${h.login}</div></td>
+      <td style="color:var(--text2);font-size:12px">${
+        h.facility_name || h.source_sheet || "—"
+      }</td>
+      <td><span class="badge ${statusColor[h.status] || "badge-blue"}">${
+                h.status
+              }</span></td>
+      <td style="font-family:var(--mono);font-size:11px;color:var(--text2)">${
+        h.bhp_date ? new Date(h.bhp_date).toLocaleDateString("pl") : "—"
+      }</td>
+      <td style="font-family:var(--mono);font-size:11px;color:var(--text2)">${
+        h.last_work_date
+          ? new Date(h.last_work_date).toLocaleDateString("pl")
+          : "—"
+      }</td>
+      <td style="font-size:11px;color:var(--text3)">${new Date(
+        h.imported_at
+      ).toLocaleDateString("pl")}</td>
+    </tr>`
+            )
+            .join("") ||
+          `<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
+
+        renderPagination(
+          "paginationHistory",
+          pageHistory,
+          pages,
+          "goPageHistory"
+        );
+      }
+
+      function changeWorkersPageSize() {
+        pageSizeWorkers = parseInt(
+          document.getElementById("workersPageSize").value
+        );
+        pageWorkers = 1;
+        filterWorkers(false);
+      }
+
+      function changeHistoryPageSize() {
+        pageSizeHistory = parseInt(
+          document.getElementById("historyPageSize").value
+        );
+        pageHistory = 1;
+        filterHistory(false);
+      }
+
+      function goPageHistory(p) {
+        pageHistory = p;
+        filterHistory(false);
+      }
+
+      // Close modals on overlay click
+      document.getElementById("editModal").addEventListener("click", (e) => {
+        if (e.target === e.currentTarget) closeModal();
+      });
+      document.getElementById("workerModal").addEventListener("click", (e) => {
+        if (e.target === e.currentTarget) closeWorkerModal();
+      });
+      document.getElementById("historyModal").addEventListener("click", (e) => {
+        if (e.target === e.currentTarget) closeHistoryModal();
+      });
+    </script>
+  </body>
+</html>

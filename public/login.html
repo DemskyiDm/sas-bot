@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SAS Logistic — Logowanie</title>
+<style>
+:root {
+  --bg:#0f1117;--surface:#161b27;--surface2:#1e2535;--border:#2a3347;
+  --accent:#3b82f6;--text:#e2e8f0;--text2:#94a3b8;--text3:#4b5563;
+  --red:#ef4444;--mono:'Courier New',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;}
+.wrap{width:360px;}
+.logo{text-align:center;margin-bottom:32px;}
+.logo-tag{font-family:var(--mono);font-size:11px;color:var(--accent);letter-spacing:3px;margin-bottom:8px;}
+.logo-name{font-size:24px;font-weight:700;}
+.logo-sub{font-size:13px;color:var(--text2);margin-top:4px;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:28px;}
+.field{margin-bottom:16px;}
+.field label{display:block;font-size:11px;color:var(--text2);font-family:var(--mono);letter-spacing:1px;margin-bottom:6px;}
+.field input{width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:7px;font-size:14px;outline:none;transition:border .15s;}
+.field input:focus{border-color:var(--accent);}
+.btn{width:100%;padding:11px;background:var(--accent);color:#fff;border:none;border-radius:7px;font-size:14px;font-weight:600;cursor:pointer;transition:background .15s;}
+.btn:hover{background:#2563eb;}
+.err{color:var(--red);font-size:12px;text-align:center;margin-top:12px;min-height:18px;}
+.footer{text-align:center;margin-top:20px;font-size:11px;color:var(--text3);font-family:var(--mono);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">
+    <div class="logo-tag">SAS LOGISTIC</div>
+    <div class="logo-name">Panel Koordynatora</div>
+    <div class="logo-sub">Zaloguj sie aby kontynuowac</div>
+  </div>
+  <div class="card">
+    <div class="field">
+      <label>LOGIN</label>
+      <input id="username" type="text" placeholder="login" autocomplete="username">
+    </div>
+    <div class="field">
+      <label>HASLO</label>
+      <input id="password" type="password" placeholder="••••••••" autocomplete="current-password">
+    </div>
+    <button class="btn" onclick="doLogin()">Zaloguj sie</button>
+    <div class="err" id="err"></div>
+  </div>
+  <div class="footer">SAS Logistic &copy; 2026</div>
+</div>
+<script>
+// Check if already logged in
+const session = localStorage.getItem('sas_session');
+if (session) {
+  fetch('/admin/me', { headers: { 'x-session': session } })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) redirect(d.user);
+    }).catch(() => {});
+}
+
+async function doLogin() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  document.getElementById('err').textContent = '';
+
+  if (!username || !password) {
+    document.getElementById('err').textContent = 'Wypelnij wszystkie pola';
+    return;
+  }
+
+  try {
+    const res = await fetch('/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      document.getElementById('err').textContent = 'Nieprawidlowy login lub haslo';
+      return;
+    }
+    localStorage.setItem('sas_session', data.token);
+    localStorage.setItem('sas_user', JSON.stringify(data.user));
+    redirect(data.user);
+  } catch(e) {
+    document.getElementById('err').textContent = 'Blad polaczenia z serwerem';
+  }
+}
+
+function redirect(user) {
+  if (user.is_admin) {
+    window.location = '/index.html';
+  } else {
+    window.location = '/index.html';
+  }
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+</script>
+</body>
+</html>

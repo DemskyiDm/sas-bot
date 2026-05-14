@@ -1,833 +1,1547 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pl">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SAS — Admin</title>
-<style>
-:root {
-  --bg:#0f1117;--surface:#161b27;--surface2:#1e2535;--border:#2a3347;
-  --accent:#3b82f6;--accent2:#f59e0b;--green:#22c55e;--red:#ef4444;
-  --blue:#60a5fa;--purple:#a78bfa;--orange:#fb923c;
-  --text:#e2e8f0;--text2:#94a3b8;--text3:#4b5563;--mono:'Courier New',monospace;
-}
-*{margin:0;padding:0;box-sizing:border-box;}
-body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SAS — Admin</title>
+    <style>
+      :root {
+        --bg: #0f1117;
+        --surface: #161b27;
+        --surface2: #1e2535;
+        --border: #2a3347;
+        --accent: #3b82f6;
+        --accent2: #f59e0b;
+        --green: #22c55e;
+        --red: #ef4444;
+        --blue: #60a5fa;
+        --purple: #a78bfa;
+        --orange: #fb923c;
+        --text: #e2e8f0;
+        --text2: #94a3b8;
+        --text3: #4b5563;
+        --mono: "Courier New", monospace;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+      }
 
-/* LOGIN */
-.login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;}
-.login-box{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px;width:340px;}
-.login-logo{font-size:11px;font-family:var(--mono);color:var(--accent);letter-spacing:2px;margin-bottom:6px;}
-.login-title{font-size:20px;font-weight:700;margin-bottom:24px;}
-.field{margin-bottom:14px;}
-.field label{display:block;font-size:11px;color:var(--text2);font-family:var(--mono);margin-bottom:5px;letter-spacing:1px;}
-.field input{width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:6px;font-size:14px;outline:none;}
-.field input:focus{border-color:var(--accent);}
-.btn{padding:8px 18px;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;border:none;transition:all .15s;}
-.btn-primary{background:var(--accent);color:#fff;width:100%;padding:10px;}
-.btn-primary:hover{background:#2563eb;}
-.btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border);}
-.btn-ghost:hover{background:var(--surface2);color:var(--text);}
-.btn-red{background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.3);}
-.btn-green{background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.3);}
-.btn-sm{padding:4px 12px;font-size:11px;}
-.login-err{color:var(--red);font-size:12px;margin-top:10px;text-align:center;}
+      /* LOGIN */
+      .login-wrap {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+      }
+      .login-box {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 32px;
+        width: 340px;
+      }
+      .login-logo {
+        font-size: 11px;
+        font-family: var(--mono);
+        color: var(--accent);
+        letter-spacing: 2px;
+        margin-bottom: 6px;
+      }
+      .login-title {
+        font-size: 20px;
+        font-weight: 700;
+        margin-bottom: 24px;
+      }
+      .field {
+        margin-bottom: 14px;
+      }
+      .field label {
+        display: block;
+        font-size: 11px;
+        color: var(--text2);
+        font-family: var(--mono);
+        margin-bottom: 5px;
+        letter-spacing: 1px;
+      }
+      .field input {
+        width: 100%;
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        color: var(--text);
+        padding: 9px 12px;
+        border-radius: 6px;
+        font-size: 14px;
+        outline: none;
+      }
+      .field input:focus {
+        border-color: var(--accent);
+      }
+      .btn {
+        padding: 8px 18px;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.15s;
+      }
+      .btn-primary {
+        background: var(--accent);
+        color: #fff;
+        width: 100%;
+        padding: 10px;
+      }
+      .btn-primary:hover {
+        background: #2563eb;
+      }
+      .btn-ghost {
+        background: transparent;
+        color: var(--text2);
+        border: 1px solid var(--border);
+      }
+      .btn-ghost:hover {
+        background: var(--surface2);
+        color: var(--text);
+      }
+      .btn-red {
+        background: rgba(239, 68, 68, 0.1);
+        color: var(--red);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+      }
+      .btn-green {
+        background: rgba(34, 197, 94, 0.1);
+        color: var(--green);
+        border: 1px solid rgba(34, 197, 94, 0.3);
+      }
+      .btn-sm {
+        padding: 4px 12px;
+        font-size: 11px;
+      }
+      .login-err {
+        color: var(--red);
+        font-size: 12px;
+        margin-top: 10px;
+        text-align: center;
+      }
 
-/* LAYOUT */
-.layout{display:flex;min-height:100vh;}
-.sidebar{width:210px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;}
-.logo{padding:18px 16px 14px;border-bottom:1px solid var(--border);}
-.logo-tag{font-family:var(--mono);font-size:9px;color:var(--accent);letter-spacing:2px;margin-bottom:3px;}
-.logo-name{font-size:14px;font-weight:600;}
-.logo-sub{font-size:10px;color:var(--orange);font-family:var(--mono);margin-top:2px;}
-.nav{padding:12px 8px;flex:1;}
-.nav-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--text2);margin-bottom:2px;transition:all .15s;}
-.nav-item:hover{background:var(--surface2);color:var(--text);}
-.nav-item.active{background:rgba(59,130,246,.12);color:var(--accent);}
-.nav-footer{padding:12px 10px;border-top:1px solid var(--border);}
-.user-row{display:flex;align-items:center;gap:8px;padding:8px;}
-.avatar{width:28px;height:28px;background:var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;}
-.user-name{font-size:12px;font-weight:500;}
-.user-role{font-size:10px;color:var(--text2);font-family:var(--mono);}
+      /* LAYOUT */
+      .layout {
+        display: flex;
+        min-height: 100vh;
+      }
+      .sidebar {
+        width: 210px;
+        background: var(--surface);
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0;
+      }
+      .logo {
+        padding: 18px 16px 14px;
+        border-bottom: 1px solid var(--border);
+      }
+      .logo-tag {
+        font-family: var(--mono);
+        font-size: 9px;
+        color: var(--accent);
+        letter-spacing: 2px;
+        margin-bottom: 3px;
+      }
+      .logo-name {
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .logo-sub {
+        font-size: 10px;
+        color: var(--orange);
+        font-family: var(--mono);
+        margin-top: 2px;
+      }
+      .nav {
+        padding: 12px 8px;
+        flex: 1;
+      }
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        color: var(--text2);
+        margin-bottom: 2px;
+        transition: all 0.15s;
+      }
+      .nav-item:hover {
+        background: var(--surface2);
+        color: var(--text);
+      }
+      .nav-item.active {
+        background: rgba(59, 130, 246, 0.12);
+        color: var(--accent);
+      }
+      .nav-footer {
+        padding: 12px 10px;
+        border-top: 1px solid var(--border);
+      }
+      .user-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px;
+      }
+      .avatar {
+        width: 28px;
+        height: 28px;
+        background: var(--accent);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .user-name {
+        font-size: 12px;
+        font-weight: 500;
+      }
+      .user-role {
+        font-size: 10px;
+        color: var(--text2);
+        font-family: var(--mono);
+      }
 
-.main{margin-left:210px;flex:1;display:flex;flex-direction:column;}
-.topbar{height:50px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:12px;}
-.topbar-title{font-size:14px;font-weight:600;}
-.topbar-right{margin-left:auto;}
-.content{padding:20px;flex:1;}
+      .main {
+        margin-left: 210px;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+      }
+      .topbar {
+        height: 50px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        padding: 0 20px;
+        gap: 12px;
+      }
+      .topbar-title {
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .topbar-right {
+        margin-left: auto;
+      }
+      .content {
+        padding: 20px;
+        flex: 1;
+      }
 
-/* CARDS / TABLES */
-.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px;}
-.card-header{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;}
-.card-title{font-size:13px;font-weight:600;}
-.card-actions{margin-left:auto;display:flex;gap:8px;}
-.table-wrap{overflow-x:auto;}
-table{width:100%;border-collapse:collapse;font-size:12px;}
-th{font-family:var(--mono);font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;padding:9px 14px;text-align:left;border-bottom:1px solid var(--border);background:var(--surface2);}
-td{padding:9px 14px;border-bottom:1px solid rgba(42,51,71,.5);vertical-align:middle;}
-tr:last-child td{border-bottom:none;}
-tr:hover td{background:rgba(255,255,255,.02);}
-.name-cell{font-weight:500;}
-.sub-cell{font-size:10px;color:var(--text3);font-family:var(--mono);}
+      /* CARDS / TABLES */
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+        margin-bottom: 16px;
+      }
+      .card-header {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .card-title {
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .card-actions {
+        margin-left: auto;
+        display: flex;
+        gap: 8px;
+      }
+      .table-wrap {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      th {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--text3);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        padding: 9px 14px;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface2);
+      }
+      td {
+        padding: 9px 14px;
+        border-bottom: 1px solid rgba(42, 51, 71, 0.5);
+        vertical-align: middle;
+      }
+      tr:last-child td {
+        border-bottom: none;
+      }
+      tr:hover td {
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .name-cell {
+        font-weight: 500;
+      }
+      .sub-cell {
+        font-size: 10px;
+        color: var(--text3);
+        font-family: var(--mono);
+      }
 
-.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;font-size:10px;font-family:var(--mono);}
-.badge-green{background:rgba(34,197,94,.1);color:var(--green);}
-.badge-orange{background:rgba(251,146,60,.1);color:var(--orange);}
-.badge-purple{background:rgba(167,139,250,.1);color:var(--purple);}
-.badge-blue{background:rgba(96,165,250,.1);color:var(--blue);}
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-family: var(--mono);
+      }
+      .badge-green {
+        background: rgba(34, 197, 94, 0.1);
+        color: var(--green);
+      }
+      .badge-orange {
+        background: rgba(251, 146, 60, 0.1);
+        color: var(--orange);
+      }
+      .badge-purple {
+        background: rgba(167, 139, 250, 0.1);
+        color: var(--purple);
+      }
+      .badge-blue {
+        background: rgba(96, 165, 250, 0.1);
+        color: var(--blue);
+      }
 
-/* MODAL */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:200;display:none;align-items:center;justify-content:center;}
-.modal-overlay.open{display:flex;}
-.modal{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;width:420px;max-width:95vw;max-height:90vh;overflow-y:auto;}
-.modal-title{font-size:15px;font-weight:600;margin-bottom:18px;}
-.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
-.form-field{margin-bottom:12px;}
-.form-label{display:block;font-size:10px;color:var(--text2);font-family:var(--mono);letter-spacing:1px;margin-bottom:5px;}
-.form-input{width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:5px;font-size:13px;outline:none;}
-.form-input:focus{border-color:var(--accent);}
-select.form-input{cursor:pointer;}
-.form-check{display:flex;align-items:center;gap:8px;font-size:13px;}
-.form-check input{width:16px;height:16px;cursor:pointer;}
-.modal-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:18px;padding-top:14px;border-top:1px solid var(--border);}
-.err-msg{color:var(--red);font-size:11px;margin-top:8px;}
+      /* MODAL */
+      .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.65);
+        z-index: 200;
+        display: none;
+        align-items: center;
+        justify-content: center;
+      }
+      .modal-overlay.open {
+        display: flex;
+      }
+      .modal {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 24px;
+        width: 420px;
+        max-width: 95vw;
+        max-height: 90vh;
+        overflow-y: auto;
+      }
+      .modal-title {
+        font-size: 15px;
+        font-weight: 600;
+        margin-bottom: 18px;
+      }
+      .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .form-field {
+        margin-bottom: 12px;
+      }
+      .form-label {
+        display: block;
+        font-size: 10px;
+        color: var(--text2);
+        font-family: var(--mono);
+        letter-spacing: 1px;
+        margin-bottom: 5px;
+      }
+      .form-input {
+        width: 100%;
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        color: var(--text);
+        padding: 7px 10px;
+        border-radius: 5px;
+        font-size: 13px;
+        outline: none;
+      }
+      .form-input:focus {
+        border-color: var(--accent);
+      }
+      select.form-input {
+        cursor: pointer;
+      }
+      .form-check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+      }
+      .form-check input {
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
+      }
+      .modal-btns {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        margin-top: 18px;
+        padding-top: 14px;
+        border-top: 1px solid var(--border);
+      }
+      .err-msg {
+        color: var(--red);
+        font-size: 11px;
+        margin-top: 8px;
+      }
 
-/* ASSIGNMENT GRID */
-.assign-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px;}
-.assign-col h4{font-size:11px;font-family:var(--mono);color:var(--text2);letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;}
-.assign-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:5px;background:var(--surface2);margin-bottom:6px;font-size:12px;}
-.assign-item .name{flex:1;}
-.assign-item .primary{font-size:9px;font-family:var(--mono);color:var(--accent2);}
+      /* ASSIGNMENT GRID */
+      .assign-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        padding: 16px;
+      }
+      .assign-col h4 {
+        font-size: 11px;
+        font-family: var(--mono);
+        color: var(--text2);
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        margin-bottom: 10px;
+      }
+      .assign-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        border-radius: 5px;
+        background: var(--surface2);
+        margin-bottom: 6px;
+        font-size: 12px;
+      }
+      .assign-item .name {
+        flex: 1;
+      }
+      .assign-item .primary {
+        font-size: 9px;
+        font-family: var(--mono);
+        color: var(--accent2);
+      }
 
-/* SEARCH */
-.search-input{background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px;padding:5px 10px;border-radius:5px;outline:none;width:160px;}
-.search-input:focus{border-color:var(--accent);}
-</style>
-</head>
-<body>
-
-<!-- LOGIN PAGE -->
-<div id="loginPage" class="login-wrap">
-  <div class="login-box">
-    <div class="login-logo">SAS LOGISTIC</div>
-    <div class="login-title">Panel Administratora</div>
-    <div class="form-field">
-      <label class="form-label">LOGIN</label>
-      <input class="form-input" id="loginUser" type="text" placeholder="admin" autocomplete="username">
-    </div>
-    <div class="form-field">
-      <label class="form-label">HASLO</label>
-      <input class="form-input" id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password">
-    </div>
-    <button class="btn btn-primary" onclick="doLogin()">Zaloguj sie</button>
-    <div class="login-err" id="loginErr"></div>
-  </div>
-</div>
-
-<!-- ADMIN LAYOUT -->
-<div id="adminLayout" class="layout" style="display:none">
-  <div class="sidebar">
-    <div class="logo">
-      <div class="logo-tag">SAS LOGISTIC</div>
-      <div class="logo-name">Administrator</div>
-      <div class="logo-sub">PANEL ADMINA</div>
-    </div>
-    <div class="nav">
-      <div class="nav-item active" onclick="showTab('coordinators')">👤 Koordynatorzy</div>
-      <div class="nav-item" onclick="showTab('facilities')">🏭 Obiekty</div>
-      <div class="nav-item" onclick="showTab('assignments')">🔗 Przypisania</div>
-      <div class="nav-item" onclick="showTab('workers')">👷 Pracownicy</div>
-      <div class="nav-item" onclick="window.location='/'">📊 Panel godzin</div>
-    </div>
-    <div class="nav-footer">
-      <div class="user-row">
-        <div class="avatar" id="userAvatar">A</div>
-        <div>
-          <div class="user-name" id="userName">—</div>
-          <div class="user-role">admin</div>
+      /* SEARCH */
+      .search-input {
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        color: var(--text);
+        font-size: 12px;
+        padding: 5px 10px;
+        border-radius: 5px;
+        outline: none;
+        width: 160px;
+      }
+      .search-input:focus {
+        border-color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <!-- LOGIN PAGE -->
+    <div id="loginPage" class="login-wrap">
+      <div class="login-box">
+        <div class="login-logo">SAS LOGISTIC</div>
+        <div class="login-title">Panel Administratora</div>
+        <div class="form-field">
+          <label class="form-label">LOGIN</label>
+          <input
+            class="form-input"
+            id="loginUser"
+            type="text"
+            placeholder="admin"
+            autocomplete="username"
+          />
         </div>
+        <div class="form-field">
+          <label class="form-label">HASLO</label>
+          <input
+            class="form-input"
+            id="loginPass"
+            type="password"
+            placeholder="••••••••"
+            autocomplete="current-password"
+          />
+        </div>
+        <button class="btn btn-primary" onclick="doLogin()">Zaloguj sie</button>
+        <div class="login-err" id="loginErr"></div>
       </div>
-      <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:6px" onclick="doLogout()">Wyloguj</button>
     </div>
-  </div>
 
-  <div class="main">
-    <div class="topbar">
-      <span class="topbar-title" id="tabTitle">Koordynatorzy</span>
-      <div class="topbar-right">
-        <input class="search-input" id="searchInput" placeholder="Szukaj..." oninput="filterCurrent()">
-      </div>
-    </div>
-    <div class="content">
-
-      <!-- COORDINATORS -->
-      <div id="tabCoordinators">
-        <div class="card">
-          <div class="card-header">
-            <span class="card-title">Lista koordynatorow</span>
-            <span class="card-count" id="coordCount" style="font-size:11px;color:var(--text2);background:var(--surface2);padding:2px 8px;border-radius:4px"></span>
-            <div class="card-actions">
-              <button class="btn btn-primary btn-sm" onclick="openModal('modalNewCoord')">+ Dodaj koordynatora</button>
+    <!-- ADMIN LAYOUT -->
+    <div id="adminLayout" class="layout" style="display: none">
+      <div class="sidebar">
+        <div class="logo">
+          <div class="logo-tag">SAS LOGISTIC</div>
+          <div class="logo-name">Administrator</div>
+          <div class="logo-sub">PANEL ADMINA</div>
+        </div>
+        <div class="nav">
+          <div class="nav-item active" onclick="showTab('coordinators')">
+            👤 Koordynatorzy
+          </div>
+          <div class="nav-item" onclick="showTab('facilities')">🏭 Obiekty</div>
+          <div class="nav-item" onclick="showTab('assignments')">
+            🔗 Przypisania
+          </div>
+          <div class="nav-item" onclick="showTab('workers')">👷 Pracownicy</div>
+          <div class="nav-item" onclick="window.location = '/'">
+            📊 Panel godzin
+          </div>
+        </div>
+        <div class="nav-footer">
+          <div class="user-row">
+            <div class="avatar" id="userAvatar">A</div>
+            <div>
+              <div class="user-name" id="userName">—</div>
+              <div class="user-role">admin</div>
             </div>
           </div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Imie i Nazwisko</th><th>Login</th><th>Rola</th><th>Telegram</th><th>Obiekty</th><th>Ostatnie logowanie</th><th>Akcje</th></tr></thead>
-              <tbody id="coordTable"></tbody>
-            </table>
-          </div>
+          <button
+            class="btn btn-ghost btn-sm"
+            style="width: 100%; margin-top: 6px"
+            onclick="doLogout()"
+          >
+            Wyloguj
+          </button>
         </div>
       </div>
 
-      <!-- FACILITIES -->
-      <div id="tabFacilities" style="display:none">
-        <div class="card">
-          <div class="card-header">
-            <span class="card-title">Obiekty</span>
-            <span class="card-count" id="facCount" style="font-size:11px;color:var(--text2);background:var(--surface2);padding:2px 8px;border-radius:4px"></span>
-            <div class="card-actions">
-              <button class="btn btn-primary btn-sm" onclick="openModal('modalNewFacility')">+ Dodaj obiekt</button>
+      <div class="main">
+        <div class="topbar">
+          <span class="topbar-title" id="tabTitle">Koordynatorzy</span>
+          <div class="topbar-right">
+            <input
+              class="search-input"
+              id="searchInput"
+              placeholder="Szukaj..."
+              oninput="filterCurrent()"
+            />
+          </div>
+        </div>
+        <div class="content">
+          <!-- COORDINATORS -->
+          <div id="tabCoordinators">
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">Lista koordynatorow</span>
+                <span
+                  class="card-count"
+                  id="coordCount"
+                  style="
+                    font-size: 11px;
+                    color: var(--text2);
+                    background: var(--surface2);
+                    padding: 2px 8px;
+                    border-radius: 4px;
+                  "
+                ></span>
+                <div class="card-actions">
+                  <button
+                    class="btn btn-primary btn-sm"
+                    onclick="openModal('modalNewCoord')"
+                  >
+                    + Dodaj koordynatora
+                  </button>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Imie i Nazwisko</th>
+                      <th>Login</th>
+                      <th>Rola</th>
+                      <th>Telegram</th>
+                      <th>Obiekty</th>
+                      <th>Ostatnie logowanie</th>
+                      <th>Akcje</th>
+                    </tr>
+                  </thead>
+                  <tbody id="coordTable"></tbody>
+                </table>
+              </div>
             </div>
           </div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Nazwa</th><th>Klient</th><th>Miasto</th><th>Pracownicy</th><th>Koordynatorzy</th><th>Akcje</th></tr></thead>
-              <tbody id="facTable"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
 
-      <!-- ASSIGNMENTS -->
-      <div id="tabAssignments" style="display:none">
-        <div class="card">
-          <div class="card-header">
-            <span class="card-title">Przypisania koordynatorow do obiektow</span>
-            <div class="card-actions">
-              <button class="btn btn-primary btn-sm" onclick="openModal('modalNewAssignment')">+ Przypisz</button>
+          <!-- FACILITIES -->
+          <div id="tabFacilities" style="display: none">
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">Obiekty</span>
+                <span
+                  class="card-count"
+                  id="facCount"
+                  style="
+                    font-size: 11px;
+                    color: var(--text2);
+                    background: var(--surface2);
+                    padding: 2px 8px;
+                    border-radius: 4px;
+                  "
+                ></span>
+                <div class="card-actions">
+                  <button
+                    class="btn btn-primary btn-sm"
+                    onclick="openModal('modalNewFacility')"
+                  >
+                    + Dodaj obiekt
+                  </button>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Nazwa</th>
+                      <th>Klient</th>
+                      <th>Miasto</th>
+                      <th>Pracownicy</th>
+                      <th>Koordynatorzy</th>
+                      <th>Akcje</th>
+                    </tr>
+                  </thead>
+                  <tbody id="facTable"></tbody>
+                </table>
+              </div>
             </div>
           </div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Koordynator</th><th>Obiekt</th><th>Glowny</th><th>Data przypisania</th><th>Akcje</th></tr></thead>
-              <tbody id="assignTable"></tbody>
-            </table>
+
+          <!-- ASSIGNMENTS -->
+          <div id="tabAssignments" style="display: none">
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title"
+                  >Przypisania koordynatorow do obiektow</span
+                >
+                <div class="card-actions">
+                  <button
+                    class="btn btn-primary btn-sm"
+                    onclick="openModal('modalNewAssignment')"
+                  >
+                    + Przypisz
+                  </button>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Koordynator</th>
+                      <th>Obiekt</th>
+                      <th>Glowny</th>
+                      <th>Data przypisania</th>
+                      <th>Akcje</th>
+                    </tr>
+                  </thead>
+                  <tbody id="assignTable"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- WORKERS -->
+          <div id="tabWorkers" style="display: none">
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title"
+                  >Pracownicy — zmiana loginu / obiektu</span
+                >
+                <span
+                  class="card-count"
+                  id="workCount"
+                  style="
+                    font-size: 11px;
+                    color: var(--text2);
+                    background: var(--surface2);
+                    padding: 2px 8px;
+                    border-radius: 4px;
+                  "
+                ></span>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Login</th>
+                      <th>Imie i Nazwisko</th>
+                      <th>Obiekt</th>
+                      <th>Status</th>
+                      <th>Telegram</th>
+                      <th>Akcje</th>
+                    </tr>
+                  </thead>
+                  <tbody id="workTable"></tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       </div>
+    </div>
 
-      <!-- WORKERS -->
-      <div id="tabWorkers" style="display:none">
-        <div class="card">
-          <div class="card-header">
-            <span class="card-title">Pracownicy — zmiana loginu / obiektu</span>
-            <span class="card-count" id="workCount" style="font-size:11px;color:var(--text2);background:var(--surface2);padding:2px 8px;border-radius:4px"></span>
+    <!-- MODALS -->
+    <!-- New Coordinator -->
+    <div class="modal-overlay" id="modalNewCoord">
+      <div class="modal">
+        <div class="modal-title">Nowy koordynator</div>
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label">IMIE I NAZWISKO *</label>
+            <input class="form-input" id="nc_name" placeholder="Jan Kowalski" />
           </div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Login</th><th>Imie i Nazwisko</th><th>Obiekt</th><th>Status</th><th>Telegram</th><th>Akcje</th></tr></thead>
-              <tbody id="workTable"></tbody>
-            </table>
+          <div class="form-field">
+            <label class="form-label">EMAIL</label>
+            <input
+              class="form-input"
+              id="nc_email"
+              placeholder="jan@firma.pl"
+              type="email"
+            />
           </div>
         </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label">LOGIN *</label>
+            <input
+              class="form-input"
+              id="nc_username"
+              placeholder="jkowalski"
+            />
+          </div>
+          <div class="form-field">
+            <label class="form-label">HASLO *</label>
+            <input
+              class="form-input"
+              id="nc_password"
+              type="password"
+              placeholder="••••••••"
+            />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label">ROLA</label>
+            <select class="form-input" id="nc_role">
+              <option value="coordinator">Koordynator</option>
+              <option value="regional_coordinator">
+                Koordynator regionalny
+              </option>
+              <option value="head">Kierownik</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label class="form-label">TELEGRAM CHAT ID</label>
+            <input
+              class="form-input"
+              id="nc_telegram"
+              placeholder="np. 123456789"
+              type="number"
+            />
+          </div>
+        </div>
+        <div
+          class="form-field"
+          style="display: flex; align-items: center; padding-bottom: 4px"
+        >
+          <label class="form-check">
+            <input type="checkbox" id="nc_admin" />
+            Administrator (pelny dostep)
+          </label>
+        </div>
+        <div class="err-msg" id="nc_err"></div>
+        <div class="modal-btns">
+          <button class="btn btn-ghost" onclick="closeModal('modalNewCoord')">
+            Anuluj
+          </button>
+          <button class="btn btn-primary" onclick="createCoordinator()">
+            Zapisz
+          </button>
+        </div>
       </div>
+    </div>
 
+    <!-- Edit Coordinator -->
+    <div class="modal-overlay" id="modalEditCoord">
+      <div class="modal">
+        <div class="modal-title">Edytuj koordynatora</div>
+        <input type="hidden" id="ec_id" />
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label">IMIE I NAZWISKO</label>
+            <input class="form-input" id="ec_name" />
+          </div>
+          <div class="form-field">
+            <label class="form-label">EMAIL</label>
+            <input class="form-input" id="ec_email" type="email" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label"
+              >NOWE HASLO (zostaw puste jesli bez zmian)</label
+            >
+            <input
+              class="form-input"
+              id="ec_password"
+              type="password"
+              placeholder="••••••••"
+            />
+          </div>
+          <div class="form-field">
+            <label class="form-label">ROLA</label>
+            <select class="form-input" id="ec_role">
+              <option value="coordinator">Koordynator</option>
+              <option value="regional_coordinator">
+                Koordynator regionalny
+              </option>
+              <option value="head">Kierownik</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label">TELEGRAM CHAT ID</label>
+            <input
+              class="form-input"
+              id="ec_telegram"
+              placeholder="np. 123456789"
+              type="number"
+            />
+          </div>
+          <div
+            class="form-field"
+            style="display: flex; align-items: flex-end; padding-bottom: 4px"
+          >
+            <label class="form-check">
+              <input type="checkbox" id="ec_admin" />
+              Administrator (pelny dostep)
+            </label>
+          </div>
+        </div>
+        <div class="err-msg" id="ec_err"></div>
+        <div class="modal-btns">
+          <button class="btn btn-ghost" onclick="closeModal('modalEditCoord')">
+            Anuluj
+          </button>
+          <button class="btn btn-primary" onclick="updateCoordinator()">
+            Zapisz
+          </button>
+        </div>
+      </div>
     </div>
-  </div>
-</div>
 
-<!-- MODALS -->
-<!-- New Coordinator -->
-<div class="modal-overlay" id="modalNewCoord">
-  <div class="modal">
-    <div class="modal-title">Nowy koordynator</div>
-    <div class="form-row">
-      <div class="form-field">
-        <label class="form-label">IMIE I NAZWISKO *</label>
-        <input class="form-input" id="nc_name" placeholder="Jan Kowalski">
-      </div>
-      <div class="form-field">
-        <label class="form-label">EMAIL</label>
-        <input class="form-input" id="nc_email" placeholder="jan@firma.pl" type="email">
+    <!-- New Facility -->
+    <div class="modal-overlay" id="modalNewFacility">
+      <div class="modal">
+        <div class="modal-title">Nowy obiekt</div>
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label">NAZWA *</label>
+            <input
+              class="form-input"
+              id="nf_name"
+              placeholder="ID Logistics Mszczow"
+            />
+          </div>
+          <div class="form-field">
+            <label class="form-label">KLIENT</label>
+            <input
+              class="form-input"
+              id="nf_client"
+              placeholder="ID Logistics"
+            />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label">MIASTO</label>
+            <input class="form-input" id="nf_city" placeholder="Mszczow" />
+          </div>
+          <div class="form-field">
+            <label class="form-label">NAZWA GRUPY (Sheets)</label>
+            <input
+              class="form-input"
+              id="nf_group"
+              placeholder="ID Logistics"
+            />
+          </div>
+        </div>
+        <div class="form-field">
+          <label class="form-label">TELEGRAM CHAT ID (dla raportow)</label>
+          <input
+            class="form-input"
+            id="nf_chat"
+            placeholder="-1001234567890"
+            type="number"
+          />
+        </div>
+        <div class="err-msg" id="nf_err"></div>
+        <div class="modal-btns">
+          <button
+            class="btn btn-ghost"
+            onclick="closeModal('modalNewFacility')"
+          >
+            Anuluj
+          </button>
+          <button class="btn btn-primary" onclick="createFacility()">
+            Zapisz
+          </button>
+        </div>
       </div>
     </div>
-    <div class="form-row">
-      <div class="form-field">
-        <label class="form-label">LOGIN *</label>
-        <input class="form-input" id="nc_username" placeholder="jkowalski">
-      </div>
-      <div class="form-field">
-        <label class="form-label">HASLO *</label>
-        <input class="form-input" id="nc_password" type="password" placeholder="••••••••">
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="form-field">
-        <label class="form-label">ROLA</label>
-        <select class="form-input" id="nc_role">
-          <option value="coordinator">Koordynator</option>
-          <option value="regional_coordinator">Koordynator regionalny</option>
-          <option value="head">Kierownik</option>
-        </select>
-      </div>
-      <div class="form-field">
-        <label class="form-label">TELEGRAM CHAT ID</label>
-        <input class="form-input" id="nc_telegram" placeholder="np. 123456789" type="number">
-      </div>
-    </div>
-    <div class="form-field" style="display:flex;align-items:center;padding-bottom:4px">
-      <label class="form-check">
-        <input type="checkbox" id="nc_admin">
-        Administrator (pelny dostep)
-      </label>
-    </div>
-    <div class="err-msg" id="nc_err"></div>
-    <div class="modal-btns">
-      <button class="btn btn-ghost" onclick="closeModal('modalNewCoord')">Anuluj</button>
-      <button class="btn btn-primary" onclick="createCoordinator()">Zapisz</button>
-    </div>
-  </div>
-</div>
 
-<!-- Edit Coordinator -->
-<div class="modal-overlay" id="modalEditCoord">
-  <div class="modal">
-    <div class="modal-title">Edytuj koordynatora</div>
-    <input type="hidden" id="ec_id">
-    <div class="form-row">
-      <div class="form-field">
-        <label class="form-label">IMIE I NAZWISKO</label>
-        <input class="form-input" id="ec_name">
-      </div>
-      <div class="form-field">
-        <label class="form-label">EMAIL</label>
-        <input class="form-input" id="ec_email" type="email">
+    <!-- Edit Facility -->
+    <div class="modal-overlay" id="modalEditFacility">
+      <div class="modal">
+        <div class="modal-title">Edytuj obiekt</div>
+        <input type="hidden" id="ef_id" />
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label">NAZWA</label>
+            <input class="form-input" id="ef_name" />
+          </div>
+          <div class="form-field">
+            <label class="form-label">KLIENT</label>
+            <input class="form-input" id="ef_client" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label">MIASTO</label>
+            <input class="form-input" id="ef_city" />
+          </div>
+          <div class="form-field">
+            <label class="form-label">NAZWA GRUPY</label>
+            <input class="form-input" id="ef_group" />
+          </div>
+        </div>
+        <div class="form-field">
+          <label class="form-label">TELEGRAM CHAT ID</label>
+          <input class="form-input" id="ef_chat" type="number" />
+        </div>
+        <div class="modal-btns">
+          <button
+            class="btn btn-ghost"
+            onclick="closeModal('modalEditFacility')"
+          >
+            Anuluj
+          </button>
+          <button class="btn btn-primary" onclick="updateFacility()">
+            Zapisz
+          </button>
+        </div>
       </div>
     </div>
-    <div class="form-row">
-      <div class="form-field">
-        <label class="form-label">NOWE HASLO (zostaw puste jesli bez zmian)</label>
-        <input class="form-input" id="ec_password" type="password" placeholder="••••••••">
-      </div>
-      <div class="form-field">
-        <label class="form-label">ROLA</label>
-        <select class="form-input" id="ec_role">
-          <option value="coordinator">Koordynator</option>
-          <option value="regional_coordinator">Koordynator regionalny</option>
-          <option value="head">Kierownik</option>
-        </select>
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="form-field">
-        <label class="form-label">TELEGRAM CHAT ID</label>
-        <input class="form-input" id="ec_telegram" placeholder="np. 123456789" type="number">
-      </div>
-      <div class="form-field" style="display:flex;align-items:flex-end;padding-bottom:4px">
-        <label class="form-check">
-          <input type="checkbox" id="ec_admin">
-          Administrator (pelny dostep)
-        </label>
-      </div>
-    </div>
-    <div class="err-msg" id="ec_err"></div>
-    <div class="modal-btns">
-      <button class="btn btn-ghost" onclick="closeModal('modalEditCoord')">Anuluj</button>
-      <button class="btn btn-primary" onclick="updateCoordinator()">Zapisz</button>
-    </div>
-  </div>
-</div>
 
-<!-- New Facility -->
-<div class="modal-overlay" id="modalNewFacility">
-  <div class="modal">
-    <div class="modal-title">Nowy obiekt</div>
-    <div class="form-row">
-      <div class="form-field">
-        <label class="form-label">NAZWA *</label>
-        <input class="form-input" id="nf_name" placeholder="ID Logistics Mszczow">
-      </div>
-      <div class="form-field">
-        <label class="form-label">KLIENT</label>
-        <input class="form-input" id="nf_client" placeholder="ID Logistics">
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="form-field">
-        <label class="form-label">MIASTO</label>
-        <input class="form-input" id="nf_city" placeholder="Mszczow">
-      </div>
-      <div class="form-field">
-        <label class="form-label">NAZWA GRUPY (Sheets)</label>
-        <input class="form-input" id="nf_group" placeholder="ID Logistics">
-      </div>
-    </div>
-    <div class="form-field">
-      <label class="form-label">TELEGRAM CHAT ID (dla raportow)</label>
-      <input class="form-input" id="nf_chat" placeholder="-1001234567890" type="number">
-    </div>
-    <div class="err-msg" id="nf_err"></div>
-    <div class="modal-btns">
-      <button class="btn btn-ghost" onclick="closeModal('modalNewFacility')">Anuluj</button>
-      <button class="btn btn-primary" onclick="createFacility()">Zapisz</button>
-    </div>
-  </div>
-</div>
-
-<!-- Edit Facility -->
-<div class="modal-overlay" id="modalEditFacility">
-  <div class="modal">
-    <div class="modal-title">Edytuj obiekt</div>
-    <input type="hidden" id="ef_id">
-    <div class="form-row">
-      <div class="form-field">
-        <label class="form-label">NAZWA</label>
-        <input class="form-input" id="ef_name">
-      </div>
-      <div class="form-field">
-        <label class="form-label">KLIENT</label>
-        <input class="form-input" id="ef_client">
+    <!-- New Assignment -->
+    <div class="modal-overlay" id="modalNewAssignment">
+      <div class="modal">
+        <div class="modal-title">Przypisz koordynatora do obiektu</div>
+        <div class="form-field">
+          <label class="form-label">KOORDYNATOR *</label>
+          <select class="form-input" id="na_coord"></select>
+        </div>
+        <div class="form-field">
+          <label class="form-label">OBIEKT *</label>
+          <select class="form-input" id="na_facility"></select>
+        </div>
+        <div class="form-field">
+          <label class="form-check">
+            <input type="checkbox" id="na_primary" />
+            Glowny koordynator tego obiektu
+          </label>
+        </div>
+        <div class="err-msg" id="na_err"></div>
+        <div class="modal-btns">
+          <button
+            class="btn btn-ghost"
+            onclick="closeModal('modalNewAssignment')"
+          >
+            Anuluj
+          </button>
+          <button class="btn btn-primary" onclick="createAssignment()">
+            Przypisz
+          </button>
+        </div>
       </div>
     </div>
-    <div class="form-row">
-      <div class="form-field">
-        <label class="form-label">MIASTO</label>
-        <input class="form-input" id="ef_city">
-      </div>
-      <div class="form-field">
-        <label class="form-label">NAZWA GRUPY</label>
-        <input class="form-input" id="ef_group">
-      </div>
-    </div>
-    <div class="form-field">
-      <label class="form-label">TELEGRAM CHAT ID</label>
-      <input class="form-input" id="ef_chat" type="number">
-    </div>
-    <div class="modal-btns">
-      <button class="btn btn-ghost" onclick="closeModal('modalEditFacility')">Anuluj</button>
-      <button class="btn btn-primary" onclick="updateFacility()">Zapisz</button>
-    </div>
-  </div>
-</div>
 
-<!-- New Assignment -->
-<div class="modal-overlay" id="modalNewAssignment">
-  <div class="modal">
-    <div class="modal-title">Przypisz koordynatora do obiektu</div>
-    <div class="form-field">
-      <label class="form-label">KOORDYNATOR *</label>
-      <select class="form-input" id="na_coord"></select>
-    </div>
-    <div class="form-field">
-      <label class="form-label">OBIEKT *</label>
-      <select class="form-input" id="na_facility"></select>
-    </div>
-    <div class="form-field">
-      <label class="form-check">
-        <input type="checkbox" id="na_primary">
-        Glowny koordynator tego obiektu
-      </label>
-    </div>
-    <div class="err-msg" id="na_err"></div>
-    <div class="modal-btns">
-      <button class="btn btn-ghost" onclick="closeModal('modalNewAssignment')">Anuluj</button>
-      <button class="btn btn-primary" onclick="createAssignment()">Przypisz</button>
-    </div>
-  </div>
-</div>
-
-<!-- Edit Worker -->
-<div class="modal-overlay" id="modalEditWorker">
-  <div class="modal">
-    <div class="modal-title">Edytuj pracownika</div>
-    <input type="hidden" id="ew_id">
-    <div class="form-row">
-      <div class="form-field">
-        <label class="form-label">LOGIN (ID)</label>
-        <input class="form-input" id="ew_login">
-      </div>
-      <div class="form-field">
-        <label class="form-label">IMIE I NAZWISKO</label>
-        <input class="form-input" id="ew_name">
+    <!-- Edit Worker -->
+    <div class="modal-overlay" id="modalEditWorker">
+      <div class="modal">
+        <div class="modal-title">Edytuj pracownika</div>
+        <input type="hidden" id="ew_id" />
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label">LOGIN (ID)</label>
+            <input class="form-input" id="ew_login" />
+          </div>
+          <div class="form-field">
+            <label class="form-label">IMIE I NAZWISKO</label>
+            <input class="form-input" id="ew_name" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label">OBIEKT</label>
+            <select class="form-input" id="ew_facility"></select>
+          </div>
+          <div class="form-field">
+            <label class="form-label">STATUS</label>
+            <select class="form-input" id="ew_status">
+              <option value="pracuje">Pracuje</option>
+              <option value="zwolniony">Zwolniony</option>
+              <option value="przeniesiony">Przeniesiony</option>
+              <option value="urlop">Urlop</option>
+            </select>
+          </div>
+        </div>
+        <div class="err-msg" id="ew_err"></div>
+        <div class="modal-btns">
+          <button class="btn btn-ghost" onclick="closeModal('modalEditWorker')">
+            Anuluj
+          </button>
+          <button class="btn btn-primary" onclick="updateWorker()">
+            Zapisz
+          </button>
+        </div>
       </div>
     </div>
-    <div class="form-row">
-      <div class="form-field">
-        <label class="form-label">OBIEKT</label>
-        <select class="form-input" id="ew_facility"></select>
-      </div>
-      <div class="form-field">
-        <label class="form-label">STATUS</label>
-        <select class="form-input" id="ew_status">
-          <option value="pracuje">Pracuje</option>
-          <option value="zwolniony">Zwolniony</option>
-          <option value="przeniesiony">Przeniesiony</option>
-          <option value="urlop">Urlop</option>
-        </select>
-      </div>
-    </div>
-    <div class="err-msg" id="ew_err"></div>
-    <div class="modal-btns">
-      <button class="btn btn-ghost" onclick="closeModal('modalEditWorker')">Anuluj</button>
-      <button class="btn btn-primary" onclick="updateWorker()">Zapisz</button>
-    </div>
-  </div>
-</div>
 
-<script>
-let session = localStorage.getItem('admin_session');
-let currentTab = 'coordinators';
-let coordData = [], facData = [], assignData = [], workData = [];
+    <script>
+      let session = localStorage.getItem("admin_session");
+      let currentTab = "coordinators";
+      let coordData = [],
+        facData = [],
+        assignData = [],
+        workData = [];
 
-// ── AUTH ─────────────────────────────────────────────────────
-window.addEventListener('DOMContentLoaded', () => {
-  if (session) checkSession();
-});
+      // ── AUTH ─────────────────────────────────────────────────────
+      window.addEventListener("DOMContentLoaded", () => {
+        if (session) checkSession();
+      });
 
-async function checkSession() {
-  try {
-    const res = await api('GET', '/admin/me');
-    if (res.ok) showAdmin(res.user);
-    else { localStorage.removeItem('admin_session'); session = null; }
-  } catch(e) { localStorage.removeItem('admin_session'); session = null; }
-}
+      async function checkSession() {
+        try {
+          const res = await api("GET", "/admin/me");
+          if (res.ok) {
+            if (!res.user.is_admin) {
+              window.location = "/index.html";
+              return;
+            }
+            localStorage.removeItem("sas_session");
+            localStorage.removeItem("sas_user");
+            showAdmin(res.user);
+          } else {
+            localStorage.removeItem("admin_session");
+            session = null;
+          }
+        } catch (e) {
+          localStorage.removeItem("admin_session");
+          session = null;
+        }
+      }
 
-async function doLogin() {
-  const username = document.getElementById('loginUser').value.trim();
-  const password = document.getElementById('loginPass').value;
-  document.getElementById('loginErr').textContent = '';
-  try {
-    const res = await fetch('/admin/login', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ username, password })
-    });
-    const data = await res.json();
-    if (!data.ok) { document.getElementById('loginErr').textContent = 'Nieprawidlowy login lub haslo'; return; }
-    session = data.token;
-    localStorage.setItem('admin_session', session);
-    showAdmin(data.user);
-  } catch(e) { document.getElementById('loginErr').textContent = 'Blad polaczenia'; }
-}
+      async function doLogin() {
+        const username = document.getElementById("loginUser").value.trim();
+        const password = document.getElementById("loginPass").value;
+        document.getElementById("loginErr").textContent = "";
+        try {
+          const res = await fetch("/admin/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password }),
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            document.getElementById("loginErr").textContent =
+              "Nieprawidlowy login lub haslo";
+            return;
+          }
 
-function showAdmin(user) {
-  document.getElementById('loginPage').style.display = 'none';
-  document.getElementById('adminLayout').style.display = 'flex';
-  document.getElementById('userName').textContent = user.full_name;
-  document.getElementById('userAvatar').textContent = user.full_name.charAt(0).toUpperCase();
-  loadTab('coordinators');
-}
+          if (!data.user.is_admin) {
+            localStorage.removeItem("admin_session");
+            localStorage.setItem("sas_session", data.token);
+            localStorage.setItem("sas_user", JSON.stringify(data.user));
+            window.location = "/index.html";
+            return;
+          }
 
-async function doLogout() {
-  await api('POST', '/admin/logout');
-  localStorage.removeItem('admin_session');
-  session = null;
-  location.reload();
-}
+          localStorage.removeItem("sas_session");
+          localStorage.removeItem("sas_user");
+          session = data.token;
+          localStorage.setItem("admin_session", session);
+          showAdmin(data.user);
+        } catch (e) {
+          document.getElementById("loginErr").textContent = "Blad polaczenia";
+        }
+      }
 
-// ── API HELPER ────────────────────────────────────────────────
-async function api(method, path, body) {
-  const opts = { method, headers: {'Content-Type':'application/json', 'x-session': session || ''} };
-  if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(path, opts);
-  return res.json();
-}
+      function showAdmin(user) {
+        document.getElementById("loginPage").style.display = "none";
+        document.getElementById("adminLayout").style.display = "flex";
+        document.getElementById("userName").textContent = user.full_name;
+        document.getElementById("userAvatar").textContent = user.full_name
+          .charAt(0)
+          .toUpperCase();
+        loadTab("coordinators");
+      }
 
-// ── TABS ──────────────────────────────────────────────────────
-function showTab(tab) {
-  currentTab = tab;
-  ['coordinators','facilities','assignments','workers'].forEach(t => {
-    document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1)).style.display = t === tab ? '' : 'none';
-  });
-  document.querySelectorAll('.nav-item').forEach((el, i) => {
-    el.classList.toggle('active', ['coordinators','facilities','assignments','workers',''][i] === tab);
-  });
-  const titles = { coordinators:'Koordynatorzy', facilities:'Obiekty', assignments:'Przypisania', workers:'Pracownicy' };
-  document.getElementById('tabTitle').textContent = titles[tab] || tab;
-  document.getElementById('searchInput').value = '';
-  loadTab(tab);
-}
+      function doLogout() {
+        fetch("/admin/logout", {
+          method: "POST",
+          headers: { "x-session": session },
+        }).catch(() => {});
+        localStorage.removeItem("admin_session");
+        localStorage.removeItem("sas_session");
+        localStorage.removeItem("sas_user");
+        window.location = "/login.html";
+      }
 
-async function loadTab(tab) {
-  if (tab === 'coordinators') loadCoordinators();
-  if (tab === 'facilities')   loadFacilities();
-  if (tab === 'assignments')  loadAssignments();
-  if (tab === 'workers')      loadWorkers();
-}
+      // ── API HELPER ────────────────────────────────────────────────
+      async function api(method, path, body) {
+        const opts = {
+          method,
+          headers: {
+            "Content-Type": "application/json",
+            "x-session": session || "",
+          },
+        };
+        if (body) opts.body = JSON.stringify(body);
+        const res = await fetch(path, opts);
+        return res.json();
+      }
 
-// ── COORDINATORS ──────────────────────────────────────────────
-async function loadCoordinators() {
-  const res = await api('GET', '/admin/coordinators');
-  if (!res.ok) return;
-  coordData = res.data;
-  renderCoordinators(coordData);
-}
+      // ── TABS ──────────────────────────────────────────────────────
+      function showTab(tab) {
+        currentTab = tab;
+        ["coordinators", "facilities", "assignments", "workers"].forEach(
+          (t) => {
+            document.getElementById(
+              "tab" + t.charAt(0).toUpperCase() + t.slice(1),
+            ).style.display = t === tab ? "" : "none";
+          },
+        );
+        document.querySelectorAll(".nav-item").forEach((el, i) => {
+          el.classList.toggle(
+            "active",
+            ["coordinators", "facilities", "assignments", "workers", ""][i] ===
+              tab,
+          );
+        });
+        const titles = {
+          coordinators: "Koordynatorzy",
+          facilities: "Obiekty",
+          assignments: "Przypisania",
+          workers: "Pracownicy",
+        };
+        document.getElementById("tabTitle").textContent = titles[tab] || tab;
+        document.getElementById("searchInput").value = "";
+        loadTab(tab);
+      }
 
-function renderCoordinators(data) {
-  document.getElementById('coordCount').textContent = data.length + ' os.';
-  const roleLabel = { coordinator:'Koordynator', regional_coordinator:'Regionalny', head:'Kierownik' };
-  const roleBadge = { coordinator:'badge-blue', regional_coordinator:'badge-purple', head:'badge-orange' };
-  document.getElementById('coordTable').innerHTML = data.map(c => `
+      async function loadTab(tab) {
+        if (tab === "coordinators") loadCoordinators();
+        if (tab === "facilities") loadFacilities();
+        if (tab === "assignments") loadAssignments();
+        if (tab === "workers") loadWorkers();
+      }
+
+      // ── COORDINATORS ──────────────────────────────────────────────
+      async function loadCoordinators() {
+        const res = await api("GET", "/admin/coordinators");
+        if (!res.ok) return;
+        coordData = res.data;
+        renderCoordinators(coordData);
+      }
+
+      function renderCoordinators(data) {
+        document.getElementById("coordCount").textContent =
+          data.length + " os.";
+        const roleLabel = {
+          coordinator: "Koordynator",
+          regional_coordinator: "Regionalny",
+          head: "Kierownik",
+        };
+        const roleBadge = {
+          coordinator: "badge-blue",
+          regional_coordinator: "badge-purple",
+          head: "badge-orange",
+        };
+        document.getElementById("coordTable").innerHTML =
+          data
+            .map(
+              (c) => `
     <tr>
-      <td><div class="name-cell">${c.full_name}</div><div class="sub-cell">${c.email||'—'}</div></td>
-      <td><span style="font-family:var(--mono);font-size:11px">${c.username||'—'}</span></td>
+      <td><div class="name-cell">${c.full_name}</div><div class="sub-cell">${c.email || "—"}</div></td>
+      <td><span style="font-family:var(--mono);font-size:11px">${c.username || "—"}</span></td>
       <td>
-        <span class="badge ${roleBadge[c.role]||'badge-blue'}">${roleLabel[c.role]||c.role}</span>
-        ${c.is_admin ? '<span class="badge badge-orange" style="margin-left:4px">ADMIN</span>' : ''}
+        <span class="badge ${roleBadge[c.role] || "badge-blue"}">${roleLabel[c.role] || c.role}</span>
+        ${c.is_admin ? '<span class="badge badge-orange" style="margin-left:4px">ADMIN</span>' : ""}
       </td>
-      <td style="font-family:var(--mono);font-size:11px;color:var(--text3)">${c.telegram_chat_id || '—'}</td>
+      <td style="font-family:var(--mono);font-size:11px;color:var(--text3)">${c.telegram_chat_id || "—"}</td>
       <td><span style="font-family:var(--mono)">${c.facility_count}</span></td>
-      <td style="font-size:11px;color:var(--text3)">${c.last_login ? new Date(c.last_login).toLocaleString('pl') : '—'}</td>
+      <td style="font-size:11px;color:var(--text3)">${c.last_login ? new Date(c.last_login).toLocaleString("pl") : "—"}</td>
       <td>
-        <button class="btn btn-ghost btn-sm" onclick="openEditCoord(${JSON.stringify(c).replace(/"/g,'&quot;')})">Edytuj</button>
+        <button class="btn btn-ghost btn-sm" onclick="openEditCoord(${JSON.stringify(c).replace(/"/g, "&quot;")})">Edytuj</button>
       </td>
-    </tr>`).join('') || '<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:20px">Brak koordynatorow</td></tr>';
-}
+    </tr>`,
+            )
+            .join("") ||
+          '<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:20px">Brak koordynatorow</td></tr>';
+      }
 
-async function createCoordinator() {
-  const body = {
-    full_name:        document.getElementById('nc_name').value.trim(),
-    email:            document.getElementById('nc_email').value.trim() || null,
-    username:         document.getElementById('nc_username').value.trim(),
-    password:         document.getElementById('nc_password').value,
-    role:             document.getElementById('nc_role').value,
-    is_admin:         document.getElementById('nc_admin').checked,
-    telegram_chat_id: document.getElementById('nc_telegram').value || null,
-  };
-  if (!body.full_name || !body.username || !body.password) {
-    document.getElementById('nc_err').textContent = 'Wypelnij wymagane pola'; return;
-  }
-  const res = await api('POST', '/admin/coordinators', body);
-  if (!res.ok) { document.getElementById('nc_err').textContent = res.error; return; }
-  closeModal('modalNewCoord');
-  loadCoordinators();
-}
+      async function createCoordinator() {
+        const body = {
+          full_name: document.getElementById("nc_name").value.trim(),
+          email: document.getElementById("nc_email").value.trim() || null,
+          username: document.getElementById("nc_username").value.trim(),
+          password: document.getElementById("nc_password").value,
+          role: document.getElementById("nc_role").value,
+          is_admin: document.getElementById("nc_admin").checked,
+          telegram_chat_id:
+            document.getElementById("nc_telegram").value || null,
+        };
+        if (!body.full_name || !body.username || !body.password) {
+          document.getElementById("nc_err").textContent =
+            "Wypelnij wymagane pola";
+          return;
+        }
+        const res = await api("POST", "/admin/coordinators", body);
+        if (!res.ok) {
+          document.getElementById("nc_err").textContent = res.error;
+          return;
+        }
+        closeModal("modalNewCoord");
+        loadCoordinators();
+      }
 
-function openEditCoord(c) {
-  document.getElementById('ec_id').value       = c.id;
-  document.getElementById('ec_name').value     = c.full_name;
-  document.getElementById('ec_email').value    = c.email || '';
-  document.getElementById('ec_role').value     = c.role;
-  document.getElementById('ec_admin').checked  = c.is_admin;
-  document.getElementById('ec_telegram').value = c.telegram_chat_id || '';
-  document.getElementById('ec_password').value = '';
-  openModal('modalEditCoord');
-}
+      function openEditCoord(c) {
+        document.getElementById("ec_id").value = c.id;
+        document.getElementById("ec_name").value = c.full_name;
+        document.getElementById("ec_email").value = c.email || "";
+        document.getElementById("ec_role").value = c.role;
+        document.getElementById("ec_admin").checked = c.is_admin;
+        document.getElementById("ec_telegram").value = c.telegram_chat_id || "";
+        document.getElementById("ec_password").value = "";
+        openModal("modalEditCoord");
+      }
 
-async function updateCoordinator() {
-  const id = document.getElementById('ec_id').value;
-  const body = {
-    full_name:        document.getElementById('ec_name').value.trim() || null,
-    email:            document.getElementById('ec_email').value.trim() || null,
-    role:             document.getElementById('ec_role').value,
-    is_admin:         document.getElementById('ec_admin').checked,
-    password:         document.getElementById('ec_password').value || null,
-    telegram_chat_id: document.getElementById('ec_telegram').value || null,
-  };
-  const res = await api('PATCH', `/admin/coordinators/${id}`, body);
-  if (!res.ok) { document.getElementById('ec_err').textContent = res.error; return; }
-  closeModal('modalEditCoord');
-  loadCoordinators();
-}
+      async function updateCoordinator() {
+        const id = document.getElementById("ec_id").value;
+        const body = {
+          full_name: document.getElementById("ec_name").value.trim() || null,
+          email: document.getElementById("ec_email").value.trim() || null,
+          role: document.getElementById("ec_role").value,
+          is_admin: document.getElementById("ec_admin").checked,
+          password: document.getElementById("ec_password").value || null,
+          telegram_chat_id:
+            document.getElementById("ec_telegram").value || null,
+        };
+        const res = await api("PATCH", `/admin/coordinators/${id}`, body);
+        if (!res.ok) {
+          document.getElementById("ec_err").textContent = res.error;
+          return;
+        }
+        closeModal("modalEditCoord");
+        loadCoordinators();
+      }
 
-// ── FACILITIES ────────────────────────────────────────────────
-async function loadFacilities() {
-  const res = await api('GET', '/admin/facilities');
-  if (!res.ok) return;
-  facData = res.data;
-  renderFacilities(facData);
-}
+      // ── FACILITIES ────────────────────────────────────────────────
+      async function loadFacilities() {
+        const res = await api("GET", "/admin/facilities");
+        if (!res.ok) return;
+        facData = res.data;
+        renderFacilities(facData);
+      }
 
-function renderFacilities(data) {
-  document.getElementById('facCount').textContent = data.length;
-  document.getElementById('facTable').innerHTML = data.map(f => `
+      function renderFacilities(data) {
+        document.getElementById("facCount").textContent = data.length;
+        document.getElementById("facTable").innerHTML =
+          data
+            .map(
+              (f) => `
     <tr>
-      <td><div class="name-cell">${f.name}</div><div class="sub-cell">${f.group_name||'—'}</div></td>
-      <td style="color:var(--text2);font-size:12px">${f.client_name||'—'}</td>
-      <td style="color:var(--text2);font-size:12px">${f.city||'—'}</td>
+      <td><div class="name-cell">${f.name}</div><div class="sub-cell">${f.group_name || "—"}</div></td>
+      <td style="color:var(--text2);font-size:12px">${f.client_name || "—"}</td>
+      <td style="color:var(--text2);font-size:12px">${f.city || "—"}</td>
       <td><span style="font-family:var(--mono)">${f.worker_count}</span></td>
       <td><span style="font-family:var(--mono)">${f.coordinator_count}</span></td>
       <td>
-        <button class="btn btn-ghost btn-sm" onclick="openEditFacility(${JSON.stringify(f).replace(/"/g,'&quot;')})">Edytuj</button>
+        <button class="btn btn-ghost btn-sm" onclick="openEditFacility(${JSON.stringify(f).replace(/"/g, "&quot;")})">Edytuj</button>
       </td>
-    </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Brak obiektow</td></tr>';
-}
+    </tr>`,
+            )
+            .join("") ||
+          '<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Brak obiektow</td></tr>';
+      }
 
-async function createFacility() {
-  const body = {
-    name:             document.getElementById('nf_name').value.trim(),
-    client_name:      document.getElementById('nf_client').value.trim() || null,
-    city:             document.getElementById('nf_city').value.trim() || null,
-    group_name:       document.getElementById('nf_group').value.trim() || null,
-    telegram_chat_id: document.getElementById('nf_chat').value || null,
-  };
-  if (!body.name) { document.getElementById('nf_err').textContent = 'Nazwa jest wymagana'; return; }
-  const res = await api('POST', '/admin/facilities', body);
-  if (!res.ok) { document.getElementById('nf_err').textContent = res.error; return; }
-  closeModal('modalNewFacility');
-  loadFacilities();
-}
+      async function createFacility() {
+        const body = {
+          name: document.getElementById("nf_name").value.trim(),
+          client_name:
+            document.getElementById("nf_client").value.trim() || null,
+          city: document.getElementById("nf_city").value.trim() || null,
+          group_name: document.getElementById("nf_group").value.trim() || null,
+          telegram_chat_id: document.getElementById("nf_chat").value || null,
+        };
+        if (!body.name) {
+          document.getElementById("nf_err").textContent = "Nazwa jest wymagana";
+          return;
+        }
+        const res = await api("POST", "/admin/facilities", body);
+        if (!res.ok) {
+          document.getElementById("nf_err").textContent = res.error;
+          return;
+        }
+        closeModal("modalNewFacility");
+        loadFacilities();
+      }
 
-function openEditFacility(f) {
-  document.getElementById('ef_id').value     = f.id;
-  document.getElementById('ef_name').value   = f.name;
-  document.getElementById('ef_client').value = f.client_name || '';
-  document.getElementById('ef_city').value   = f.city || '';
-  document.getElementById('ef_group').value  = f.group_name || '';
-  document.getElementById('ef_chat').value   = f.telegram_chat_id || '';
-  openModal('modalEditFacility');
-}
+      function openEditFacility(f) {
+        document.getElementById("ef_id").value = f.id;
+        document.getElementById("ef_name").value = f.name;
+        document.getElementById("ef_client").value = f.client_name || "";
+        document.getElementById("ef_city").value = f.city || "";
+        document.getElementById("ef_group").value = f.group_name || "";
+        document.getElementById("ef_chat").value = f.telegram_chat_id || "";
+        openModal("modalEditFacility");
+      }
 
-async function updateFacility() {
-  const id = document.getElementById('ef_id').value;
-  const body = {
-    name:             document.getElementById('ef_name').value.trim() || null,
-    client_name:      document.getElementById('ef_client').value.trim() || null,
-    city:             document.getElementById('ef_city').value.trim() || null,
-    group_name:       document.getElementById('ef_group').value.trim() || null,
-    telegram_chat_id: document.getElementById('ef_chat').value || null,
-  };
-  const res = await api('PATCH', `/admin/facilities/${id}`, body);
-  if (!res.ok) return;
-  closeModal('modalEditFacility');
-  loadFacilities();
-}
+      async function updateFacility() {
+        const id = document.getElementById("ef_id").value;
+        const body = {
+          name: document.getElementById("ef_name").value.trim() || null,
+          client_name:
+            document.getElementById("ef_client").value.trim() || null,
+          city: document.getElementById("ef_city").value.trim() || null,
+          group_name: document.getElementById("ef_group").value.trim() || null,
+          telegram_chat_id: document.getElementById("ef_chat").value || null,
+        };
+        const res = await api("PATCH", `/admin/facilities/${id}`, body);
+        if (!res.ok) return;
+        closeModal("modalEditFacility");
+        loadFacilities();
+      }
 
-// ── ASSIGNMENTS ───────────────────────────────────────────────
-async function loadAssignments() {
-  const res = await api('GET', '/admin/assignments');
-  if (!res.ok) return;
-  assignData = res.data;
-  renderAssignments(assignData);
-}
+      // ── ASSIGNMENTS ───────────────────────────────────────────────
+      async function loadAssignments() {
+        const res = await api("GET", "/admin/assignments");
+        if (!res.ok) return;
+        assignData = res.data;
+        renderAssignments(assignData);
+      }
 
-function renderAssignments(data) {
-  document.getElementById('assignTable').innerHTML = data.map(a => `
+      function renderAssignments(data) {
+        document.getElementById("assignTable").innerHTML =
+          data
+            .map(
+              (a) => `
     <tr>
       <td class="name-cell">${a.coordinator_name}</td>
       <td style="color:var(--text2)">${a.facility_name}</td>
-      <td>${a.is_primary ? '<span class="badge badge-orange">Glowny</span>' : '—'}</td>
-      <td style="font-size:11px;color:var(--text3)">${new Date(a.assigned_at).toLocaleDateString('pl')}</td>
+      <td>${a.is_primary ? '<span class="badge badge-orange">Glowny</span>' : "—"}</td>
+      <td style="font-size:11px;color:var(--text3)">${new Date(a.assigned_at).toLocaleDateString("pl")}</td>
       <td>
         <button class="btn btn-red btn-sm" onclick="deleteAssignment(${a.coordinator_id},${a.facility_id})">Usun</button>
       </td>
-    </tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:20px">Brak przypisań</td></tr>';
-}
+    </tr>`,
+            )
+            .join("") ||
+          '<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:20px">Brak przypisań</td></tr>';
+      }
 
-async function createAssignment() {
-  const body = {
-    coordinator_id: parseInt(document.getElementById('na_coord').value),
-    facility_id:    parseInt(document.getElementById('na_facility').value),
-    is_primary:     document.getElementById('na_primary').checked,
-  };
-  if (!body.coordinator_id || !body.facility_id) {
-    document.getElementById('na_err').textContent = 'Wybierz koordynatora i obiekt'; return;
-  }
-  const res = await api('POST', '/admin/assignments', body);
-  if (!res.ok) { document.getElementById('na_err').textContent = res.error; return; }
-  closeModal('modalNewAssignment');
-  loadAssignments();
-}
+      async function createAssignment() {
+        const body = {
+          coordinator_id: parseInt(document.getElementById("na_coord").value),
+          facility_id: parseInt(document.getElementById("na_facility").value),
+          is_primary: document.getElementById("na_primary").checked,
+        };
+        if (!body.coordinator_id || !body.facility_id) {
+          document.getElementById("na_err").textContent =
+            "Wybierz koordynatora i obiekt";
+          return;
+        }
+        const res = await api("POST", "/admin/assignments", body);
+        if (!res.ok) {
+          document.getElementById("na_err").textContent = res.error;
+          return;
+        }
+        closeModal("modalNewAssignment");
+        loadAssignments();
+      }
 
-async function deleteAssignment(coordId, facId) {
-  if (!confirm('Usunac przypisanie?')) return;
-  await api('DELETE', `/admin/assignments/${coordId}/${facId}`);
-  loadAssignments();
-}
+      async function deleteAssignment(coordId, facId) {
+        if (!confirm("Usunac przypisanie?")) return;
+        await api("DELETE", `/admin/assignments/${coordId}/${facId}`);
+        loadAssignments();
+      }
 
-// ── WORKERS ───────────────────────────────────────────────────
-async function loadWorkers() {
-  const res = await api('GET', '/admin/workers');
-  if (!res.ok) return;
-  workData = res.data;
-  renderWorkers(workData);
-}
+      // ── WORKERS ───────────────────────────────────────────────────
+      async function loadWorkers() {
+        const res = await api("GET", "/admin/workers");
+        if (!res.ok) return;
+        workData = res.data;
+        renderWorkers(workData);
+      }
 
-function renderWorkers(data) {
-  document.getElementById('workCount').textContent = data.length + ' os.';
-  document.getElementById('workTable').innerHTML = data.map(w => `
+      function renderWorkers(data) {
+        document.getElementById("workCount").textContent = data.length + " os.";
+        document.getElementById("workTable").innerHTML = data
+          .map(
+            (w) => `
     <tr>
       <td><span style="font-family:var(--mono);font-size:12px">${w.login}</span></td>
       <td class="name-cell">${w.full_name}</td>
-      <td style="color:var(--text2);font-size:12px">${w.facility_name||'—'}</td>
+      <td style="color:var(--text2);font-size:12px">${w.facility_name || "—"}</td>
       <td><span class="badge badge-green">${w.status}</span></td>
-      <td style="font-size:11px;color:var(--text3)">${w.telegram_chat_id ? '✅ '+w.telegram_chat_id : '—'}</td>
+      <td style="font-size:11px;color:var(--text3)">${w.telegram_chat_id ? "✅ " + w.telegram_chat_id : "—"}</td>
       <td>
-        <button class="btn btn-ghost btn-sm" onclick="openEditWorker(${JSON.stringify(w).replace(/"/g,'&quot;')})">Edytuj</button>
+        <button class="btn btn-ghost btn-sm" onclick="openEditWorker(${JSON.stringify(w).replace(/"/g, "&quot;")})">Edytuj</button>
       </td>
-    </tr>`).join('');
-}
+    </tr>`,
+          )
+          .join("");
+      }
 
-async function openEditWorker(w) {
-  document.getElementById('ew_id').value     = w.id;
-  document.getElementById('ew_login').value  = w.login;
-  document.getElementById('ew_name').value   = w.full_name;
-  document.getElementById('ew_status').value = w.status;
+      async function openEditWorker(w) {
+        document.getElementById("ew_id").value = w.id;
+        document.getElementById("ew_login").value = w.login;
+        document.getElementById("ew_name").value = w.full_name;
+        document.getElementById("ew_status").value = w.status;
 
-  // Load facilities into select
-  const facSel = document.getElementById('ew_facility');
-  facSel.innerHTML = '<option value="">— brak —</option>';
-  if (!facData.length) {
-    const res = await api('GET', '/admin/facilities');
-    if (res.ok) facData = res.data;
-  }
-  facData.forEach(f => {
-    facSel.innerHTML += `<option value="${f.id}" ${f.id == w.facility_id ? 'selected' : ''}>${f.name}</option>`;
-  });
+        // Load facilities into select
+        const facSel = document.getElementById("ew_facility");
+        facSel.innerHTML = '<option value="">— brak —</option>';
+        if (!facData.length) {
+          const res = await api("GET", "/admin/facilities");
+          if (res.ok) facData = res.data;
+        }
+        facData.forEach((f) => {
+          facSel.innerHTML += `<option value="${f.id}" ${f.id == w.facility_id ? "selected" : ""}>${f.name}</option>`;
+        });
 
-  openModal('modalEditWorker');
-}
+        openModal("modalEditWorker");
+      }
 
-async function updateWorker() {
-  const id = document.getElementById('ew_id').value;
-  const body = {
-    login:       document.getElementById('ew_login').value.trim() || null,
-    full_name:   document.getElementById('ew_name').value.trim() || null,
-    facility_id: document.getElementById('ew_facility').value || null,
-    status:      document.getElementById('ew_status').value || null,
-  };
-  const res = await api('PATCH', `/admin/workers/${id}`, body);
-  if (!res.ok) { document.getElementById('ew_err').textContent = res.error; return; }
-  closeModal('modalEditWorker');
-  loadWorkers();
-}
+      async function updateWorker() {
+        const id = document.getElementById("ew_id").value;
+        const body = {
+          login: document.getElementById("ew_login").value.trim() || null,
+          full_name: document.getElementById("ew_name").value.trim() || null,
+          facility_id: document.getElementById("ew_facility").value || null,
+          status: document.getElementById("ew_status").value || null,
+        };
+        const res = await api("PATCH", `/admin/workers/${id}`, body);
+        if (!res.ok) {
+          document.getElementById("ew_err").textContent = res.error;
+          return;
+        }
+        closeModal("modalEditWorker");
+        loadWorkers();
+      }
 
-// ── MODAL HELPERS ─────────────────────────────────────────────
-function openModal(id) {
-  // Fill assignment selects
-  if (id === 'modalNewAssignment') {
-    const cs = document.getElementById('na_coord');
-    const fs = document.getElementById('na_facility');
-    cs.innerHTML = coordData.map(c => `<option value="${c.id}">${c.full_name}</option>`).join('');
-    fs.innerHTML = facData.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
-  }
-  document.getElementById(id).classList.add('open');
-}
+      // ── MODAL HELPERS ─────────────────────────────────────────────
+      function openModal(id) {
+        // Fill assignment selects
+        if (id === "modalNewAssignment") {
+          const cs = document.getElementById("na_coord");
+          const fs = document.getElementById("na_facility");
+          cs.innerHTML = coordData
+            .map((c) => `<option value="${c.id}">${c.full_name}</option>`)
+            .join("");
+          fs.innerHTML = facData
+            .map((f) => `<option value="${f.id}">${f.name}</option>`)
+            .join("");
+        }
+        document.getElementById(id).classList.add("open");
+      }
 
-function closeModal(id) {
-  document.getElementById(id).classList.remove('open');
-  // Clear error messages
-  const err = document.getElementById(id)?.querySelector('.err-msg');
-  if (err) err.textContent = '';
-}
+      function closeModal(id) {
+        document.getElementById(id).classList.remove("open");
+        // Clear error messages
+        const err = document.getElementById(id)?.querySelector(".err-msg");
+        if (err) err.textContent = "";
+      }
 
-// Close on overlay click
-document.querySelectorAll('.modal-overlay').forEach(el => {
-  el.addEventListener('click', e => { if (e.target === el) closeModal(el.id); });
-});
+      // Close on overlay click
+      document.querySelectorAll(".modal-overlay").forEach((el) => {
+        el.addEventListener("click", (e) => {
+          if (e.target === el) closeModal(el.id);
+        });
+      });
 
-// ── SEARCH ────────────────────────────────────────────────────
-function filterCurrent() {
-  const q = document.getElementById('searchInput').value.toLowerCase();
-  if (currentTab === 'coordinators') renderCoordinators(coordData.filter(c => c.full_name.toLowerCase().includes(q) || (c.username||'').includes(q)));
-  if (currentTab === 'facilities')   renderFacilities(facData.filter(f => f.name.toLowerCase().includes(q) || (f.city||'').toLowerCase().includes(q)));
-  if (currentTab === 'workers')      renderWorkers(workData.filter(w => w.full_name.toLowerCase().includes(q) || w.login.includes(q)));
-}
+      // ── SEARCH ────────────────────────────────────────────────────
+      function filterCurrent() {
+        const q = document.getElementById("searchInput").value.toLowerCase();
+        if (currentTab === "coordinators")
+          renderCoordinators(
+            coordData.filter(
+              (c) =>
+                c.full_name.toLowerCase().includes(q) ||
+                (c.username || "").includes(q),
+            ),
+          );
+        if (currentTab === "facilities")
+          renderFacilities(
+            facData.filter(
+              (f) =>
+                f.name.toLowerCase().includes(q) ||
+                (f.city || "").toLowerCase().includes(q),
+            ),
+          );
+        if (currentTab === "workers")
+          renderWorkers(
+            workData.filter(
+              (w) =>
+                w.full_name.toLowerCase().includes(q) || w.login.includes(q),
+            ),
+          );
+      }
 
-// Enter to login
-document.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !session) doLogin();
-});
-</script>
-</body>
+      // Enter to login
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !session) doLogin();
+      });
+    </script>
+  </body>
 </html>

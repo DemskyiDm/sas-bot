@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pl">
   <head>
     <meta charset="UTF-8" />
@@ -175,10 +175,10 @@
 
       .stats-row {
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
         gap: 12px;
         margin-bottom: 18px;
       }
+
       .stat-card {
         background: var(--surface);
         border: 1px solid var(--border);
@@ -243,7 +243,7 @@
         background: var(--surface);
         border: 1px solid var(--border);
         border-radius: 8px;
-        overflow: hidden;
+        overflow: visible;
         margin-bottom: 16px;
       }
 
@@ -263,7 +263,9 @@
 
       .table-wrap {
         overflow-x: auto;
+        overflow-y: visible;
       }
+
       table {
         width: 100%;
         border-collapse: collapse;
@@ -439,7 +441,9 @@
       .facility-tabs {
         display: flex;
         gap: 4px;
-        overflow-x: auto;
+        flex-wrap: nowrap;
+        white-space: nowrap;
+        overflow: visible;
       }
       .ftab {
         padding: 6px 14px 10px;
@@ -447,8 +451,8 @@
         color: var(--text2);
         cursor: pointer;
         border-bottom: 2px solid transparent;
-        white-space: nowrap;
         transition: all 0.15s;
+        flex-shrink: 0;
       }
       .ftab:hover {
         color: var(--text);
@@ -644,7 +648,7 @@
         <div
           id="adminLink"
           class="nav-item"
-          onclick="window.location='/admin.html'"
+          onclick="window.location = '/admin.html'"
           style="display: none"
         >
           ⚙️ Admin panel
@@ -732,7 +736,12 @@
 
       <div class="content">
         <!-- STATS -->
-        <div class="stats-row" id="statsRow">
+        <!-- STATS: HOURS -->
+        <div
+          class="stats-row"
+          id="statsHours"
+          style="grid-template-columns: repeat(3, 1fr)"
+        >
           <div class="stat-card blue">
             <div class="stat-label">Pracownicy</div>
             <div class="stat-value" id="statWorkers">—</div>
@@ -748,10 +757,56 @@
             <div class="stat-value" id="statMissing">—</div>
             <div class="stat-sub">osob z brakami</div>
           </div>
+        </div>
+
+        <!-- STATS: MISSING -->
+        <div
+          class="stats-row"
+          id="statsMissing"
+          style="display: none; grid-template-columns: repeat(3, 1fr)"
+        >
+          <div class="stat-card blue">
+            <div class="stat-label">Pracownicy</div>
+            <div class="stat-value" id="statMissingWorkers">—</div>
+            <div class="stat-sub">aktywnych</div>
+          </div>
+          <div class="stat-card green">
+            <div class="stat-label">Godziny</div>
+            <div class="stat-value" id="statMissingHours">—</div>
+            <div class="stat-sub">w tym miesiacu</div>
+          </div>
+          <div class="stat-card red">
+            <div class="stat-label">Braki</div>
+            <div class="stat-value" id="statMissingCount">—</div>
+            <div class="stat-sub">osob z brakami</div>
+          </div>
+        </div>
+
+        <!-- STATS: WORKERS -->
+        <div
+          class="stats-row"
+          id="statsWorkers"
+          style="display: none; grid-template-columns: repeat(4, 1fr)"
+        >
+          <div class="stat-card blue">
+            <div class="stat-label">Wszyscy</div>
+            <div class="stat-value" id="statAllWorkers">—</div>
+            <div class="stat-sub">aktywnych</div>
+          </div>
+          <div class="stat-card green">
+            <div class="stat-label">Przyjecia</div>
+            <div class="stat-value" id="statNewWorkers">—</div>
+            <div class="stat-sub">w tym tygodniu</div>
+          </div>
           <div class="stat-card orange">
-            <div class="stat-label">Zaliczki</div>
-            <div class="stat-value" id="statAdvances">—</div>
-            <div class="stat-sub">oczekujacych</div>
+            <div class="stat-label">Zwolnienia</div>
+            <div class="stat-value" id="statLeavingWeek">—</div>
+            <div class="stat-sub">w tym tygodniu</div>
+          </div>
+          <div class="stat-card red">
+            <div class="stat-label">Do konca mies.</div>
+            <div class="stat-value" id="statLeavingMonth">—</div>
+            <div class="stat-sub">zwolnienia</div>
           </div>
         </div>
 
@@ -764,9 +819,14 @@
                 align-items: center;
                 justify-content: space-between;
                 border-bottom: 1px solid var(--border);
+                overflow: visible;
               "
             >
-              <div id="facilityTabs" style="flex: 1"></div>
+              <div
+                id="facilityTabs"
+                class="facility-tabs"
+                style="flex: 1"
+              ></div>
               <div
                 style="
                   display: flex;
@@ -1281,7 +1341,7 @@
         containerId,
         currentPage,
         totalPages,
-        onPageChange
+        onPageChange,
       ) {
         if (totalPages <= 1) {
           document.getElementById(containerId).innerHTML = "";
@@ -1398,7 +1458,7 @@
           const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
           const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
             2,
-            "0"
+            "0",
           )}`;
           const label = d.toLocaleString("pl", {
             month: "long",
@@ -1417,13 +1477,13 @@
         currentPage = page;
         ["hours", "missing", "advances", "workers", "history"].forEach((p) => {
           document.getElementById(
-            "page" + p.charAt(0).toUpperCase() + p.slice(1)
+            "page" + p.charAt(0).toUpperCase() + p.slice(1),
           ).style.display = p === page ? "" : "none";
         });
         document.querySelectorAll(".nav-item").forEach((el, i) => {
           el.classList.toggle(
             "active",
-            ["hours", "missing", "advances", "workers", "history"][i] === page
+            ["hours", "missing", "advances", "workers", "history"][i] === page,
           );
         });
         const titles = {
@@ -1434,6 +1494,15 @@
           history: "Historia pracownikow",
         };
         document.getElementById("pageTitle").textContent = titles[page];
+
+        // Переключаем блоки статистики
+        document.getElementById("statsHours").style.display =
+          page === "hours" ? "" : "none";
+        document.getElementById("statsMissing").style.display =
+          page === "missing" ? "" : "none";
+        document.getElementById("statsWorkers").style.display =
+          page === "workers" ? "" : "none";
+
         loadPage(page);
       }
 
@@ -1468,16 +1537,33 @@
           const month = document.getElementById("monthSelect").value;
           const fid = document.getElementById("facilitySelect").value;
           const data_res = await apiFetch(
-            `/api/stats?month=${month}${fid ? "&facility_id=" + fid : ""}`
+            `/api/stats?month=${month}${fid ? "&facility_id=" + fid : ""}`,
           );
           if (!data_res) return;
           const { data } = data_res;
+
+          // Hours stats
           document.getElementById("statWorkers").textContent = data.workers;
           document.getElementById("statHours").textContent = Math.round(
-            data.hours
+            data.hours,
           );
           document.getElementById("statMissing").textContent = data.missing;
-          document.getElementById("statAdvances").textContent = data.advances;
+
+          // Missing stats (те же данные)
+          document.getElementById("statMissingWorkers").textContent =
+            data.workers;
+          document.getElementById("statMissingHours").textContent = Math.round(
+            data.hours,
+          );
+          document.getElementById("statMissingCount").textContent =
+            data.missing;
+
+          // Workers stats (пока прочерки)
+          document.getElementById("statAllWorkers").textContent = data.workers;
+          document.getElementById("statNewWorkers").textContent = "—";
+          document.getElementById("statLeavingWeek").textContent = "—";
+          document.getElementById("statLeavingMonth").textContent = "—";
+
           const badge = document.getElementById("missingBadge");
           if (data.missing > 0) {
             badge.textContent = data.missing;
@@ -1486,8 +1572,8 @@
         } catch (e) {
           console.error(e);
         }
-      } 
-      
+      }
+
       // ── FACILITIES ───────────────────────────────────────────────
       async function loadFacilities() {
         try {
@@ -1517,10 +1603,19 @@
           allWorkers = res.data;
           renderTabs(res.data);
           renderTable(res.data);
+          allWorkers = res.data;
+          renderTabs(res.data);
+          if (currentFacility) {
+            const filtered = allWorkers.filter(
+              (w) => w.facility_id == currentFacility,
+            );
+            renderTable(filtered);
+          } else {
+            renderTable(res.data);
+          }
         } catch (e) {
-          document.getElementById(
-            "workerTable"
-          ).innerHTML = `<tr><td colspan="4" style="color:var(--red);padding:20px">Blad: ${e.message}</td></tr>`;
+          document.getElementById("workerTable").innerHTML =
+            `<tr><td colspan="4" style="color:var(--red);padding:20px">Blad: ${e.message}</td></tr>`;
         }
       }
 
@@ -1534,7 +1629,7 @@
         const tabs = document.getElementById("facilityTabs");
         const facList = Object.entries(facs);
 
-        if (facList.length <= 5) {
+        if (facList.length <= 8) {
           tabs.innerHTML = `<div class="ftab ${
             currentFacility === "" ? "active" : ""
           }" onclick="filterFacility('')">Wszystkie</div>`;
@@ -1556,9 +1651,9 @@
             : `<span style="color:var(--text3)">Wybierz obiekt...</span>`;
 
         tabs.innerHTML = `
-    <div style="padding:6px 16px;position:relative;user-select:none">
+    <div style="padding:6px 16px; position:relative; z-index:50; width: 100%;">
       <div id="facDropBtn" onclick="toggleFacDrop()" style="
-        display:inline-flex;align-items:center;gap:8px;padding:6px 12px 10px;
+        display:inline-flex;align-items:center;gap:8px;width: fit-content;padding:6px 12px 10px;
         font-size:12px;color:${
           currentFacility ? "var(--accent)" : "var(--text2)"
         };
@@ -1569,11 +1664,23 @@
         🏭 ${selectedName}
         <span id="facDropArrow" style="font-size:9px;transition:transform .2s">▼</span>
       </div>
-      <div id="facDropMenu" style="
-        display:none;position:absolute;top:100%;left:16px;
-        background:var(--surface2);border:1px solid var(--border);
-        border-radius:8px;min-width:260px;max-height:400px;overflow-y:auto;
-        z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.4);padding:6px 0;">
+     
+<div id="facDropMenu" style="
+  display:none;
+  position:absolute;
+  top:100%;
+  left:0;
+  background:var(--surface2);
+  border:1px solid var(--border);
+  border-radius:8px;
+  min-width:260px;
+  max-height:400px;
+  overflow-y:auto;
+  z-index:9999;
+  box-shadow:0 8px 24px rgba(0,0,0,.4);
+  padding:6px 0;
+">
+
         <div onclick="filterFacility('');toggleFacDrop()" style="
           display:flex;align-items:center;justify-content:space-between;
           padding:8px 14px;font-size:12px;cursor:pointer;
@@ -1601,7 +1708,7 @@
             <span style="font-family:var(--mono);font-size:10px;color:var(--text3);background:var(--surface);padding:1px 7px;border-radius:10px">${
               f.count
             }</span>
-          </div>`
+          </div>`,
           )
           .join("")}
       </div>
@@ -1634,6 +1741,7 @@
 
       function filterFacility(id) {
         currentFacility = id;
+        renderTabs(allWorkers); // перерисовываем табы чтобы обновился выбранный объект
         const filtered = id
           ? allWorkers.filter((w) => w.facility_id == id)
           : allWorkers;
@@ -1646,7 +1754,7 @@
         const filtered = allWorkers.filter(
           (w) =>
             (currentFacility ? w.facility_id == currentFacility : true) &&
-            (w.full_name.toLowerCase().includes(q) || w.login.includes(q))
+            (w.full_name.toLowerCase().includes(q) || w.login.includes(q)),
         );
         renderTable(filtered);
       }
@@ -1704,22 +1812,22 @@
 
               if (isBeforeBhp)
                 return `<div class="day-cell black" title="${String(
-                  day
+                  day,
                 ).padStart(2, "0")}.${mm}">${String(day).padStart(
                   2,
-                  "0"
+                  "0",
                 )}</div>`;
               if (isFuture)
                 return `<div class="day-cell future">${String(day).padStart(
                   2,
-                  "0"
+                  "0",
                 )}</div>`;
 
               if (h) {
                 if (h.hours !== null) {
                   totalHours += parseFloat(h.hours);
                   return `<div class="day-cell filled" title="${String(
-                    day
+                    day,
                   ).padStart(2, "0")}.${mm}: ${h.hours}h" onclick="openEdit(${
                     w.id
                   },'${year}-${mm}-${String(day).padStart(2, "0")}',${
@@ -1729,7 +1837,7 @@
                   return `<div class="day-cell ${h.absence_type.toLowerCase()}" title="${
                     h.absence_type
                   }" onclick="openEdit(${w.id},'${year}-${mm}-${String(
-                    day
+                    day,
                   ).padStart(2, "0")}',null,'${h.absence_type}')">${
                     h.absence_type
                   }</div>`;
@@ -1737,12 +1845,12 @@
               } else {
                 missingCount++;
                 return `<div class="day-cell empty" title="${String(
-                  day
+                  day,
                 ).padStart(2, "0")}.${mm} — brak" onclick="openEdit(${
                   w.id
                 },'${year}-${mm}-${String(day).padStart(
                   2,
-                  "0"
+                  "0",
                 )}',null,'')">${String(day).padStart(2, "0")}</div>`;
               }
             }).join("");
@@ -1751,13 +1859,13 @@
               missingCount > 3
                 ? `<span class="badge badge-red"><span class="badge-dot"></span>brak ${missingCount}d</span>`
                 : missingCount > 0
-                ? `<span class="badge badge-orange"><span class="badge-dot"></span>brak ${missingCount}d</span>`
-                : `<span class="badge badge-green"><span class="badge-dot"></span>OK</span>`;
+                  ? `<span class="badge badge-orange"><span class="badge-dot"></span>brak ${missingCount}d</span>`
+                  : `<span class="badge badge-green"><span class="badge-dot"></span>OK</span>`;
 
             return `<tr>
     <td><div class="worker-name">${w.full_name}</div><div class="worker-id">#${
-              w.login
-            }</div></td>
+      w.login
+    }</div></td>
     <td>${badge}</td>
     <td><div class="day-cells">${cells}</div></td>
     <td><span class="hours-sum">${totalHours.toFixed(1)}h</span></td>
@@ -1769,7 +1877,7 @@
       }
       function changeHoursPageSize() {
         pageSizeHours = parseInt(
-          document.getElementById("hoursPageSize").value
+          document.getElementById("hoursPageSize").value,
         );
         pageHours = 1;
         filterTable();
@@ -1780,7 +1888,7 @@
         const filtered = allWorkers.filter(
           (w) =>
             (currentFacility ? w.facility_id == currentFacility : true) &&
-            (w.full_name.toLowerCase().includes(q) || w.login.includes(q))
+            (w.full_name.toLowerCase().includes(q) || w.login.includes(q)),
         );
         renderTable(filtered);
         document
@@ -1808,7 +1916,7 @@
                 .map((d) => {
                   const dt = new Date(d);
                   return `${String(dt.getDate()).padStart(2, "0")}.${String(
-                    dt.getMonth() + 1
+                    dt.getMonth() + 1,
                   ).padStart(2, "0")}`;
                 })
                 .join(", ");
@@ -1856,9 +1964,9 @@
           a.pay_date ? new Date(a.pay_date).toLocaleDateString("pl") : "—"
         }</td>
         <td><span class="badge badge-${statusColor[a.status] || "blue"}">${
-                    a.status
-                  }</span></td>
-      </tr>`
+          a.status
+        }</span></td>
+      </tr>`,
                 )
                 .join("")
             : `<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:20px">Brak zaliczek</td></tr>`;
@@ -1908,13 +2016,13 @@
               w.full_name.toLowerCase().includes(q) ||
               w.login.toLowerCase().includes(q)) &&
             (!fac || w.facility_name === fac) &&
-            (!status || w.status === status)
+            (!status || w.status === status),
         );
 
         const { slice, pages } = paginate(
           filtered,
           pageWorkers,
-          pageSizeWorkers
+          pageSizeWorkers,
         );
         document.getElementById("workersCount").textContent = filtered.length;
 
@@ -1934,8 +2042,8 @@
         w.status === "pracuje"
           ? "badge-green"
           : w.status === "przeniesiony"
-          ? "badge-orange"
-          : "badge-red"
+            ? "badge-orange"
+            : "badge-red"
       }"><span class="badge-dot"></span>${w.status}</span></td>
       <td style="font-family:var(--mono);font-size:11px;color:var(--text3)">${
         w.telegram_chat_id ? "✅" : "—"
@@ -1945,15 +2053,15 @@
       }</td>
       <td style="display:flex;gap:4px">
         <button class="btn btn-ghost btn-sm" onclick='openWorkerModal(${JSON.stringify(
-          w
+          w,
         )})'>Edytuj</button>
         <button class="btn btn-ghost btn-sm" onclick="openHistoryModal(${
           w.id
         },'${w.full_name
-                .replace(/'/g, "\\'")
-                .replace(/"/g, "&quot;")}')">Historia</button>
+          .replace(/'/g, "\\'")
+          .replace(/"/g, "&quot;")}')">Historia</button>
       </td>
-    </tr>`
+    </tr>`,
             )
             .join("") ||
           `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
@@ -1962,7 +2070,7 @@
           "paginationWorkers",
           pageWorkers,
           pages,
-          "goPageWorkers"
+          "goPageWorkers",
         );
       }
 
@@ -2058,9 +2166,8 @@
 
       // ── HISTORY MODAL ─────────────────────────────────────────────
       async function openHistoryModal(workerId, workerName) {
-        document.getElementById(
-          "historyModalTitle"
-        ).textContent = `Historia: ${workerName}`;
+        document.getElementById("historyModalTitle").textContent =
+          `Historia: ${workerName}`;
         document.getElementById("historyModal").classList.add("open");
         document.getElementById("historyContent").innerHTML =
           '<div class="loading"><div class="spinner"></div>Ladowanie...</div>';
@@ -2109,9 +2216,9 @@
                 : "—"
             }</td>
             <td style="padding:8px 12px;font-size:11px;color:var(--text3)">${new Date(
-              h.imported_at
+              h.imported_at,
             ).toLocaleDateString("pl")}</td>
-          </tr>`
+          </tr>`,
           )
           .join("")}
       </tbody>
@@ -2158,7 +2265,18 @@
             body: JSON.stringify(body),
           });
           closeModal();
-          loadWorkers();
+          // Сохраняем текущий фильтр
+          const q = document.getElementById("searchInput").value.toLowerCase();
+          const filtered = allWorkers.filter(
+            (w) =>
+              (currentFacility ? w.facility_id == currentFacility : true) &&
+              (w.full_name.toLowerCase().includes(q) || w.login.includes(q)),
+          );
+          await loadWorkers();
+          // Восстанавливаем фильтр после загрузки
+          if (currentFacility) {
+            filterFacility(currentFacility);
+          }
           loadStats();
         } catch (e) {
           alert("Blad: " + e.message);
@@ -2219,13 +2337,13 @@
               h.full_name.toLowerCase().includes(q) ||
               h.login.toLowerCase().includes(q)) &&
             (!fac || h.facility_name === fac) &&
-            (!status || h.status === status)
+            (!status || h.status === status),
         );
 
         const { slice, pages } = paginate(
           filtered,
           pageHistory,
-          pageSizeHistory
+          pageSizeHistory,
         );
         document.getElementById("historyCount").textContent = filtered.length;
         const statusColor = {
@@ -2246,8 +2364,8 @@
         h.facility_name || h.source_sheet || "—"
       }</td>
       <td><span class="badge ${statusColor[h.status] || "badge-blue"}">${
-                h.status
-              }</span></td>
+        h.status
+      }</span></td>
       <td style="font-family:var(--mono);font-size:11px;color:var(--text2)">${
         h.bhp_date ? new Date(h.bhp_date).toLocaleDateString("pl") : "—"
       }</td>
@@ -2257,9 +2375,9 @@
           : "—"
       }</td>
       <td style="font-size:11px;color:var(--text3)">${new Date(
-        h.imported_at
+        h.imported_at,
       ).toLocaleDateString("pl")}</td>
-    </tr>`
+    </tr>`,
             )
             .join("") ||
           `<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
@@ -2268,13 +2386,13 @@
           "paginationHistory",
           pageHistory,
           pages,
-          "goPageHistory"
+          "goPageHistory",
         );
       }
 
       function changeWorkersPageSize() {
         pageSizeWorkers = parseInt(
-          document.getElementById("workersPageSize").value
+          document.getElementById("workersPageSize").value,
         );
         pageWorkers = 1;
         filterWorkers(false);
@@ -2282,7 +2400,7 @@
 
       function changeHistoryPageSize() {
         pageSizeHistory = parseInt(
-          document.getElementById("historyPageSize").value
+          document.getElementById("historyPageSize").value,
         );
         pageHistory = 1;
         filterHistory(false);

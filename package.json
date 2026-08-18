@@ -1,0 +1,20 @@
+{
+  "name": "sas-bot",
+  "version": "1.0.0",
+  "description": "SAS Logistic Telegram Bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "follow-redirects": "^1.16.0",
+    "googleapis": "^173.0.0",
+    "pg": "^8.11.5",
+    "selfsigned": "^5.5.0",
+    "telegraf": "^4.16.3"
+  }
+}

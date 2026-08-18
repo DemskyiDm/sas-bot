@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SAS Logistic — Raporty</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+  <style>
+    /* ── стилі тільки для модуля Raporty ── */
+    .nav-sub {
+      display: flex; align-items: center; gap: 7px;
+      padding: 6px 10px 6px 30px; border-radius: 6px; cursor: pointer;
+      font-size: 12px; color: var(--text2); margin-bottom: 2px;
+      transition: all 0.15s; user-select: none;
+    }
+    .nav-sub:hover { background: var(--surface2); color: var(--text); }
+    .nav-sub.active {
+      background: rgba(59, 130, 246, 0.12); color: var(--accent);
+      font-weight: 500;
+    }
+    .rp-body { flex: 1; min-width: 0; }
+
+    .rp-toolbar {
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px; margin-bottom: 16px;
+    }
+    .rp-toolbar label { font-size: 11px; color: var(--text2); }
+    .rp-toolbar input[type="date"] {
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); font-size: 12px; padding: 5px 10px;
+      border-radius: 5px; outline: none;
+    }
+    .rp-preset { padding: 5px 10px; font-size: 11px; border-radius: 5px;
+      border: 1px solid var(--border); background: transparent;
+      color: var(--text2); cursor: pointer; }
+    .rp-preset:hover { background: var(--surface2); color: var(--text); }
+
+    .rp-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .rp-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px 14px;
+    }
+    .rp-card .v { font-size: 22px; font-weight: 700; }
+    .rp-card .l { font-size: 11px; color: var(--text2); margin-top: 2px; }
+    .rp-card .v.green { color: var(--green); }
+    .rp-card .v.red { color: var(--red); }
+    .rp-card .v.blue { color: var(--blue); }
+    .rp-card .v.orange { color: var(--orange); }
+    .rp-card .v.purple { color: var(--purple); }
+
+    .rp-section {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; margin-bottom: 16px; overflow: hidden;
+    }
+    .rp-section-head {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; border-bottom: 1px solid var(--border);
+      font-size: 13px; font-weight: 600;
+    }
+    .rp-section-head .cnt { font-size: 11px; color: var(--text2); font-weight: 400; }
+    .rp-section-head .spacer { margin-left: auto; }
+
+    table.rp-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.rp-table th {
+      text-align: left; padding: 8px 12px; font-size: 10px; letter-spacing: 1px;
+      color: var(--text3); border-bottom: 1px solid var(--border);
+      font-family: var(--mono); text-transform: uppercase;
+    }
+    table.rp-table td { padding: 7px 12px; border-bottom: 1px solid var(--border); }
+    table.rp-table tr:last-child td { border-bottom: none; }
+    table.rp-table td.num, table.rp-table th.num { text-align: right; font-family: var(--mono); }
+    tr.rp-group-row td {
+      background: var(--surface2); font-weight: 600; font-size: 12px;
+      color: var(--accent);
+    }
+    tr.rp-total-row td { background: rgba(59,130,246,0.08); font-weight: 700; }
+
+    .abs-chip {
+      display: inline-block; padding: 1px 7px; border-radius: 10px;
+      font-size: 10px; font-weight: 700; font-family: var(--mono);
+      margin-right: 6px;
+    }
+    .abs-chip.URL { background: rgba(96,165,250,0.15); color: var(--blue); }
+    .abs-chip.L4  { background: rgba(251,146,60,0.15); color: var(--orange); }
+    .abs-chip.NN  { background: rgba(239,68,68,0.15); color: var(--red); }
+    .abs-chip.other { background: rgba(167,139,250,0.15); color: var(--purple); }
+    .abs-chip.empty { background: rgba(75,85,99,0.25); color: var(--text2); }
+    .abs-days { color: var(--text2); font-family: var(--mono); font-size: 11px; }
+
+    .rp-fac-block { border-bottom: 1px solid var(--border); }
+    .rp-fac-block:last-child { border-bottom: none; }
+    .rp-fac-title {
+      padding: 8px 14px; font-size: 12px; font-weight: 600;
+      background: var(--surface2); color: var(--text);
+      display: flex; gap: 8px; align-items: baseline;
+    }
+    .rp-fac-title .g { color: var(--text3); font-size: 10px; font-family: var(--mono); }
+    .rp-empty { padding: 24px; text-align: center; color: var(--text3); font-size: 12px; }
+    .rp-loading { padding: 24px; text-align: center; color: var(--text2); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+  <button class="sidebar-toggle" onclick="toggleSidebar()" title="Ukryj / Przypnij menu">◀</button>
+  <!-- существующий .logo и .nav -->
+    <div class="logo">
+      <div class="logo-tag">SAS LOGISTIC</div>
+      <div class="logo-name">Raporty</div>
+    </div>
+    <div class="nav">
+      <div class="nav-item" onclick="location.href='index.html'">⬅️ Panel główny</div>
+      <div class="nav-item active" style="cursor:default">📑 Raporty</div>
+      <div id="reportNav"></div>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-title" id="topTitle">Raporty</div>
+      <div class="topbar-right">
+        <span id="userName" style="font-size: 12px; color: var(--text2)"></span>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="rp-body">
+        <div class="rp-toolbar">
+            <label>OD</label>
+            <input type="date" id="dateFrom" />
+            <label>DO</label>
+            <input type="date" id="dateTo" />
+            <button class="rp-preset" onclick="preset('thisMonth')">Bieżący miesiąc</button>
+            <button class="rp-preset" onclick="preset('prevMonth')">Poprzedni miesiąc</button>
+            <button class="rp-preset" onclick="preset('last7')">Ostatnie 7 dni</button>
+            <button class="btn btn-primary" onclick="generate()">Generuj</button>
+            <button class="btn btn-ghost" id="btnXlsx" onclick="exportXlsx()" style="display:none">📥 Eksport Excel</button>
+          </div>
+
+          <div id="reportArea">
+            <div class="rp-empty">Wybierz okres i kliknij „Generuj”</div>
+          </div>
+        </div>
+    </div>
+  </div>
+
+  <script>
+    // ── AUTH ────────────────────────────────────────────────
+    const SESSION = localStorage.getItem("sas_session");
+    const CURRENT_USER = JSON.parse(localStorage.getItem("sas_user") || "null");
+    if (!SESSION) location.href = "/login.html";
+    if (CURRENT_USER) {
+      document.getElementById("userName").textContent =
+        CURRENT_USER.full_name || CURRENT_USER.username || "";
+    }
+
+    async function api(path) {
+      const r = await fetch("/api" + path, { headers: { "x-session": SESSION } });
+      if (r.status === 401) { location.href = "/login.html"; return null; }
+      return r.json();
+    }
+
+    // ── STATE ───────────────────────────────────────────────
+    let reports = [];
+    let currentReport = "koordynacja-nieobecnosc";
+    let lastData = null;
+
+    // ── REPORT LIST ─────────────────────────────────────────
+    async function loadReports() {
+      const res = await api("/reports");
+      if (!res || !res.ok) return;
+      reports = res.data;
+      renderReportList();
+    }
+
+    function renderReportList() {
+      document.getElementById("reportNav").innerHTML = reports
+        .map(
+          (r) =>
+            `<div class="nav-sub ${r.id === currentReport ? "active" : ""}"
+                  onclick="selectReport('${r.id}')" title="${r.description || ""}">• ${r.name}</div>`,
+        )
+        .join("");
+      const rep = reports.find((r) => r.id === currentReport);
+      if (rep) document.getElementById("topTitle").textContent = "Raporty — " + rep.name;
+    }
+
+    function selectReport(id) {
+      currentReport = id;
+      lastData = null;
+      document.getElementById("btnXlsx").style.display = "none";
+      document.getElementById("reportArea").innerHTML =
+        '<div class="rp-empty">Wybierz okres i kliknij „Generuj”</div>';
+      renderReportList();
+    }
+
+    // ── PERIOD PRESETS ──────────────────────────────────────
+    function fmtDate(d) {
+      return d.getFullYear() + "-" +
+        String(d.getMonth() + 1).padStart(2, "0") + "-" +
+        String(d.getDate()).padStart(2, "0");
+    }
+
+    function preset(kind) {
+      const now = new Date();
+      let from, to;
+      if (kind === "thisMonth") {
+        from = new Date(now.getFullYear(), now.getMonth(), 1);
+        to = now;
+      } else if (kind === "prevMonth") {
+        from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        to = new Date(now.getFullYear(), now.getMonth(), 0);
+      } else {
+        from = new Date(now); from.setDate(now.getDate() - 6);
+        to = now;
+      }
+      document.getElementById("dateFrom").value = fmtDate(from);
+      document.getElementById("dateTo").value = fmtDate(to);
+    }
+    preset("thisMonth");
+
+    // ── GENERATE ────────────────────────────────────────────
+    async function generate() {
+      const from = document.getElementById("dateFrom").value;
+      const to = document.getElementById("dateTo").value;
+      if (!from || !to) { alert("Wybierz okres (od / do)"); return; }
+      if (from > to) { alert("Data 'od' jest późniejsza niż 'do'"); return; }
+
+      const area = document.getElementById("reportArea");
+      area.innerHTML = '<div class="rp-loading">Generowanie raportu…</div>';
+
+      const res = await api(`/reports/${currentReport}?from=${from}&to=${to}`);
+      if (!res || !res.ok) {
+        area.innerHTML = `<div class="rp-empty">Błąd: ${res ? res.error : "brak odpowiedzi"}</div>`;
+        return;
+      }
+      lastData = res.data;
+      renderKoordynacjaNieobecnosc(res.data);
+      document.getElementById("btnXlsx").style.display = "";
+    }
+
+    // ── RENDER: Koordynacja nieobecność ─────────────────────
+    function renderKoordynacjaNieobecnosc(data) {
+      const facs = data.facilities || [];
+      const abs = data.absences || [];
+      const missing = data.missing || [];
+
+      const tot = facs.reduce(
+        (a, f) => ({
+          active: a.active + f.active_end,
+          hired: a.hired + f.hired,
+          fired: a.fired + f.fired,
+          hours: a.hours + f.hours,
+        }),
+        { active: 0, hired: 0, fired: 0, hours: 0 },
+      );
+      const absDays = abs.reduce((a, r) => a + r.cnt, 0);
+      const absWorkers = new Set(abs.map((r) => r.worker_id)).size;
+      const missDays = missing.reduce((a, r) => a + r.cnt, 0);
+      const missWorkers = new Set(missing.map((r) => r.worker_id)).size;
+
+      // ── картки ──
+      let html = `
+        <div class="rp-cards">
+          <div class="rp-card"><div class="v">${tot.active}</div><div class="l">Pracujących na koniec okresu</div></div>
+          <div class="rp-card"><div class="v green">+${tot.hired}</div><div class="l">Przyszło w okresie</div></div>
+          <div class="rp-card"><div class="v red">−${tot.fired}</div><div class="l">Zwolniono w okresie</div></div>
+          <div class="rp-card"><div class="v blue">${fmtHours(tot.hours)}</div><div class="l">Godzin w systemie</div></div>
+          <div class="rp-card"><div class="v orange">${absDays}</div><div class="l">Dni nieobecności (${absWorkers} os.)</div></div>
+          <div class="rp-card"><div class="v purple">${missDays}</div><div class="l">Puste dni bez wpisu (${missWorkers} os.)</div></div>
+        </div>`;
+
+      // ── таблиця по групах/об'єктах ──
+      html += `
+        <div class="rp-section">
+          <div class="rp-section-head">Obiekty i grupy
+            <span class="cnt">${data.period.from} — ${data.period.to}</span>
+          </div>
+          <table class="rp-table">
+            <thead><tr>
+              <th>Obiekt</th>
+              <th class="num">Pracuje (koniec okresu)</th>
+              <th class="num">Przyszło</th>
+              <th class="num">Zwolniono</th>
+              <th class="num">Godziny</th>
+            </tr></thead>
+            <tbody>`;
+
+      const groups = groupFacilities(facs);
+
+      for (const g of Object.keys(groups).sort()) {
+        const rows = groups[g];
+
+        // група з одним об'єктом — один рядок, без окремого заголовка групи
+        if (rows.length === 1) {
+          const f = rows[0];
+          html += `<tr class="rp-group-row">
+            <td>${esc(f.facility_name)}</td>
+            <td class="num">${f.active_end}</td>
+            <td class="num">${f.hired ? "+" + f.hired : 0}</td>
+            <td class="num">${f.fired ? "−" + f.fired : 0}</td>
+            <td class="num">${fmtHours(f.hours)}</td>
+          </tr>`;
+          continue;
+        }
+
+        const gs = groupTotals(rows);
+        html += `<tr class="rp-group-row">
+          <td>${esc(g)}</td>
+          <td class="num">${gs.active}</td>
+          <td class="num">${gs.hired ? "+" + gs.hired : 0}</td>
+          <td class="num">${gs.fired ? "−" + gs.fired : 0}</td>
+          <td class="num">${fmtHours(gs.hours)}</td>
+        </tr>`;
+        for (const f of rows) {
+          if (!f.active_end && !f.hired && !f.fired && !f.hours) continue;
+          html += `<tr>
+            <td style="padding-left:26px">${esc(f.facility_name)}</td>
+            <td class="num">${f.active_end}</td>
+            <td class="num" style="color:var(--green)">${f.hired ? "+" + f.hired : ""}</td>
+            <td class="num" style="color:var(--red)">${f.fired ? "−" + f.fired : ""}</td>
+            <td class="num">${f.hours ? fmtHours(f.hours) : ""}</td>
+          </tr>`;
+        }
+      }
+
+      html += `<tr class="rp-total-row">
+          <td>RAZEM</td>
+          <td class="num">${tot.active}</td>
+          <td class="num">+${tot.hired}</td>
+          <td class="num">−${tot.fired}</td>
+          <td class="num">${fmtHours(tot.hours)}</td>
+        </tr></tbody></table></div>`;
+
+      // ── неприсутності ──
+      html += renderWorkerSection(
+        "Nieobecności",
+        "wszystkie oprócz WZ (dzień wolny wg grafiku)",
+        abs,
+        (it) => {
+          const cls = ["URL", "L4", "NN"].includes(it.absence_type)
+            ? it.absence_type : "other";
+          return `<div style="margin-bottom:2px">
+            <span class="abs-chip ${cls}">${esc(it.absence_type)} × ${it.cnt}</span>
+            <span class="abs-days">${it.days.map(shortDay).join(", ")}</span>
+          </div>`;
+        },
+        `${absDays} dni / ${absWorkers} pracowników`,
+        "Brak nieobecności w wybranym okresie 🎉",
+      );
+
+      // ── пусті дні (bez godzin) ──
+      html += renderWorkerSection(
+        "Bez godzin (puste dni)",
+        "brak jakiegokolwiek wpisu; uwzględnia okres zatrudnienia i dni do dzisiaj",
+        missing,
+        (it) => `<div style="margin-bottom:2px">
+            <span class="abs-chip empty">PUSTE × ${it.cnt}</span>
+            <span class="abs-days">${it.days.map(shortDay).join(", ")}</span>
+          </div>`,
+        `${missDays} dni / ${missWorkers} pracowników`,
+        "Wszystkie dni uzupełnione 🎉",
+      );
+
+      document.getElementById("reportArea").innerHTML = html;
+    }
+
+    // спільний рендер секцій "по об'єктах → працівниках"
+    function renderWorkerSection(title, subtitle, rows, itemRenderer, counter, emptyText) {
+      let html = `<div class="rp-section">
+        <div class="rp-section-head">${title}
+          <span class="cnt">${subtitle}</span>
+          <span class="spacer"></span>
+          <span class="cnt">${counter}</span>
+        </div>`;
+
+      if (!rows.length) {
+        html += `<div class="rp-empty">${emptyText}</div></div>`;
+        return html;
+      }
+
+      const byFac = {};
+      for (const r of rows) {
+        const key = r.facility_id;
+        byFac[key] = byFac[key] || { name: r.facility_name, group: r.group_name, workers: {} };
+        const wk = (byFac[key].workers[r.worker_id] = byFac[key].workers[r.worker_id] || {
+          full_name: r.full_name, login: r.login, items: [],
+        });
+        wk.items.push(r);
+      }
+
+      const facKeys = Object.keys(byFac).sort((a, b) =>
+        (byFac[a].group + byFac[a].name).localeCompare(byFac[b].group + byFac[b].name),
+      );
+
+      for (const fk of facKeys) {
+        const fb = byFac[fk];
+        const workerIds = Object.keys(fb.workers);
+        html += `<div class="rp-fac-block">
+          <div class="rp-fac-title">${esc(fb.name)}
+            <span class="g">${esc(fb.group)}</span>
+            <span class="g" style="margin-left:auto">${workerIds.length} os.</span>
+          </div>
+          <table class="rp-table"><tbody>`;
+        for (const wid of workerIds) {
+          const w = fb.workers[wid];
+          html += `<tr>
+            <td style="width:280px">${esc(w.full_name)}<br>
+              <span style="color:var(--text3);font-family:var(--mono);font-size:10px">${esc(w.login)}</span></td>
+            <td>${w.items.map(itemRenderer).join("")}</td>
+          </tr>`;
+        }
+        html += `</tbody></table></div>`;
+      }
+      html += `</div>`;
+      return html;
+    }
+
+    // ── EXCEL EXPORT (.xlsx) ────────────────────────────────
+    // Та сама структура, що на сторінці: групи → об'єкти з підсумками,
+    // + колонка Nieobecności (15.06 - Nazwisko L4, по рядку на день)
+    // + колонка Bez godzin (Nazwisko — daty pustych dni)
+    function exportXlsx() {
+      if (!lastData) return;
+      if (typeof XLSX === "undefined") {
+        alert("Biblioteka XLSX nie została załadowana (sprawdź internet)");
+        return;
+      }
+
+      const facs = lastData.facilities || [];
+      const abs = lastData.absences || [];
+      const missing = lastData.missing || [];
+
+      // неприсутності по об'єкту → рядки "15.06 - Nazwisko L4" (посортовані по даті)
+      const absByFac = {};
+      for (const r of abs) {
+        const arr = (absByFac[r.facility_id] = absByFac[r.facility_id] || []);
+        for (const d of r.days) {
+          arr.push({ d, line: `${shortDay(d)} - ${r.full_name} ${r.absence_type}` });
+        }
+      }
+      for (const k in absByFac) {
+        absByFac[k].sort((a, b) => a.d.localeCompare(b.d));
+      }
+
+      // пусті дні по об'єкту → рядки "Nazwisko — 16.06, 17.06 (2)"
+      const missByFac = {};
+      for (const r of missing) {
+        const arr = (missByFac[r.facility_id] = missByFac[r.facility_id] || []);
+        arr.push(`${r.full_name} — ${r.days.map(shortDay).join(", ")} (${r.cnt})`);
+      }
+
+      const header = [
+        "Grupa / Obiekt",
+        "Pracuje (koniec okresu)",
+        "Przyszło",
+        "Zwolniono",
+        "Godziny",
+        "Nieobecności (oprócz WZ)",
+        "Bez godzin (puste dni)",
+      ];
+
+      const aoa = [];
+      const rowTypes = []; // 'title' | 'header' | 'group' | 'fac' | 'total' — для стилів
+      function pushRow(row, type) { aoa.push(row); rowTypes.push(type); }
+
+      pushRow(["Raport: Koordynacja nieobecność"], "title");
+      pushRow([`Okres: ${lastData.period.from} — ${lastData.period.to}`], "title");
+      pushRow([], "title");
+      pushRow(header, "header");
+
+      const groups = groupFacilities(facs);
+      const tot = groupTotals(facs);
+
+      function facRow(f, indent) {
+        const absLines = (absByFac[f.facility_id] || []).map((x) => x.line);
+        const missLines = missByFac[f.facility_id] || [];
+        return [
+          (indent ? "    " : "") + f.facility_name,
+          f.active_end,
+          f.hired,
+          f.fired,
+          num(f.hours),
+          absLines.join("\n"),
+          missLines.join("\n"),
+        ];
+      }
+
+      for (const g of Object.keys(groups).sort()) {
+        const rows = groups[g];
+
+        // група з одним об'єктом — один рядок, без окремого рядка групи
+        if (rows.length === 1) {
+          pushRow(facRow(rows[0], false), "group");
+          continue;
+        }
+
+        const gs = groupTotals(rows);
+        pushRow([`▶ ${g}`, gs.active, gs.hired, gs.fired, num(gs.hours), "", ""], "group");
+        for (const f of rows) {
+          const absLines = absByFac[f.facility_id] || [];
+          const missLines = missByFac[f.facility_id] || [];
+          if (!f.active_end && !f.hired && !f.fired && !f.hours &&
+              !absLines.length && !missLines.length) continue;
+          pushRow(facRow(f, true), "fac");
+        }
+      }
+
+      pushRow(["RAZEM", tot.active, tot.hired, tot.fired, num(tot.hours), "", ""], "total");
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+      // ширини колонок
+      ws["!cols"] = [
+        { wch: 36 }, { wch: 12 }, { wch: 10 }, { wch: 10 },
+        { wch: 10 }, { wch: 48 }, { wch: 55 },
+      ];
+
+      // стилі (xlsx-js-style): wrapText для текстових колонок, жирні заголовки,
+      // висота рядка під кількість ліній
+      const rowHeights = [];
+      const range = XLSX.utils.decode_range(ws["!ref"]);
+      const BOLD = { font: { bold: true } };
+      const GROUP_FILL = {
+        font: { bold: true },
+        fill: { fgColor: { rgb: "E8EEF9" }, patternType: "solid" },
+      };
+      const TOTAL_FILL = {
+        font: { bold: true },
+        fill: { fgColor: { rgb: "D6E4F7" }, patternType: "solid" },
+      };
+
+      for (let R = range.s.r; R <= range.e.r; R++) {
+        const type = rowTypes[R];
+        let maxLines = 1;
+
+        for (let C = range.s.c; C <= range.e.c; C++) {
+          const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+          if (!cell) continue;
+
+          let s = { alignment: { vertical: "top" } };
+
+          if (type === "title" || type === "header") s = { ...s, ...BOLD };
+          if (type === "group") s = { ...s, ...GROUP_FILL, alignment: { vertical: "top" } };
+          if (type === "total") s = { ...s, ...TOTAL_FILL, alignment: { vertical: "top" } };
+
+          // колонки Nieobecności / Bez godzin — перенос рядків усередині клітинки
+          if (C === 5 || C === 6) {
+            s.alignment = { ...s.alignment, wrapText: true };
+            if (typeof cell.v === "string" && cell.v) {
+              maxLines = Math.max(maxLines, cell.v.split("\n").length);
+            }
+          }
+
+          cell.s = s;
+        }
+
+        // висота рядка: ~14pt на лінію, максимум Excel — 409pt
+        rowHeights.push({ hpt: Math.min(409, maxLines * 14 + 4) });
+      }
+      ws["!rows"] = rowHeights;
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Koordynacja");
+      XLSX.writeFile(
+        wb,
+        `raport_koordynacja_nieobecnosc_${lastData.period.from}_${lastData.period.to}.xlsx`,
+      );
+    }
+
+    // ── UTILS ───────────────────────────────────────────────
+    function groupFacilities(facs) {
+      const groups = {};
+      for (const f of facs) {
+        (groups[f.group_name] = groups[f.group_name] || []).push(f);
+      }
+      return groups;
+    }
+    function groupTotals(rows) {
+      return rows.reduce(
+        (a, f) => ({
+          active: a.active + f.active_end,
+          hired: a.hired + f.hired,
+          fired: a.fired + f.fired,
+          hours: a.hours + f.hours,
+        }),
+        { active: 0, hired: 0, fired: 0, hours: 0 },
+      );
+    }
+    function esc(s) {
+      return String(s ?? "").replace(/[&<>"']/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
+      );
+    }
+    function num(h) {
+      return Math.round(h * 100) / 100;
+    }
+    function fmtHours(h) {
+      const n = num(h);
+      return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, "");
+    }
+    function shortDay(d) {
+      // 2026-07-03 → 03.07
+      return d.substring(8, 10) + "." + d.substring(5, 7);
+    }
+
+    loadReports();
+  </script>
+  <div class="sidebar-hover-zone"
+     onmouseenter="document.querySelector('.sidebar').classList.add('sidebar-peek')"
+     onmouseleave="document.querySelector('.sidebar').classList.remove('sidebar-peek')">
+</div>
+
+<script>
+function toggleSidebar() {
+  const hidden = document.body.classList.toggle('sidebar-hidden');
+  const btn = document.querySelector('.sidebar-toggle');
+  btn.textContent = hidden ? '▶' : '◀';
+  btn.title = hidden ? 'Przypnij menu' : 'Ukryj menu';
+  localStorage.setItem('sas_sidebar_hidden', hidden ? '1' : '0');
+}
+// Відновлюємо стан при завантаженні
+if (localStorage.getItem('sas_sidebar_hidden') === '1') {
+  document.body.classList.add('sidebar-hidden');
+  const btn = document.querySelector('.sidebar-toggle');
+  if (btn) { btn.textContent = '▶'; btn.title = 'Przypnij menu'; }
+}
+// Автоматично ховаємо peek при кліку на пункт меню
+document.querySelector('.sidebar')?.addEventListener('click', (e) => {
+  if (e.target.closest('.nav-item') && document.body.classList.contains('sidebar-hidden')) {
+    document.querySelector('.sidebar').classList.remove('sidebar-peek');
+  }
+});
+</script>
+</body>
+</html>

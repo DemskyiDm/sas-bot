@@ -1,0 +1,1063 @@
+<!doctype html>
+<html lang="pl">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SAS Logistic — Panel</title>
+  <link rel="stylesheet" href="/css/style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+
+<body>
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+  <button class="sidebar-toggle" onclick="toggleSidebar()" title="Ukryj / Przypnij menu">◀</button>
+    <div class="logo">
+      <div class="logo-tag">SAS LOGISTIC</div>
+      <div class="logo-name">Panel Koordynatora</div>
+    </div>
+    <div class="nav">
+      <div class="nav-item active" onclick="showPage('hours')">
+        📊 Godziny
+      </div>
+      <div class="nav-item" onclick="showPage('advances')">💰 Zaliczki</div>
+      <div class="nav-item" onclick="showPage('workers')">👥 Pracownicy</div>
+      <div class="nav-item" onclick="showPage('dayoff')">🏖️ Вихідні</div>
+      <div class="nav-item" onclick="showPage('tabele')">🗂️ Табелі</div>
+      <div class="nav-item" onclick="showPage('history')">📋 Historia</div>
+      <div class="nav-item" onclick="window.location='/analytics.html'">📈 Analityka</div>
+      <div class="nav-item" onclick="location.href='raporty.html'">📑 Raporty</div>
+      <div class="nav-item" onclick="showPage('settings')">⚙️ Ustawienia</div>
+      <div id="adminLink" class="nav-item" onclick="window.location = '/admin.html'" style="display: none">
+        ⚙️ Admin panel
+      </div>
+    </div>
+    <div style="
+          padding: 12px 10px;
+          border-top: 1px solid var(--border);
+          margin-top: auto;
+        ">
+      <div style="
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 10px;
+          ">
+        <div id="userAvatar" style="
+              width: 28px;
+              height: 28px;
+              background: var(--accent);
+              border-radius: 50%;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              font-size: 11px;
+              font-weight: 700;
+              flex-shrink: 0;
+            ">
+          D
+        </div>
+        <div>
+          <div id="userName" style="font-size: 12px; font-weight: 500">—</div>
+          <div id="userRole" style="
+                font-size: 10px;
+                color: var(--text2);
+                font-family: var(--mono);
+              ">
+            koordynator
+          </div>
+        </div>
+      </div>
+      <button onclick="doLogout()" style="
+            width: 100%;
+            margin-top: 4px;
+            padding: 7px;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text2);
+            border-radius: 5px;
+            font-size: 12px;
+            cursor: pointer;
+          ">
+        Wyloguj
+      </button>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+
+
+    <div class="content">
+      <!-- STATS: HOURS -->
+      <div class="stats-row" id="statsHours" style="grid-template-columns: repeat(3, 1fr)">
+        <div class="stat-card blue">
+          <div class="stat-label">Pracownicy</div>
+          <div class="stat-value" id="statWorkers">—</div>
+          <div class="stat-sub">aktywnych</div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-label">Godziny</div>
+          <div class="stat-value" id="statHours">—</div>
+          <div class="stat-sub">w tym miesiacu</div>
+        </div>
+        <div class="stat-card red">
+          <div class="stat-label">Braki</div>
+          <div class="stat-value" id="statMissing">—</div>
+          <div class="stat-sub">osob z brakami</div>
+        </div>
+      </div>
+
+      <!-- STATS: MISSING -->
+      <div class="stats-row" id="statsMissing" style="display: none; grid-template-columns: repeat(3, 1fr)">
+        <div class="stat-card blue">
+          <div class="stat-label">Pracownicy</div>
+          <div class="stat-value" id="statMissingWorkers">—</div>
+          <div class="stat-sub">aktywnych</div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-label">Godziny</div>
+          <div class="stat-value" id="statMissingHours">—</div>
+          <div class="stat-sub">w tym miesiacu</div>
+        </div>
+        <div class="stat-card red">
+          <div class="stat-label">Braki</div>
+          <div class="stat-value" id="statMissingCount">—</div>
+          <div class="stat-sub">osob z brakami</div>
+        </div>
+      </div>
+
+      <!-- STATS: WORKERS -->
+      <div class="stats-row" id="statsWorkers" style="display: none; grid-template-columns: repeat(4, 1fr)">
+        <div class="stat-card blue" style="display:flex;flex-direction:column;">
+          <div class="stat-label">Wszyscy</div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+            <div class="stat-value" id="statAllWorkers">—</div>
+            <div class="stat-sub">aktywnych</div>
+          </div>
+        </div>
+
+        <div class="stat-card green" style="display:grid;grid-template-columns:1fr 1fr;gap:0">
+          <div style="display:flex;flex-direction:column;border-right:1px solid var(--border);">
+            <div class="stat-label" style="padding:12px 16px 0">Przyjecia</div>
+            <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+              <div class="stat-value" id="statNewWorkers">—</div>
+              <div class="stat-sub">w tym tygodniu</div>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;">
+            <div class="stat-label" style="padding:12px 16px 0">Podjęli pracę</div>
+            <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+              <div class="stat-value" id="statStartedWorkers">—</div>
+              <div class="stat-sub">Status pracuje</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="stat-card orange" style="display:flex;flex-direction:column;">
+          <div class="stat-label">Zwolnienia</div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+            <div class="stat-value" id="statLeavingWeek">—</div>
+            <div class="stat-sub">w tym tygodniu</div>
+          </div>
+        </div>
+
+        <div class="stat-card red" style="display:flex;flex-direction:column;">
+          <div class="stat-label">Do konca mies.</div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+            <div class="stat-value" id="statLeavingMonth">—</div>
+            <div class="stat-sub">zwolnienia</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PAGE: HOURS -->
+      <div id="pageHours">
+        <div class="card">
+          <div style="
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                border-bottom: 1px solid var(--border);
+                overflow: visible;
+              ">
+            <div id="facilityTabs" class="facility-tabs" style="flex: 1"></div>
+            <div style="
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+                  padding: 0 14px;
+                  white-space: nowrap;
+                ">
+              <select id="monthSelect" onchange="loadAll()"></select>
+              <span style="font-size: 11px; color: var(--text3)">Zapisów:</span>
+              <select id="hoursPageSize" onchange="changeHoursPageSize()" style="width: 70px">
+                <option value="10">10</option>
+                <option value="20">20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="99999">Wszystkie</option>
+              </select>
+            </div>
+          </div>
+          <div style="
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 8px 14px;
+                border-bottom: 1px solid var(--border);
+              ">
+            <div style="display: flex; align-items: center; gap: 8px">
+              <span style="font-size: 13px; font-weight: 600">Lista pracownikow</span>
+              <span class="card-count" id="workerCount">0 os.</span>
+              <input type="text" id="searchInput" placeholder="Szukaj..." style="width: 130px; margin-left: 4px"
+                oninput="filterTable()" />
+            </div>
+            <div style="display: flex; gap: 12px; align-items: center">
+              <div class="leg">
+                <div class="leg-dot" style="background: rgba(34, 197, 94, 0.4)"></div>
+                Godziny
+              </div>
+              <div class="leg">
+                <div class="leg-dot" style="background: rgba(239, 68, 68, 0.3)"></div>
+                Brak
+              </div>
+              <div class="leg">
+                <div class="leg-dot" style="background: rgba(232, 158, 221, 0.4)"></div>
+                DW
+              </div>
+              <div class="leg">
+                <div class="leg-dot" style="background: rgba(180, 140, 255, 0.4)"></div>
+                DWZ
+              </div>
+              <div class="leg">
+                <div class="leg-dot" style="background: rgba(147, 196, 125, 0.4)"></div>
+                URL
+              </div>
+              <div class="leg">
+                <div class="leg-dot" style="background: rgba(159, 197, 232, 0.4)"></div>
+                L4
+              </div>
+              <div class="leg">
+                <div class="leg-dot" style="background: rgba(224, 102, 102, 0.4)"></div>
+                NN
+              </div>
+              <div class="leg">
+                <div class="leg-dot" style="background: rgba(255, 200, 100, 0.4)"></div>
+                UN
+              </div>
+
+              <button class="btn btn-ghost btn-sm" onclick="sendReminders()">📨 Przypomnienia</button>
+              <button class="btn btn-ghost btn-sm" onclick="exportToExcel('hours')">📥 Excel</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Pracownik</th>
+                  <th>Status</th>
+                  <th style="min-width: 360px">Dni miesiaca</th>
+                  <th>Suma</th>
+                </tr>
+              </thead>
+              <tbody id="workerTable">
+                <tr>
+                  <td colspan="4">
+                    <div class="loading">
+                      <div class="spinner"></div>
+                      Ladowanie...
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div id="paginationHours"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PAGE: ADVANCES -->
+      <div id="pageAdvances" style="display: none">
+        <div class="card">
+          <div style="
+                display: flex;
+                align-items: center;
+                padding: 14px 16px;
+                border-bottom: 1px solid var(--border);
+                gap: 10px;
+                flex-wrap: wrap;
+              ">
+            <span style="font-size: 13px; font-weight: 600">Zaliczki</span>
+            <span class="card-count" style="margin-left: 10px" id="advancesCount">0</span>
+            <div style="
+                  margin-left: auto;
+                  display: flex;
+                  gap: 8px;
+                  flex-wrap: wrap;
+                  align-items: center;
+                ">
+              <label
+                style="display:flex; align-items:center; gap:6px; color:var(--text2); font-size:13px; cursor:pointer;">
+                <input type="checkbox" id="advSelectAll" onchange="toggleAllAdvances(this.checked)">
+                Zaznacz wszystkie
+              </label>
+              <select id="advancesFacility" onchange="filterAdvances()" style="width: 180px">
+                <option value="">Wszystkie obiekty</option>
+              </select>
+              <select id="advancesStatus" onchange="filterAdvances()">
+                <option value="">Wszystkie statusy</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+              </select>
+              <input type="date" id="advancesDateFrom" onchange="filterAdvances()" title="Od" />
+              <input type="date" id="advancesDateTo" onchange="filterAdvances()" title="Do" />
+              <button class="btn btn-ghost btn-sm" onclick="clearAdvancesFilters()">
+                ✕ Wyczyść
+              </button>
+              <button class="btn btn-ghost btn-sm" onclick="exportToExcel('advances')">
+                📥 Excel
+              </button>
+            </div>
+          </div>
+          <div id="advBatchBar" style="display:none; gap:8px; align-items:center; padding:8px 0;">
+            <span style="color:var(--text2)">Wybrano: <b id="advBatchCount">0</b></span>
+            <button class="btn btn-sm" style="color:var(--green);border-color:var(--green)"
+              onclick="batchAdvances('approve')">✓ Zatwierdź wybrane</button>
+            <button class="btn btn-sm" style="color:var(--red);border-color:var(--red)"
+              onclick="batchAdvances('reject')">✕ Odrzuć wybrane</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:32px"></th>
+                  <th>Pracownik</th>
+                  <th>Login</th>
+                  <th>Obiekt</th>
+                  <th>Data BHP</th>
+                  <th>Data wniosku</th>
+                  <th>Godziny (mies.)</th>
+                  <th>Status</th>
+                  <th>Akcje</th>
+                </tr>
+              </thead>
+              <tbody id="advancesTable">
+                <tr>
+                  <td colspan="9">
+                    <div class="loading">
+                      <div class="spinner"></div>
+                      Ladowanie...
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- PAGE: WORKERS -->
+      <div id="pageWorkers" style="display: none">
+        <div class="card">
+          <div style="
+                display: flex;
+                align-items: center;
+                padding: 14px 16px;
+                border-bottom: 1px solid var(--border);
+                gap: 10px;
+                flex-wrap: wrap;
+              ">
+            <span style="font-size: 13px; font-weight: 600">Pracownicy</span>
+            <span class="card-count" id="workersCount">0</span>
+            <div style="
+                  margin-left: auto;
+                  display: flex;
+                  gap: 8px;
+                  flex-wrap: wrap;
+                  align-items: center;
+                ">
+              <input type="text" id="workersSearch" placeholder="Szukaj pracownika..." style="width: 180px"
+                oninput="filterWorkers()" />
+              <div style="display:flex;gap:6px;align-items:center;">
+                <div style="position:relative;" id="workersGroupDropWrap">
+                  <button onclick="toggleWorkersGroupDrop()"
+                    style="height:34px;padding:0 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;">
+                    <span id="workersGroupLabel">📁 Grupa...</span> <span style="font-size:9px">▼</span>
+                  </button>
+                  <div id="workersGroupDrop"
+                    style="display:none;position:absolute;top:38px;left:0;background:var(--surface2);border:1px solid var(--border);border-radius:8px;min-width:240px;max-height:400px;overflow-y:auto;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.4);padding:6px 0;">
+                    <div
+                      style="padding:6px 8px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface2);">
+                      <input id="workersGroupSearch" type="text" placeholder="Szukaj grupy..."
+                        style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:5px;font-size:12px;"
+                        oninput="filterWorkersGroupList()" />
+                    </div>
+                    <div id="workersGroupList"></div>
+                  </div>
+                </div>
+
+                <div style="position:relative;" id="workersFacDropWrap">
+                  <button onclick="toggleWorkersFacDrop()"
+                    style="height:34px;padding:0 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;">
+                    <span id="workersFacLabel">🏭 Obiekt...</span> <span style="font-size:9px">▼</span>
+                  </button>
+                  <div id="workersFacDrop"
+                    style="display:none;position:absolute;top:38px;left:0;background:var(--surface2);border:1px solid var(--border);border-radius:8px;min-width:240px;max-height:400px;overflow-y:auto;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.4);padding:6px 0;">
+                    <div
+                      style="padding:6px 8px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface2);">
+                      <input id="workersFacSearch" type="text" placeholder="Szukaj obiektu..."
+                        style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:5px;font-size:12px;"
+                        oninput="filterWorkersFacList()" />
+                    </div>
+                    <div id="workersFacList"></div>
+                  </div>
+                </div>
+              </div>
+              <div style="position:relative;" id="statusDropWrap">
+                <button onclick="toggleStatusDrop('workers')"
+                  style="height:34px;padding:0 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;">
+                  <span id="workersStatusLabel">Wszystkie statusy</span> ▾
+                </button>
+                <div id="workersStatusDrop"
+                  style="display:none;position:absolute;top:38px;right:0;background:var(--surface2);border:1px solid var(--border);border-radius:8px;z-index:999;min-width:180px;padding:6px 0;box-shadow:0 8px 24px rgba(0,0,0,.4);">
+                  <div onclick="toggleStatus('workers','')" id="wst_all"
+                    style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                    <span
+                      style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
+                      id="wst_all_check"></span>Wszystkie
+                  </div>
+                  <div style="height:1px;background:var(--border);margin:4px 0"></div>
+                  <div onclick="toggleStatus('workers','pracuje')" id="wst_pracuje"
+                    style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                    <span
+                      style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
+                      id="wst_pracuje_check"></span>Pracuje
+                  </div>
+                  <div onclick="toggleStatus('workers','zwolniony')" id="wst_zwolniony"
+                    style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                    <span
+                      style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
+                      id="wst_zwolniony_check"></span>Zwolniony
+                  </div>
+                  <div onclick="toggleStatus('workers','rezygnacja')" id="wst_rezygnacja"
+                    style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                    <span
+                      style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
+                      id="wst_rezygnacja_check"></span>Rezygnacja
+                  </div>
+                  <div onclick="toggleStatus('workers','przeniesiony')" id="wst_przeniesiony"
+                    style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                    <span
+                      style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
+                      id="wst_przeniesiony_check"></span>Przeniesiony
+                  </div>
+                  <div onclick="toggleStatus('workers','urlop_l4')" id="wst_urlop_l4"
+                    style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                    <span
+                      style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
+                      id="wst_urlop_l4_check"></span>Urlop / L4
+                  </div>
+                  <div onclick="toggleStatus('workers','unknown')" id="wst_unknown"
+                    style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                    <span
+                      style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
+                      id="wst_unknown_check"></span>Brak statusu
+                  </div>
+                </div>
+              </div>
+              <select id="workersPageSize" onchange="changeWorkersPageSize()" style="width: 80px">
+                <option value="10">10</option>
+                <option value="20">20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="99999">Wszystkie</option>
+              </select>
+              <button class="btn btn-primary btn-sm" onclick="openWorkerModal(null)">
+                + Dodaj
+              </button>
+              <button class="btn btn-ghost btn-sm" onclick="startImport()" id="importBtn">
+                ⬇ Import
+              </button>
+              <button class="btn btn-ghost btn-sm" onclick="exportToExcel('workers')">
+                📥 Excel
+              </button>
+            </div>
+          </div>
+          <div style="
+                display: flex;
+                align-items: center;
+                padding: 8px 16px;
+                border-bottom: 1px solid var(--border);
+                gap: 12px;
+                flex-wrap: wrap;
+                background: var(--surface2);
+              ">
+            <div style="display: flex; align-items: center; gap: 6px">
+              <span style="
+                    font-size: 11px;
+                    color: var(--text3);
+                    font-family: var(--mono);
+                  ">BHP:</span>
+              <input type="date" id="workersBhpFrom" onchange="filterWorkers()" style="width: 130px" title="BHP od" />
+              <span style="color: var(--text3); font-size: 12px">—</span>
+              <input type="date" id="workersBhpTo" onchange="filterWorkers()" style="width: 130px" title="BHP do" />
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px">
+              <span style="
+                    font-size: 11px;
+                    color: var(--text3);
+                    font-family: var(--mono);
+                  ">Ostatni dzień:</span>
+              <input type="date" id="workersLastFrom" onchange="filterWorkers()" style="width: 130px" />
+              <span style="color: var(--text3); font-size: 12px">—</span>
+              <input type="date" id="workersLastTo" onchange="filterWorkers()" style="width: 130px" />
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="clearWorkersFilters()" style="margin-left: auto">
+              ✕ Wyczyść filtry
+            </button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Imie i Nazwisko</th>
+                  <th>Obiekt</th>
+                  <th>Status</th>
+                  <th>Telegram</th>
+                  <th>BHP</th>
+                  <th>Ostatni dzień</th>
+                  <th>Akcje</th>
+                </tr>
+              </thead>
+              <tbody id="workersTable">
+                <tr>
+                  <td colspan="8">
+                    <div class="loading">
+                      <div class="spinner"></div>
+                      Ladowanie...
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div id="paginationWorkers"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PAGE: DAYOFF -->
+      <div id="pageDayoff" style="display: none">
+        <div class="card">
+          <div style="
+                display: flex;
+                align-items: center;
+                padding: 14px 16px;
+                border-bottom: 1px solid var(--border);
+                gap: 10px;
+                flex-wrap: wrap;
+              ">
+            <span style="font-size: 13px; font-weight: 600">Вихідні</span>
+            <span class="card-count" id="dayoffCount">0</span>
+            <div style="
+                  margin-left: auto;
+                  display: flex;
+                  gap: 8px;
+                  flex-wrap: wrap;
+                  align-items: center;
+                ">
+              <label
+                style="display:flex; align-items:center; gap:6px; color:var(--text2); font-size:13px; cursor:pointer;">
+                <input type="checkbox" id="dayoffSelectAll" onchange="toggleAllDayoff(this.checked)">
+                Zaznacz wszystkie
+              </label>
+              <div id="dayoffBatchBar" style="display:none; gap:8px; align-items:center;">
+                <span style="color:var(--text2)">Wybrano: <b id="dayoffBatchCount">0</b></span>
+                <button class="btn btn-sm" style="color:var(--green);border-color:var(--green)"
+                  onclick="batchDayoff('approve')">✓ Zatwierdź</button>
+                <button class="btn btn-sm" style="color:var(--red);border-color:var(--red)"
+                  onclick="batchDayoff('reject')">✕ Odrzuć</button>
+              </div>
+              <input type="text" id="dayoffSearch" placeholder="Szukaj..." style="width: 160px"
+                oninput="filterDayoff()" />
+              <select id="dayoffFacility" onchange="filterDayoff()" style="width: 180px">
+                <option value="">Wszystkie obiekty</option>
+              </select>
+              <select id="dayoffStatus" onchange="filterDayoff()">
+                <option value="">Wszystkie statusy</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+              </select>
+              <input type="date" id="dayoffDateFrom" onchange="filterDayoff()" title="Od" />
+              <input type="date" id="dayoffDateTo" onchange="filterDayoff()" title="Do" />
+              <button class="btn btn-ghost btn-sm" onclick="exportToExcel('dayoff')">
+                📥 Excel
+              </button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:32px"></th>
+                  <th>Pracownik</th>
+                  <th>Obiekt</th>
+                  <th>Dni wolne</th>
+                  <th>Data wniosku</th>
+                  <th>Status</th>
+                  <th>Akcje</th>
+                </tr>
+              </thead>
+              <tbody id="dayoffTable">
+                <tr>
+                  <td colspan="6">
+                    <div class="loading">
+                      <div class="spinner"></div>
+                      Ladowanie...
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- PAGE: TABELE -->
+      <div id="pageTabele" style="display: none">
+        <div class="card">
+          <div style="
+                display: flex;
+                align-items: center;
+                padding: 14px 16px;
+                border-bottom: 1px solid var(--border);
+                gap: 10px;
+                flex-wrap: wrap;
+              ">
+            <span style="font-size: 13px; font-weight: 600">🗂️ Табелі</span>
+            <span class="card-count" id="tabeleCount">0</span>
+            <div style="
+                  margin-left: auto;
+                  display: flex;
+                  gap: 8px;
+                  flex-wrap: wrap;
+                  align-items: center;
+                ">
+              <select id="tabeleFacility" onchange="filterTabele()" style="width: 200px">
+                <option value="">Wszystkie obiekty</option>
+              </select>
+              <select id="tabeleMonth" onchange="loadTabelePage()" style="width: 160px"></select>
+              <select id="tabeleStatus" onchange="filterTabele()">
+                <option value="">Wszystkie</option>
+                <option value="received">✅ Отримано</option>
+                <option value="missing">❌ Не отримано</option>
+              </select>
+              <button class="btn btn-ghost btn-sm" onclick="downloadAllTabele()">
+                📦 Pobierz wszystkie
+              </button>
+              <button class="btn btn-ghost btn-sm" onclick="exportToExcel('tabele')">
+                📥 Excel
+              </button>
+            </div>
+          </div>
+          <!-- Статистика -->
+          <div style="
+                display: flex;
+                gap: 16px;
+                padding: 12px 16px;
+                background: var(--surface2);
+                border-bottom: 1px solid var(--border);
+              ">
+            <span style="font-size: 12px; color: var(--text2)">Всього:
+              <strong id="tabeleTotal" style="color: var(--text)">—</strong></span>
+            <span style="font-size: 12px; color: var(--green)">✅ Отримано: <strong id="tabeleReceived">—</strong></span>
+            <span style="font-size: 12px; color: var(--red)">❌ Не отримано: <strong id="tabeleMissing">—</strong></span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Працівник</th>
+                  <th>Об'єкт</th>
+                  <th>Місяць</th>
+                  <th>Файл</th>
+                  <th>Дата відправки</th>
+                  <th>Статус</th>
+                </tr>
+              </thead>
+              <tbody id="tabeleTable">
+                <tr>
+                  <td colspan="6">
+                    <div class="loading">
+                      <div class="spinner"></div>
+                      Ladowanie...
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- PAGE: HISTORY -->
+      <div id="pageHistory" style="display:none">
+        <div class="card">
+          <div
+            style="display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid var(--border);gap:10px;flex-wrap:wrap;">
+            <span style="font-size:13px;font-weight:600;">Historia pracownikow</span>
+            <span class="card-count" id="historyCount">0</span>
+            <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
+              <input type="text" id="historySearch" placeholder="Szukaj pracownika..." style="width:180px"
+                oninput="filterHistory()" />
+              <div style="display:flex;gap:6px;align-items:center;">
+                <div style="position:relative;" id="historyGroupDropWrap">
+                  <button onclick="toggleHistoryGroupDrop()"
+                    style="height:34px;padding:0 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;">
+                    <span id="historyGroupLabel">📁 Grupa...</span> <span style="font-size:9px">▼</span>
+                  </button>
+                  <div id="historyGroupDrop"
+                    style="display:none;position:absolute;top:38px;left:0;background:var(--surface2);border:1px solid var(--border);border-radius:8px;min-width:240px;max-height:400px;overflow-y:auto;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.4);padding:6px 0;">
+                    <div
+                      style="padding:6px 8px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface2);">
+                      <input id="historyGroupSearch" type="text" placeholder="Szukaj grupy..."
+                        style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:5px;font-size:12px;"
+                        oninput="filterHistoryGroupList()" />
+                    </div>
+                    <div id="historyGroupList"></div>
+                  </div>
+                </div>
+
+                <div style="position:relative;" id="historyFacDropWrap">
+                  <button onclick="toggleHistoryFacDrop()"
+                    style="height:34px;padding:0 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;">
+                    <span id="historyFacLabel">🏭 Obiekt...</span> <span style="font-size:9px">▼</span>
+                  </button>
+                  <div id="historyFacDrop"
+                    style="display:none;position:absolute;top:38px;left:0;background:var(--surface2);border:1px solid var(--border);border-radius:8px;min-width:240px;max-height:400px;overflow-y:auto;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.4);padding:6px 0;">
+                    <div
+                      style="padding:6px 8px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface2);">
+                      <input id="historyFacSearch" type="text" placeholder="Szukaj obiektu..."
+                        style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:5px;font-size:12px;"
+                        oninput="filterHistoryFacList()" />
+                    </div>
+                    <div id="historyFacList"></div>
+                  </div>
+                </div>
+              </div>
+              <div style="position:relative;" id="historyStatusDropWrap">
+                <button onclick="toggleStatusDrop('history')"
+                  style="height:34px;padding:0 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;">
+                  <span id="historyStatusLabel">Wszystkie statusy</span> ▾
+                </button>
+                <div id="historyStatusDrop"
+                  style="display:none;position:absolute;top:38px;right:0;background:var(--surface2);border:1px solid var(--border);border-radius:8px;z-index:999;min-width:180px;padding:6px 0;box-shadow:0 8px 24px rgba(0,0,0,.4);">
+                  <div onclick="toggleStatus('history','')"
+                    style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                    <span
+                      style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
+                      id="hst_all_check"></span>Wszystkie
+                  </div>
+                  <div style="height:1px;background:var(--border);margin:4px 0"></div>
+                  <div onclick="toggleStatus('history','pracuje')"
+                    style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                    <span
+                      style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
+                      id="hst_pracuje_check"></span>Pracuje
+                  </div>
+                  <div onclick="toggleStatus('history','zwolniony')"
+                    style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                    <span
+                      style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
+                      id="hst_zwolniony_check"></span>Zwolniony
+                  </div>
+                  <div onclick="toggleStatus('history','rezygnacja')"
+                    style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                    <span
+                      style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
+                      id="hst_rezygnacja_check"></span>Rezygnacja
+                  </div>
+                  <div onclick="toggleStatus('history','przeniesiony')"
+                    style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                    <span
+                      style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
+                      id="hst_przeniesiony_check"></span>Przeniesiony
+                  </div>
+                  <div onclick="toggleStatus('history','urlop_l4')"
+                    style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                    <span
+                      style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
+                      id="hst_urlop_l4_check"></span>Urlop / L4
+                  </div>
+                  <div onclick="toggleStatus('history','unknown')"
+                    style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                    <span
+                      style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
+                      id="hst_unknown_check"></span>Brak statusu
+                  </div>
+                </div>
+              </div>
+              <select id="historyPageSize" onchange="changeHistoryPageSize()" style="width:80px">
+                <option value="10">10</option>
+                <option value="20">20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="99999">Wszystkie</option>
+              </select>
+              <button class="btn btn-ghost btn-sm" onclick="exportToExcel('history')">📥 Excel</button>
+              <button class="btn btn-primary btn-sm" onclick="searchHistory()">🔍 Szukaj</button>
+            </div>
+          </div>
+          <div
+            style="display:flex;align-items:center;padding:8px 16px;border-bottom:1px solid var(--border);gap:12px;flex-wrap:wrap;background:var(--surface2);">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:11px;color:var(--text3);font-family:var(--mono);">BHP:</span>
+              <input type="date" id="historyBhpFrom" onchange="filterHistory()" style="width:130px" />
+              <span style="color:var(--text3);font-size:12px">—</span>
+              <input type="date" id="historyBhpTo" onchange="filterHistory()" style="width:130px" />
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:11px;color:var(--text3);font-family:var(--mono);">Ostatni dzień:</span>
+              <input type="date" id="historyLastFrom" onchange="filterHistory()" style="width:130px" />
+              <span style="color:var(--text3);font-size:12px">—</span>
+              <input type="date" id="historyLastTo" onchange="filterHistory()" style="width:130px" />
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="clearHistoryFilters()" style="margin-left:auto">✕ Wyczyść
+              filtry</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Pracownik</th>
+                  <th>Obiekt</th>
+                  <th>Status</th>
+                  <th>BHP</th>
+                  <th>Ostatni dzień</th>
+                  <th>Import</th>
+                </tr>
+              </thead>
+              <tbody id="historyTable">
+                <tr>
+                  <td colspan="6">
+                    <div class="loading">
+                      <div class="spinner"></div>Ladowanie...
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div id="paginationHistory"></div>
+          </div>
+        </div>
+      </div>
+
+
+      <!-- PAGE: SETTINGS -->
+      <div id="pageSettings" style="display: none">
+        <div class="card">
+          <div style="
+                display: flex;
+                justify-content: space-between;
+                margin-bottom: 10px;
+              ">
+            <span style="font-weight: 600">⚙️ Ustawienia obiektów</span>
+          </div>
+          <div class="table-wrapper">
+            <table class="settings-table">
+              <thead>
+                <tr>
+                  <th>Obiekt</th>
+                  <th>Zaliczki</th>
+                  <th>Wolne</th>
+                  <th>Tabele</th>
+                  <th>Format godzin</th>
+                  <th>Dni</th>
+                  <th>Przypomnienia</th>
+                  <th>Godzina</th>
+                </tr>
+              </thead>
+              <tbody id="settingsTable"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- /content -->
+  </div>
+  <!-- /main -->
+
+  <!-- EDIT MODAL -->
+  <div class="modal-overlay" id="editModal">
+    <div class="modal">
+      <div class="modal-title" id="modalTitle">Edytuj godziny</div>
+      <div class="modal-field">
+        <div class="modal-label">DATA</div>
+        <input class="modal-input" id="modalDate" type="date" readonly />
+      </div>
+      <div class="modal-field">
+        <div class="modal-label">GODZINY (lub wybierz nieobecnosc)</div>
+        <input class="modal-input" id="modalHours" type="number" min="0" max="13" step="0.25" placeholder="np. 8" />
+        <div class="modal-abs">
+          <div class="abs-btn" onclick="setAbs('WZ', event)">DW — Dzień wolny</div>
+          <div class="abs-btn" onclick="setAbs('DWZ', event)">DWZ — Dzień wolny zakładowy</div>
+          <div class="abs-btn" onclick="setAbs('URL', event)">URL — Urlop</div>
+          <div class="abs-btn" onclick="setAbs('L4', event)">L4 — Zwolnienie</div>
+          <div class="abs-btn" onclick="setAbs('NN', event)">NN — Nieobecność</div>
+          <div class="abs-btn" onclick="setAbs('UN', event)">UN — Usprawiedliwiona nieob.</div>
+        </div>
+      </div>
+      <div class="modal-btns">
+        <button class="btn btn-ghost" onclick="closeModal()">Anuluj</button>
+        <button class="btn btn-primary" onclick="saveHours()">Zapisz</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- WORKER MODAL -->
+  <div class="modal-overlay" id="workerModal">
+    <div class="modal" style="width: 400px">
+      <div class="modal-title" id="workerModalTitle">Nowy pracownik</div>
+      <input type="hidden" id="wm_id" />
+      <div class="modal-field">
+        <div class="modal-label">LOGIN (ID z paszportu) *</div>
+        <input class="modal-input" id="wm_login" placeholder="np. GG283002" />
+      </div>
+      <div class="modal-field">
+        <div class="modal-label">IMIE I NAZWISKO *</div>
+        <input class="modal-input" id="wm_name" placeholder="np. Kowalenko Oleksandr" />
+      </div>
+      <div class="modal-field">
+        <div class="modal-label">OBIEKT</div>
+        <select class="modal-input" id="wm_facility"></select>
+      </div>
+      <div class="modal-field">
+        <div class="modal-label">STATUS</div>
+        <select class="modal-input" id="wm_status">
+          <option value="pracuje">Pracuje</option>
+          <option value="zwolniony">Zwolniony</option>
+          <option value="rezygnacja">Rezygnacja</option>
+          <option value="przeniesiony">Przeniesiony</option>
+          <option value="urlop_l4">Urlop / L4</option>
+          <option value="unknown">Brak statusu</option>
+        </select>
+      </div>
+      <div class="modal-field">
+        <div class="modal-label">DATA ROZPOCZECIA (BHP)</div>
+        <input class="modal-input" id="wm_bhp" type="date" />
+      </div>
+      <div style="color: var(--red); font-size: 11px; margin-top: 4px" id="wm_err"></div>
+      <div class="modal-btns">
+        <button class="btn btn-ghost" onclick="closeWorkerModal()">
+          Anuluj
+        </button>
+        <button class="btn btn-primary" onclick="saveWorker()">Zapisz</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- HISTORY MODAL -->
+  <div class="modal-overlay" id="historyModal">
+    <div class="modal" style="
+          width: 600px;
+          max-height: 80vh;
+          display: flex;
+          flex-direction: column;
+        ">
+      <div style="
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+          ">
+        <div class="modal-title" id="historyModalTitle" style="margin: 0">
+          Historia pracownika
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="closeHistoryModal()">
+          ✕
+        </button>
+      </div>
+      <div id="historyContent" style="overflow-y: auto; flex: 1">
+        <div class="loading">
+          <div class="spinner"></div>
+          Ladowanie...
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/app.js"></script>
+  <script src="/js/hours.js"></script>
+  <script src="/js/workers.js"></script>
+  <script src="/js/modules.js"></script>
+
+  <!-- TABELE MODAL -->
+  <div class="modal-overlay" id="tabeleModal">
+    <div class="modal" style="
+          width: 700px;
+          max-height: 85vh;
+          display: flex;
+          flex-direction: column;
+        ">
+      <div style="
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+          ">
+        <div class="modal-title" id="tabeleModalTitle" style="margin: 0">
+          Табелі
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="closeTabeleModal()">
+          ✕
+        </button>
+      </div>
+      <div id="tabeleModalContent" style="
+            overflow-y: auto;
+            flex: 1;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            justify-content: center;
+            padding: 8px;
+          ">
+        <div class="loading">
+          <div class="spinner"></div>
+          Ladowanie...
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="sidebar-hover-zone"
+     onmouseenter="document.querySelector('.sidebar').classList.add('sidebar-peek')"
+     onmouseleave="document.querySelector('.sidebar').classList.remove('sidebar-peek')">
+</div>
+
+<script>
+function toggleSidebar() {
+  const hidden = document.body.classList.toggle('sidebar-hidden');
+  const btn = document.querySelector('.sidebar-toggle');
+  btn.textContent = hidden ? '▶' : '◀';
+  btn.title = hidden ? 'Przypnij menu' : 'Ukryj menu';
+  localStorage.setItem('sas_sidebar_hidden', hidden ? '1' : '0');
+}
+// Відновлюємо стан при завантаженні
+if (localStorage.getItem('sas_sidebar_hidden') === '1') {
+  document.body.classList.add('sidebar-hidden');
+  const btn = document.querySelector('.sidebar-toggle');
+  if (btn) { btn.textContent = '▶'; btn.title = 'Przypnij menu'; }
+}
+// Автоматично ховаємо peek при кліку на пункт меню
+document.querySelector('.sidebar')?.addEventListener('click', (e) => {
+  if (e.target.closest('.nav-item') && document.body.classList.contains('sidebar-hidden')) {
+    document.querySelector('.sidebar').classList.remove('sidebar-peek');
+  }
+});
+</script>
+</body>
+
+</html>

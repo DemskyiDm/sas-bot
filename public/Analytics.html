@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="pl">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SAS Logistic — Analityka</title>
+    <link rel="stylesheet" href="/css/style.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+
+<body>
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+        <div class="logo">
+            <div class="logo-tag">SAS LOGISTIC</div>
+            <div class="logo-name">Panel Koordynatora</div>
+        </div>
+        <div class="nav">
+            <div class="nav-item" onclick="window.location='/index.html'">📊 Godziny</div>
+            <div class="nav-item" onclick="window.location='/index.html#advances'">💰 Zaliczki</div>
+            <div class="nav-item" onclick="window.location='/index.html#workers'">👥 Pracownicy</div>
+            <div class="nav-item" onclick="window.location='/index.html#dayoff'">🏖️ Вихідні</div>
+            <div class="nav-item" onclick="window.location='/index.html#tabele'">🗂️ Табелі</div>
+            <div class="nav-item" onclick="window.location='/index.html#history'">📋 Historia</div>
+            <div class="nav-item active">📈 Analityka</div>
+            <div class="nav-item" onclick="window.location='/index.html#settings'">⚙️ Ustawienia</div>
+            <div id="adminLink" class="nav-item" onclick="window.location='/admin.html'" style="display:none">⚙️ Admin
+                panel</div>
+        </div>
+        <div style="padding:12px 10px;border-top:1px solid var(--border);margin-top:auto;">
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;">
+                <div id="userAvatar"
+                    style="width:28px;height:28px;background:var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">
+                    D</div>
+                <div>
+                    <div id="userName" style="font-size:12px;font-weight:500">—</div>
+                    <div id="userRole" style="font-size:10px;color:var(--text2);font-family:var(--mono)">koordynator
+                    </div>
+                </div>
+            </div>
+            <button onclick="doLogout()"
+                style="width:100%;margin-top:4px;padding:7px;background:transparent;border:1px solid var(--border);color:var(--text2);border-radius:5px;font-size:12px;cursor:pointer;">Wyloguj</button>
+        </div>
+    </div>
+
+    <!-- MAIN -->
+    <div class="main">
+        <div class="content">
+            <div id="pageAnalytics">
+
+                <!-- TOPBAR FILTERS -->
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
+                    <div style="display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+                        <button class="period-btn active" onclick="setPeriod(this,'week')"
+                            style="border:none;background:transparent;color:var(--text2);font-size:13px;padding:6px 14px;cursor:pointer;border-right:1px solid var(--border);">Тиждень</button>
+                        <button class="period-btn" onclick="setPeriod(this,'month')"
+                            style="border:none;background:transparent;color:var(--text2);font-size:13px;padding:6px 14px;cursor:pointer;border-right:1px solid var(--border);">Місяць</button>
+                        <button class="period-btn" onclick="setPeriod(this,'day')"
+                            style="border:none;background:transparent;color:var(--text2);font-size:13px;padding:6px 14px;cursor:pointer;">День</button>
+                    </div>
+                    <input type="date" id="dateFrom" onchange="loadAnalytics()"
+                        style="height:34px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);padding:0 10px;" />
+                    <span style="font-size:13px;color:var(--text2)">—</span>
+                    <input type="date" id="dateTo" onchange="loadAnalytics()"
+                        style="height:34px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);padding:0 10px;" />
+                    <div style="display:flex;gap:6px;align-items:center;">
+                        <div style="position:relative;" id="anGroupDropWrap">
+                            <button onclick="toggleAnGroupDrop()"
+                                style="height:34px;padding:0 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;">
+                                <span id="anGroupLabel">📁 Grupa...</span> <span style="font-size:9px">▼</span>
+                            </button>
+                            <div id="anGroupDrop"
+                                style="display:none;position:absolute;top:38px;left:0;background:var(--surface2);border:1px solid var(--border);border-radius:8px;min-width:240px;max-height:400px;overflow-y:auto;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.4);padding:6px 0;">
+                                <div
+                                    style="padding:6px 8px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface2);">
+                                    <input id="anGroupSearch" type="text" placeholder="Szukaj grupy..."
+                                        style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:5px;font-size:12px;"
+                                        oninput="filterAnGroupList()" />
+                                </div>
+                                <div id="anGroupList"></div>
+                            </div>
+                        </div>
+
+                        <div style="position:relative;" id="anFacDropWrap">
+                            <button onclick="toggleAnFacDrop()"
+                                style="height:34px;padding:0 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;">
+                                <span id="anFacLabel">🏭 Obiekt...</span> <span style="font-size:9px">▼</span>
+                            </button>
+                            <div id="anFacDrop"
+                                style="display:none;position:absolute;top:38px;left:0;background:var(--surface2);border:1px solid var(--border);border-radius:8px;min-width:240px;max-height:400px;overflow-y:auto;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.4);padding:6px 0;">
+                                <div
+                                    style="padding:6px 8px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface2);">
+                                    <input id="anFacSearch" type="text" placeholder="Szukaj obiektu..."
+                                        style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:5px;font-size:12px;"
+                                        oninput="filterAnFacList()" />
+                                </div>
+                                <div id="anFacList"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <button onclick="loadAnalytics()" class="btn btn-primary btn-sm">🔄 Оновити</button>
+                </div>
+
+                <!-- METRIC CARDS -->
+                <div class="stats-row" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;">
+                    <div class="stat-card blue" style="display:flex;flex-direction:column;">
+                        <div class="stat-label">Всього активних</div>
+                        <div
+                            style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+                            <div class="stat-value" id="anTotal">—</div>
+                            <div class="stat-sub">працівників</div>
+                        </div>
+                    </div>
+                    <div class="stat-card green" style="display:flex;flex-direction:column;">
+                        <div class="stat-label">Прийнято</div>
+                        <div
+                            style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+                            <div class="stat-value" id="anHired">—</div>
+                            <div class="stat-sub">за період</div>
+                        </div>
+                    </div>
+                    <div class="stat-card red" style="display:flex;flex-direction:column;">
+                        <div class="stat-label">Звільнено</div>
+                        <div
+                            style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+                            <div class="stat-value" id="anFired">—</div>
+                            <div class="stat-sub">за період</div>
+                        </div>
+                    </div>
+                    <div class="stat-card orange" style="display:flex;flex-direction:column;">
+                        <div class="stat-label">Баланс</div>
+                        <div
+                            style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+                            <div class="stat-value" id="anBalance">—</div>
+                            <div class="stat-sub">різниця</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- CHART CARD (лінійний графік) -->
+                <div class="card" id="lineChartCard" style="margin-bottom:16px;">
+                    <div
+                        style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                        <span
+                            style="font-size:13px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.04em;">Рух
+                            персоналу</span>
+                        <div id="seriesBtns" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+                    </div>
+                    <div style="position:relative;width:100%;height:260px;">
+                        <canvas id="lineChart" role="img" aria-label="Графік руху персоналу">Динаміка руху
+                            персоналу</canvas>
+                    </div>
+                </div>
+
+                <!-- SUMMARY TABLE -->
+                <div class="card" id="summaryCard" style="margin-bottom:16px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                        <span
+                            style="font-size:13px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.04em;">Зведення
+                            по об'єктах</span>
+                        <button class="btn btn-ghost btn-sm" onclick="exportSummaryExcel()">📥 Excel</button>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Об'єкт</th>
+                                    <th>Всього</th>
+                                    <th>Працює</th>
+                                    <th style="color:#4ade80">Прийнято</th>
+                                    <th style="color:#f87171">Звільнено</th>
+                                    <th style="color:#f59e0b">Rezygnacja</th>
+                                    <th style="color:#06b6d4">Перенесено</th>
+                                    <th style="color:#60a5fa">Відпустка/Л4</th>
+                                </tr>
+                            </thead>
+                            <tbody id="summaryBody">
+                                <tr>
+                                    <td colspan="8">
+                                        <div class="loading">
+                                            <div class="spinner"></div>Завантаження...
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- DRILL DOWN CARD -->
+                <div class="card" id="drillCard" style="display:none;margin-bottom:16px;">
+                    <!-- Header -->
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+                        <button class="btn btn-ghost btn-sm" onclick="closeDrill()">← Назад</button>
+                        <span style="font-size:14px;font-weight:600;" id="drillTitle"></span>
+
+                        <!-- Перемикач групування -->
+                        <div
+                            style="display:flex;gap:2px;margin-left:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:2px;">
+                            <button class="drill-gran-btn" data-gran="month" onclick="setDrillGran(this,'month')"
+                                style="padding:5px 12px;font-size:12px;border:none;border-radius:6px;background:var(--surface2);color:var(--text);cursor:pointer;">Місяць</button>
+                            <button class="drill-gran-btn" data-gran="week" onclick="setDrillGran(this,'week')"
+                                style="padding:5px 12px;font-size:12px;border:none;border-radius:6px;background:transparent;color:var(--text2);cursor:pointer;">Тиждень</button>
+                            <button class="drill-gran-btn" data-gran="day" onclick="setDrillGran(this,'day')"
+                                style="padding:5px 12px;font-size:12px;border:none;border-radius:6px;background:transparent;color:var(--text2);cursor:pointer;">День</button>
+                        </div>
+                    </div>
+
+                    <!-- Вибір періоду для drill -->
+                    <div id="drillPeriodControls"
+                        style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+                        <!-- Дні/Тижні: діапазон дат -->
+                        <div id="drillDateRange" style="display:flex;align-items:center;gap:8px;">
+                            <input type="date" id="drillDateFrom" onchange="loadDrillData()"
+                                style="height:32px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);padding:0 8px;" />
+                            <span style="font-size:12px;color:var(--text2)">—</span>
+                            <input type="date" id="drillDateTo" onchange="loadDrillData()"
+                                style="height:32px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);padding:0 8px;" />
+                        </div>
+                        <!-- Місяці: мультивибір -->
+                        <div id="drillMonthPicker" style="position:relative;display:none;">
+                            <button onclick="toggleDrillMonths()"
+                                style="height:32px;padding:0 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px;">
+                                <span id="drillMonthLabel">Місяці...</span> <span style="font-size:9px">▼</span>
+                            </button>
+                            <div id="drillMonthDrop"
+                                style="display:none;position:absolute;top:36px;left:0;background:var(--surface2);border:1px solid var(--border);border-radius:8px;min-width:200px;max-height:300px;overflow-y:auto;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.4);padding:6px 0;">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Метрики-картки -->
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px;"
+                        id="drillMetrics"></div>
+
+                    <!-- Графік -->
+                    <div style="position:relative;width:100%;height:220px;margin-bottom:16px;">
+                        <canvas id="drillChart" role="img" aria-label="Деталі по об'єкту">Деталі об'єкту</canvas>
+                    </div>
+
+                    <!-- Таблиця -->
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Період</th>
+                                    <th>Всього</th>
+                                    <th style="color:#4ade80">Прийнято</th>
+                                    <th style="color:#f87171">Звільнено</th>
+                                    <th style="color:#f59e0b">Rezygnacja</th>
+                                    <th style="color:#06b6d4">Перенесено</th>
+                                </tr>
+                            </thead>
+                            <tbody id="drillBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/analytics.js"></script>
+</body>
+
+</html>

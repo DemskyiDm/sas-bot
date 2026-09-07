@@ -51,6 +51,10 @@ function dayKeyboard(session, settings) {
     { text: T(session, "month_sum_btn"), callback_data: "CMD_9999" },
     { text: T(session, "logout_btn"), callback_data: "CMD_0000" },
   ]);
+
+    rows.push([
+ { text: T(session, "btn_800plus"), callback_data: "CMD_800PLUS" },
+  ]);
   return { inline_keyboard: rows };
 }
 function hoursKeyboard(session, settings) {

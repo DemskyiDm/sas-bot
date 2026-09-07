@@ -46,11 +46,17 @@ const SOURCES = [
     gid: "1438986598",
     facilityName: "ID Psary WELL",
   },
+    {
+    ssId: "1GlvMO24782bKn4InZiXpcIiAVejIDxCncOuDLQ-rH0c",
+    gid: "1238085682",
+    facilityName: "Hydro Chrzanów SAS",
+  },
   {
     ssId: "1ZFqUlu_C69RkY9BQDa-cutDvFEZGk8iCJjmBdaV1ZxI",
     gid: "1158031380",
     facilityName: "METLER Dipico",
   },
+  
   {
     ssId: "1ZFqUlu_C69RkY9BQDa-cutDvFEZGk8iCJjmBdaV1ZxI",
     gid: "1407856830",
@@ -390,6 +396,11 @@ const SOURCES = [
     ssId: "1bgWR1bYJUXk5zoTXKPRjfV050oYJ9ha9cTNQvchHoIQ",
     gid: "1477908858",
     facilityName: "Notino Well",
+  },
+   {
+    ssId: "1bgWR1bYJUXk5zoTXKPRjfV050oYJ9ha9cTNQvchHoIQ",
+    gid: "1883894702",
+    facilityName: "Partners Lowicz SAS ",
   },
   {
     ssId: "1UHwrLJyb6P2Zc4j1ibC8Vif7uLR2_0tiYGHXpApsp_A",

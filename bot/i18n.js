@@ -52,6 +52,8 @@ const I18N = {
     outside_period: "⛔ Ви не працювали на об'єкті в цей день — запис не збережено.",
     dismissed_blocked: "⛔ Ви більше не працюєте — замовлення недоступне.",
     btn_back: "◀️ Назад",
+    btn_800plus: "800+",
+    msg_800plus_thanks: "Дякуємо за надану інформацію!",
   },
   pl: {
     choose_lang: "Wybierz jezyk:",
@@ -106,6 +108,8 @@ const I18N = {
     outside_period: "⛔ Nie pracowałeś na obiekcie w tym dniu — nie zapisano.",
     dismissed_blocked: "⛔ Nie jesteś już zatrudniony — funkcja niedostępna.",
     btn_back: "◀️ Wstecz",
+    btn_800plus: "800+",
+    msg_800plus_thanks: "Dziękujemy za przekazane informacje!",
   },
   en: {
     choose_lang: "Choose a language:",
@@ -160,6 +164,8 @@ const I18N = {
     outside_period: "⛔ You didn't work at the facility on this day — not saved.",
     dismissed_blocked: "⛔ You are no longer employed — this action is unavailable.",
     btn_back: "◀️ Back",
+    btn_800plus: "800+",
+    msg_800plus_thanks: "Thank you for the information provided!",
   },
   ru: {
     choose_lang: "Выберите язык:",
@@ -215,6 +221,8 @@ const I18N = {
     outside_period: "⛔ Вы не работали на объекте в этот день — запись не сохранена.",
     dismissed_blocked: "⛔ Вы больше не работаете — функция недоступна.",
     btn_back: "◀️ Назад",
+    btn_800plus: "800+",
+    msg_800plus_thanks: "Спасибо за предоставленную информацию!",
   },
 };
 

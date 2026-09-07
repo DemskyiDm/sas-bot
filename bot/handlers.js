@@ -420,6 +420,42 @@ async function handleUpdate(bot, update) {
       return;
     }
 
+        // 800+ — записати згоду
+    if (payload === "CMD_800PLUS") {
+      await answer("OK");
+      if (!session.workerId) {
+        await sendMessage(bot, chatId, T(session, "need_id"));
+        return;
+      }
+      try {
+        const wq = await db.query(
+          `SELECT w.id, w.full_name, w.login, w.pesel,
+                  vc.facility_id, f.name AS facility_name
+           FROM workers w
+           LEFT JOIN v_worker_current vc ON vc.id = w.id
+           LEFT JOIN facilities f ON f.id = vc.facility_id
+           WHERE w.id = $1`,
+          [session.workerId],
+        );
+        const w = wq.rows[0];
+        await db.query(
+          `INSERT INTO program_800plus
+             (worker_id, full_name, login, pesel, facility_id, facility_name)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (worker_id)
+           DO UPDATE SET full_name = $2, login = $3, pesel = $4,
+                         facility_id = $5, facility_name = $6, submitted_at = now()`,
+          [w.id, w.full_name, w.login, w.pesel, w.facility_id, w.facility_name],
+        );
+        await sendMessage(bot, chatId, T(session, "msg_800plus_thanks"));
+      } catch (e) {
+        console.error("800plus error:", e.message);
+        await sendMessage(bot, chatId, T(session, "tabele_error"));
+      }
+      await sendDayKeyboard(bot, chatId, session, settings);
+      return;
+    }
+
     // DAY select
     if (payload.startsWith("DAY_")) {
       if (!session.workerId) {

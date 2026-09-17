@@ -15,7 +15,7 @@ function langKeyboard() {
   };
 }
 
-function dayKeyboard(session, settings) {
+function dayKeyboard(session, settings, extraRows) {
   const today = new Date();
   const rows = [];
   let row = [];
@@ -55,6 +55,12 @@ function dayKeyboard(session, settings) {
   rows.push([
     { text: T(session, "btn_800plus"), callback_data: "CMD_800PLUS" },
   ]);*/
+
+  // Акція — рядки кнопок приходять ззовні (bot/campaign.js), поки працівник не відповів
+  if (Array.isArray(extraRows) && extraRows.length) {
+    extraRows.forEach((r) => rows.push(r));
+  }
+
   return { inline_keyboard: rows };
 }
 function hoursKeyboard(session, settings) {

@@ -13,6 +13,7 @@ const {
   wolneKeyboard,
   tabeleKeyboard,
 } = require("./keyboards");
+const campaign = require("./campaign");
 
 const ABS_COLORS = { WZ: "wz", DWZ: "dwz", URL: "url", L4: "l4", NN: "nn", UN: "un" };
 
@@ -132,8 +133,13 @@ async function sendMessage(bot, chatId, text, extra) {
 }
 
 async function sendDayKeyboard(bot, chatId, session, settings) {
+  // Акція: кнопки показуються тільки працівникам обраних об'єктів і тільки поки не відповіли
+  let campaignRows = null;
+  if (session?.workerId && (await campaign.isEligible(session.workerId))) {
+    campaignRows = campaign.campaignRows(session);
+  }
   await sendMessage(bot, chatId, T(session, "choose_day"), {
-    reply_markup: dayKeyboard(session, settings), // ← передаємо весь settings
+    reply_markup: dayKeyboard(session, settings, campaignRows), // ← передаємо весь settings
   });
 }
 
@@ -463,6 +469,86 @@ async function handleUpdate(bot, update) {
       return;
     }
 */
+
+    // АКЦІЯ — крок 1: обрано варіант → уточнююче питання
+    if (payload.startsWith("AKC_PICK_")) {
+      await answer("OK");
+      if (!session.workerId) {
+        await sendMessage(bot, chatId, T(session, "need_id"));
+        return;
+      }
+      const choice = payload.substring(9) === "yes" ? "yes" : "no";
+
+      // Кнопки могли залишитись у старому повідомленні — не даємо відповісти двічі
+      if (await campaign.hasAnswered(session.workerId)) {
+        await sendMessage(bot, chatId, T(session, "akc_already"));
+        await sendDayKeyboard(bot, chatId, session, settings);
+        return;
+      }
+
+      const label =
+        choice === "yes"
+          ? T(session, "akc_choice_yes", campaign.DEADLINE)
+          : T(session, "akc_choice_no");
+
+      await sendMessage(bot, chatId, T(session, "akc_confirm", label), {
+        reply_markup: campaign.confirmKeyboard(session, choice),
+      });
+      return;
+    }
+
+    // АКЦІЯ — «Назад»: повертаємо вибір варіанту
+    if (payload === "AKC_BACK") {
+      await answer("OK");
+      try {
+        await bot.telegram.editMessageText(
+          chatId,
+          cq.message.message_id,
+          null,
+          T(session, "akc_prompt"),
+          { reply_markup: campaign.promptKeyboard(session) },
+        );
+      } catch (e) {
+        await sendMessage(bot, chatId, T(session, "akc_prompt"), {
+          reply_markup: campaign.promptKeyboard(session),
+        });
+      }
+      return;
+    }
+
+    // АКЦІЯ — крок 2: підтверджено → запис у campaign_responses, кнопки зникають
+    if (payload.startsWith("AKC_OK_")) {
+      await answer("OK");
+      if (!session.workerId) {
+        await sendMessage(bot, chatId, T(session, "need_id"));
+        return;
+      }
+      const choice = payload.substring(7) === "yes" ? "yes" : "no";
+
+      try {
+        await campaign.saveResponse(session.workerId, choice, session.lang);
+      } catch (e) {
+        console.error("campaign save error:", e.message);
+        await sendMessage(bot, chatId, T(session, "tabele_error"));
+        return;
+      }
+
+      // прибираємо кнопки з повідомлення з уточнюючим питанням
+      try {
+        await bot.telegram.editMessageText(
+          chatId,
+          cq.message.message_id,
+          null,
+          T(session, "akc_thanks"),
+        );
+      } catch (e) {
+        await sendMessage(bot, chatId, T(session, "akc_thanks"));
+      }
+
+      await sendDayKeyboard(bot, chatId, session, settings);
+      return;
+    }
+
     // DAY select
     if (payload.startsWith("DAY_")) {
       if (!session.workerId) {

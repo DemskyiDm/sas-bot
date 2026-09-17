@@ -54,6 +54,7 @@ const I18N = {
     btn_back: "◀️ Назад",
     btn_800plus: "800+",
     msg_800plus_thanks: "Дякуємо за надану інформацію!",
+    zero_hours: "Не можна вписати 0 годин. Якщо не працював — обери код відсутності.", 
   },
   pl: {
     choose_lang: "Wybierz jezyk:",
@@ -110,6 +111,7 @@ const I18N = {
     btn_back: "◀️ Wstecz",
     btn_800plus: "800+",
     msg_800plus_thanks: "Dziękujemy za przekazane informacje!",
+    zero_hours: "Nie można wpisać 0 godzin. Jeśli nie pracował — wybierz kod nieobecności.",
   },
   en: {
     choose_lang: "Choose a language:",
@@ -166,6 +168,8 @@ const I18N = {
     btn_back: "◀️ Back",
     btn_800plus: "800+",
     msg_800plus_thanks: "Thank you for the information provided!",
+    zero_hours: "You cannot enter 0 hours. If absent — choose an absence code.",          // en
+
   },
   ru: {
     choose_lang: "Выберите язык:",
@@ -223,6 +227,7 @@ const I18N = {
     btn_back: "◀️ Назад",
     btn_800plus: "800+",
     msg_800plus_thanks: "Спасибо за предоставленную информацию!",
+    zero_hours: "Нельзя ввести 0 часов. Если не работал — выбери код отсутствия.",        
   },
 };
 

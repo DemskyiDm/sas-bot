@@ -185,6 +185,15 @@ router.post("/hours", requireAuth, async (req, res) => {
     if (!(await workerInScope(req.coordinator, worker_id)))
       return res.status(403).json({ ok: false, error: "Forbidden" });
 
+    const h =
+      hours === "" || hours === null || hours === undefined ? null : Number(hours);
+    if (h !== null && (!Number.isFinite(h) || h <= 0 || h > 13)) {
+      return res.status(422).json({
+        ok: false,
+        error: "Godziny muszą być od 0,25 do 13. Zero jest niedozwolone — użyj kodu nieobecności.",
+      });
+    }
+
     // Перевірка: чи працював у цю дату хоч на одному об'єкті
     // (враховує перенесення — об'єднання всіх періодів роботи)
     const periodCheck = await db.query(
@@ -208,7 +217,7 @@ router.post("/hours", requireAuth, async (req, res) => {
        VALUES ($1, $2, $3, $4, 'web')
        ON CONFLICT (worker_id, work_date)
        DO UPDATE SET hours = $3, absence_type = $4, updated_at = now()`,
-      [worker_id, work_date, hours || null, absence_type || null],
+      [worker_id, work_date, h, absence_type || null],
     );
     res.json({ ok: true });
   } catch (err) {
@@ -621,6 +630,69 @@ router.post("/import", requireAuth, async (req, res) => {
   }
 });
 
+// ── Day off → hours_log (auto URL) ────────────────────────────
+// Після підтвердження заявки на вихідні проставляє absence_type='URL'
+// у табелі на кожен день заявки.
+// Правило: пишемо ТІЛЬКИ в порожню клітинку (немає запису, або запис є,
+// але без годин і без типу відсутності). Якщо там уже стоять години або
+// інший тип (L4/NN) — не чіпаємо, повертаємо як конфлікт.
+// Дні поза періодом працевлаштування пропускаються окремо.
+// Повторний виклик на ту саму заявку безпечний (URL перезаписується на URL).
+function toISODate(v) {
+  if (v instanceof Date) {
+    return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`;
+  }
+  return String(v).substring(0, 10);
+}
+
+async function applyDayOffToHours(workerId, days) {
+  const list = [...new Set((days || []).map(toISODate))].filter(Boolean);
+  if (!list.length) return { applied: [], occupied: [], out_of_period: [] };
+
+  const periodCheck = `
+    EXISTS (
+      SELECT 1 FROM worker_facility_history h
+      WHERE h.worker_id = $1
+        AND h.bhp_date <= i.work_date
+        AND (h.last_work_date IS NULL OR h.last_work_date >= i.work_date)
+    )`;
+
+  const result = await db.query(
+    `
+    WITH input AS (
+      SELECT DISTINCT d::date AS work_date FROM unnest($2::date[]) AS t(d)
+    ),
+    ins AS (
+      INSERT INTO hours_log (worker_id, work_date, hours, absence_type, source)
+      SELECT $1, i.work_date, NULL, 'URL', 'dayoff'
+      FROM input i
+      WHERE ${periodCheck}
+      ON CONFLICT (worker_id, work_date) DO UPDATE
+        SET absence_type = 'URL',
+            hours        = NULL,
+            source       = 'dayoff',
+            updated_at   = now()
+        WHERE (hours_log.hours IS NULL AND hours_log.absence_type IS NULL)
+           OR hours_log.absence_type = 'URL'
+      RETURNING work_date
+    )
+    SELECT i.work_date,
+           CASE
+             WHEN i.work_date IN (SELECT work_date FROM ins) THEN 'applied'
+             WHEN NOT ${periodCheck}                         THEN 'out_of_period'
+             ELSE 'occupied'
+           END AS state
+    FROM input i
+    ORDER BY i.work_date
+    `,
+    [workerId, list],
+  );
+
+  const out = { applied: [], occupied: [], out_of_period: [] };
+  result.rows.forEach((r) => out[r.state].push(toISODate(r.work_date)));
+  return out;
+}
+
 // ── Day off list ──────────────────────────────────────────────
 router.get("/day-off", requireAuth, async (req, res) => {
   try {
@@ -679,6 +751,16 @@ router.patch("/day-off/:id", requireAuth, async (req, res) => {
 
     const { worker_id, days } = result.rows[0];
 
+    // авто-URL у табелі
+    let hoursInfo = { applied: [], occupied: [], out_of_period: [] };
+    if (status === "approved") {
+      try {
+        hoursInfo = await applyDayOffToHours(worker_id, days);
+      } catch (e) {
+        console.error("applyDayOffToHours failed:", e.message);
+      }
+    }
+
     const workerRes = await db.query(
       `SELECT full_name, telegram_chat_id FROM workers WHERE id = $1`,
       [worker_id],
@@ -715,7 +797,7 @@ router.patch("/day-off/:id", requireAuth, async (req, res) => {
       }
     }
 
-    res.json({ ok: true });
+    res.json({ ok: true, hours: hoursInfo });
   } catch (err) {
     console.error(err);
     res.status(500).json({ ok: false, error: err.message });
@@ -1306,11 +1388,38 @@ router.post("/day-off/batch", requireAuth, async (req, res) => {
        WHERE d.id = ANY($3)
          AND d.status = 'pending'
          ${facFilter}
-       RETURNING d.id, d.worker_id`,
+       RETURNING d.id, d.worker_id, d.days`,
       params,
     );
 
-    res.json({ ok: true, updated: result.rowCount, ids: result.rows.map((r) => r.id) });
+    // авто-URL у табелі для підтверджених заявок
+    const conflicts = [];
+    let appliedDays = 0;
+    if (newStatus === "approved") {
+      for (const row of result.rows) {
+        try {
+          const info = await applyDayOffToHours(row.worker_id, row.days);
+          appliedDays += info.applied.length;
+          if (info.occupied.length || info.out_of_period.length) {
+            conflicts.push({
+              request_id: row.id,
+              worker_id: row.worker_id,
+              occupied: info.occupied,
+              out_of_period: info.out_of_period,
+            });
+          }
+        } catch (e) {
+          console.error("applyDayOffToHours failed (batch):", e.message);
+        }
+      }
+    }
+
+    res.json({
+      ok: true,
+      updated: result.rowCount,
+      ids: result.rows.map((r) => r.id),
+      hours: { applied_days: appliedDays, conflicts },
+    });
 
     (async () => {
       for (const row of result.rows) {

@@ -339,6 +339,11 @@ const SOURCES = [
   },
   {
     ssId: "1WF6mDo07x53SKYOgF0hvwQLDccueNKctZNYRFoXrlWs",
+    gid: "710429418",
+    facilityName: "ID Krajków SAS",
+  },
+  {
+    ssId: "1WF6mDo07x53SKYOgF0hvwQLDccueNKctZNYRFoXrlWs",
     gid: "1672298586",
     facilityName: "Id Logistics Wro APT",
   },
@@ -401,6 +406,11 @@ const SOURCES = [
     ssId: "1bgWR1bYJUXk5zoTXKPRjfV050oYJ9ha9cTNQvchHoIQ",
     gid: "1883894702",
     facilityName: "Partners Lowicz SAS ",
+  },
+  {
+    ssId: "1bgWR1bYJUXk5zoTXKPRjfV050oYJ9ha9cTNQvchHoIQ",
+    gid: "1622778445",
+    facilityName: "CEVA Piotrków Trybunalski well",
   },
   {
     ssId: "1UHwrLJyb6P2Zc4j1ibC8Vif7uLR2_0tiYGHXpApsp_A",

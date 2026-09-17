@@ -196,6 +196,12 @@ async function handleUpdate(bot, update) {
     const answer = (text) =>
       bot.telegram.answerCbQuery(cq.id, text || "").catch(() => { });
 
+    if (session.awaitingTabele && !payload.startsWith("TABELE")) {
+      delete session.awaitingTabele;
+      await saveSessionSafe(chatId, session);
+    }
+
+
     // LANG
     if (payload.startsWith("LANG_")) {
       const code = payload.split("_")[1];
@@ -420,7 +426,8 @@ async function handleUpdate(bot, update) {
       return;
     }
 
-        // 800+ — записати згоду
+    // 800+ — записати згоду
+    /*
     if (payload === "CMD_800PLUS") {
       await answer("OK");
       if (!session.workerId) {
@@ -455,7 +462,7 @@ async function handleUpdate(bot, update) {
       await sendDayKeyboard(bot, chatId, session, settings);
       return;
     }
-
+*/
     // DAY select
     if (payload.startsWith("DAY_")) {
       if (!session.workerId) {
@@ -492,8 +499,8 @@ async function handleUpdate(bot, update) {
       }
 
       const hrs = parseFloat(payload.substring(2).replace(",", "."));
-      if (isNaN(hrs) || hrs < 0 || hrs > 13) {
-        await answer("0-13");
+      if (isNaN(hrs) || hrs <= 0 || hrs > 13) {
+        await answer("0.25-13");
         return;
       }
 
@@ -661,11 +668,12 @@ async function handleUpdate(bot, update) {
       console.error("Tabele save error:", e.message);
       await sendMessage(bot, chatId, T(session, "tabele_error"));
     }
+    
     return;
   }
 
   // Якщо чекаємо фото але надіслали не фото
- if (session.awaitingTabele && !update.message.photo) {
+  if (session.awaitingTabele && !update.message.photo) {
     const escapeCmds = ["0000", "/start", "/lang", "lang", "9999", "/9999"];
     if (escapeCmds.includes(textCmd)) {
       delete session.awaitingTabele;
@@ -750,8 +758,8 @@ async function handleUpdate(bot, update) {
       if (!isNaN(n) && n >= 0 && n <= 13) dec = n;
     }
 
-    if (dec === null) {
-      await sendMessage(bot, chatId, T(session, "bad_hours_format"));
+    if (dec === null || dec <= 0) {
+      await sendMessage(bot, chatId, T(session, "zero_hours"));
       return;
     }
 

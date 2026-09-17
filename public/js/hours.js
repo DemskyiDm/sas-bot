@@ -394,7 +394,7 @@ function renderWorkersTable(workers) {
     <td style="padding:6px 14px;text-align:right;font-size:10px;color:var(--text3);font-family:var(--mono);letter-spacing:1px;background:var(--surface2)">SUMA</td>
   </tr>`;
 
- tbody.innerHTML = headerRow + slice.map((w) => {
+  tbody.innerHTML = headerRow + slice.map((w) => {
     const dayMap = {};
     (w.hours || []).forEach((h) => { const d = new Date(h.work_date); dayMap[d.getDate()] = h; });
 
@@ -533,6 +533,11 @@ function setAbs(code, e) {
 }
 async function saveHours() {
   const hours = document.getElementById("modalHours").value;
+  const _n = parseFloat(String(hours).replace(",", "."));
+  if (String(hours).trim() !== "" && (!isFinite(_n) || _n <= 0)) {
+    alert("Nie można wpisać 0 godzin.\nJeśli pracownik nie pracował — wybierz kod nieobecności (URL / WZ / L4 / NN).");
+    return;
+  }
   const body = {
     worker_id: editState.workerId, work_date: editState.date,
     hours: hours ? parseFloat(hours) : null,

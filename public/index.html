@@ -6,7 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SAS Logistic — Panel</title>
   <link rel="stylesheet" href="/css/style.css" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <!-- xlsx-js-style: те саме API, що й xlsx, але вміє кольори/рамки (як у raporty.html) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 
 <body>
@@ -901,7 +902,7 @@
       </div>
       <div class="modal-field">
         <div class="modal-label">GODZINY (lub wybierz nieobecnosc)</div>
-        <input class="modal-input" id="modalHours" type="number" min="0" max="13" step="0.25" placeholder="np. 8" />
+        <input class="modal-input" id="modalHours" type="number" min="0.25" max="13" step="0.25" placeholder="np. 8" />
         <div class="modal-abs">
           <div class="abs-btn" onclick="setAbs('WZ', event)">DW — Dzień wolny</div>
           <div class="abs-btn" onclick="setAbs('DWZ', event)">DWZ — Dzień wolny zakładowy</div>

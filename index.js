@@ -47,7 +47,7 @@ app.use(async (req, res, next) => {
 
   next();
 });
-``;
+
 
 // ── API routes ────────────────────────────────────────────────
 app.use("/api", apiRoutes);

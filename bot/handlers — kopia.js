@@ -427,7 +427,6 @@ async function handleUpdate(bot, update) {
     }
 
     // 800+ — записати згоду
-    /*
     if (payload === "CMD_800PLUS") {
       await answer("OK");
       if (!session.workerId) {
@@ -462,7 +461,7 @@ async function handleUpdate(bot, update) {
       await sendDayKeyboard(bot, chatId, session, settings);
       return;
     }
-*/
+
     // DAY select
     if (payload.startsWith("DAY_")) {
       if (!session.workerId) {

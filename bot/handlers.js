@@ -14,6 +14,7 @@ const {
   tabeleKeyboard,
 } = require("./keyboards");
 const campaign = require("./campaign");
+const gaps = require("./gaps");
 
 const ABS_COLORS = { WZ: "wz", DWZ: "dwz", URL: "url", L4: "l4", NN: "nn", UN: "un" };
 
@@ -59,11 +60,22 @@ async function isDismissed(workerId) {
   return ["zwolniony", "rezygnacja"].includes(r.rows[0].status);
 }
 
+// ДДММ → YYYY-MM-DD з правильним роком на межі року
+// (31.12 натиснуто 02.01 → минулий рік; 01.01 натиснуто 31.12 → наступний)
+function resolveDate(ddmm) {
+  const dd = parseInt(ddmm.substring(0, 2), 10);
+  const mm = parseInt(ddmm.substring(2, 4), 10);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let year = now.getFullYear();
+  const diff = (new Date(year, mm - 1, dd) - today) / 86400000;
+  if (diff > 2) year -= 1;
+  else if (diff < -300) year += 1;
+  return `${year}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+}
+
 async function writeHours(workerId, ddmm, hours) {
-  const dd = ddmm.substring(0, 2);
-  const mm = ddmm.substring(2, 4);
-  const year = new Date().getFullYear();
-  const date = `${year}-${mm}-${dd}`;
+  const date = resolveDate(ddmm);
 
   if (!(await workedOnDate(workerId, date))) {
     return { ok: false, reason: "outside_period" };
@@ -80,10 +92,7 @@ async function writeHours(workerId, ddmm, hours) {
 }
 
 async function writeAbsence(workerId, ddmm, absCode) {
-  const dd = ddmm.substring(0, 2);
-  const mm = ddmm.substring(2, 4);
-  const year = new Date().getFullYear();
-  const date = `${year}-${mm}-${dd}`;
+  const date = resolveDate(ddmm);
 
   if (!(await workedOnDate(workerId, date))) {
     return { ok: false, reason: "outside_period" };
@@ -138,8 +147,13 @@ async function sendDayKeyboard(bot, chatId, session, settings) {
   if (session?.workerId && (await campaign.isEligible(session.workerId))) {
     campaignRows = campaign.campaignRows(session);
   }
+  // Серії незаповнених днів (>3 підряд) — кнопки з конкретними датами
+  const gapRows = session?.workerId
+    ? await gaps.gapRowsForWorker(session.workerId, session.lang)
+    : null;
+  const extraRows = [...(gapRows || []), ...(campaignRows || [])];
   await sendMessage(bot, chatId, T(session, "choose_day"), {
-    reply_markup: dayKeyboard(session, settings, campaignRows), // ← передаємо весь settings
+    reply_markup: dayKeyboard(session, settings, extraRows.length ? extraRows : null), // ← передаємо весь settings
   });
 }
 
@@ -546,6 +560,35 @@ async function handleUpdate(bot, update) {
       }
 
       await sendDayKeyboard(bot, chatId, session, settings);
+      return;
+    }
+
+    // GAP — дата з нагадування про незаповнені дні (GAP_YYYYMMDD)
+    if (payload.startsWith("GAP_")) {
+      if (payload === "GAP_NOOP") {
+        await answer("");
+        return;
+      }
+      if (!session.workerId) {
+        await answer(T(session, "need_id"));
+        return;
+      }
+      const g = gaps.parseGapPayload(payload);
+      if (!g) {
+        await answer("");
+        await sendDayKeyboard(bot, chatId, session, settings);
+        return;
+      }
+      session.dayOfMonth = g.ddmm;
+      delete session.awaitingHoursManual;
+      await saveSessionSafe(chatId, session);
+      await answer(g.label);
+      await sendMessage(
+        bot,
+        chatId,
+        `${gaps.tx(session.lang).day_picked(g.label)}\n${T(session, "choose_hours")}`,
+        { reply_markup: hoursKeyboard(session, settings) },
+      );
       return;
     }
 

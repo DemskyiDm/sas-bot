@@ -10,6 +10,8 @@ const {
   sendTabeleReminders,
   sendCoordinatorReports,
 } = require("./bot/handlers");
+const gaps = require("./bot/gaps");
+const { requireAdmin } = require("./api/admin");
 const apiRoutes = require("./api/routes");
 const { router: adminRoutes } = require("./api/admin");
 
@@ -100,6 +102,44 @@ app.post("/trigger/coord-report", async (req, res) => {
   }
 });
 
+// ── Серії незаповнених днів (>3 підряд) ───────────────────────
+// Перегляд без відправки: GET /api/gaps/preview?session=<токен адміна>
+app.get("/api/gaps/preview", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const list = await gaps.findGapWorkers();
+    res.json({
+      config: { ...gaps.CFG, adminChatIds: gaps.CFG.adminChatIds.length },
+      total: list.length,
+      willSpam: list.filter((w) => w.inBot && w.spamAllowed).length,
+      notInBot: list.filter((w) => !w.inBot).length,
+      fused: list.filter((w) => w.inBot && !w.spamAllowed).length,
+      workers: list.map((w) => ({
+        worker_id: w.worker_id, full_name: w.full_name, login: w.login,
+        facility: w.facility_name, coordinators: w.coordinators,
+        inBot: w.inBot, spamAllowed: w.spamAllowed, runs: w.runs,
+      })),
+    });
+  } catch (e) {
+    console.error("[Gaps] preview error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+// Зведення адміну зараз
+app.post("/trigger/gap-admin", requireAuth, requireAdmin, async (req, res) => {
+  res.json({ status: "started" });
+  try { await gaps.sendAdminGapSummary(bot); } catch (e) { console.error("[Gaps] admin error:", e.message); }
+});
+// Спам зараз (поза годинами теж). ?worker_id=123 — тільки одному працівнику (для тесту)
+app.post("/trigger/gap-spam", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const workerId = req.query.worker_id ? parseInt(req.query.worker_id, 10) : null;
+    const stats = await gaps.sendGapSpam(bot, { workerId, ignoreHours: true });
+    res.json(stats);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Start ─────────────────────────────────────────────────────
 // ── Start (HTTP + HTTPS) ──────────────────────────────────────
 const fs = require("fs");
@@ -175,6 +215,13 @@ function scheduleReminder() {
       }
     } catch (e) {
       console.error("[Reminder] Error:", e.message);
+    }
+
+    // ── Серії >3 днів: зведення адміну + щогодинний спам 08–18 ──
+    try {
+      await gaps.tick(bot);
+    } catch (e) {
+      console.error("[Gaps] tick error:", e.message);
     }
   }, 60000);
 }

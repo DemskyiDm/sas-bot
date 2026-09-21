@@ -129,6 +129,11 @@ const SOURCES = [
   },
   {
     ssId: "1gVEcQZY40SlnMVm3laSjuNpYk0lo8LR6Q1Ke0LQ8mKU",
+    gid: "1351989642",
+    facilityName: "ILS Błonie SAS",
+  },
+  {
+    ssId: "1gVEcQZY40SlnMVm3laSjuNpYk0lo8LR6Q1Ke0LQ8mKU",
     gid: "734840239",
     facilityName: "Inter Cars SAS",
   },

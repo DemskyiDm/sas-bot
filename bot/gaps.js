@@ -7,7 +7,8 @@
 // Налаштування в .env (рестарт pm2 після зміни):
 //   GAP_ADMIN_CHAT_ID=123456789        — кому слати зведення (можна кілька через кому)
 //   GAP_MIN_DAYS=4                     — «більше 3 днів підряд» = від 4
-//   GAP_LOOKBACK_DAYS=45               — скільки днів назад дивимось (через межу місяця)
+//   GAP_FROM_DATE=2026-09-01           — все, що раніше цієї дати, ігноруємо; від неї дивимось завжди
+//   GAP_LOOKBACK_DAYS=45               — вікно назад, якщо GAP_FROM_DATE не задано
 //   GAP_SPAM_MAX_DAYS=5                — запобіжник: скільки днів максимум спамимо по одній серії
 //   GAP_SPAM_FROM=8                    — перша година спаму
 //   GAP_SPAM_TO=18                     — остання година спаму
@@ -37,6 +38,9 @@ const CFG = {
   spamTo: num(process.env.GAP_SPAM_TO, 18),
   adminTime: (process.env.GAP_ADMIN_TIME || "08:00").trim(),
   delayMs: num(process.env.GAP_SEND_DELAY_MS, 50),
+  fromDate: /^\d{4}-\d{2}-\d{2}$/.test(String(process.env.GAP_FROM_DATE || "").trim())
+    ? String(process.env.GAP_FROM_DATE).trim()
+    : null,
   spamStart: /^\d{4}-\d{2}-\d{2}$/.test(String(process.env.GAP_SPAM_START || "").trim())
     ? String(process.env.GAP_SPAM_START).trim()
     : null,
@@ -68,6 +72,13 @@ function todayLocal() {
 function yesterdayIso() {
   const t = todayLocal();
   t.setDate(t.getDate() - 1);
+  return isoLocal(t);
+}
+// Початок вікна: GAP_FROM_DATE (фіксовано) або вчора - (LOOKBACK-1)
+function windowStartIso() {
+  if (CFG.fromDate) return CFG.fromDate;
+  const t = todayLocal();
+  t.setDate(t.getDate() - CFG.lookback);
   return isoLocal(t);
 }
 function eachDay(startIso, endIso) {
@@ -109,7 +120,7 @@ async function findGapWorkers(workerId = null) {
     missing AS (
       SELECT a.worker_id, gs::date AS d
       FROM active a
-      CROSS JOIN generate_series($1::date - ($2::int - 1), $1::date, interval '1 day') gs
+      CROSS JOIN generate_series($2::date, $1::date, interval '1 day') gs
       WHERE EXISTS (
               SELECT 1 FROM worker_facility_history h2
               WHERE h2.worker_id = a.worker_id
@@ -151,14 +162,12 @@ async function findGapWorkers(workerId = null) {
     GROUP BY w.id, w.full_name, w.login, w.telegram_chat_id, w.lang, a.facility_id, f.name
     ORDER BY f.name, w.full_name
     `,
-    [yesterdayIso(), CFG.lookback, CFG.minDays, workerId],
+    [yesterdayIso(), windowStartIso(), CFG.minDays, workerId],
   );
 
   const today = todayLocal();
   const yIso = yesterdayIso();
-  const windowStart = new Date(today);
-  windowStart.setDate(windowStart.getDate() - CFG.lookback);
-  const windowStartIso = isoLocal(windowStart);
+  const winStart = windowStartIso();
 
   return res.rows.map((r) => {
     const runs = (r.runs || []).map((run) => {
@@ -171,7 +180,7 @@ async function findGapWorkers(workerId = null) {
       return {
         ...run,
         open: run.end === yIso, // триває досі
-        truncated: run.start === windowStartIso, // почалась раніше за вікно
+        truncated: !CFG.fromDate && run.start === winStart, // почалась раніше за вікно
         spamDay,
         spamAllowed: spamDay >= 1 && spamDay <= CFG.spamMaxDays,
       };
@@ -265,7 +274,7 @@ function parseGapPayload(payload) {
   const d = parseIso(iso);
   if (isNaN(d)) return null;
   const age = daysBetween(d, todayLocal());
-  if (age < 1 || age > CFG.lookback) return null;
+  if (age < 1 || iso < windowStartIso()) return null;
   return { iso, ddmm: `${m[3]}${m[2]}`, label: `${m[3]}.${m[2]}.${m[1]}` };
 }
 
@@ -368,7 +377,7 @@ async function sendAdminGapSummary(bot) {
 const lastSpamMsg = new Map(); // chatId → message_id попереднього нагадування (видаляємо, щоб не засмічувати чат)
 let spamRunning = false;
 
-async function sendGapSpam(bot, { workerId = null, ignoreHours = false } = {}) {
+async function sendGapSpam(bot, { workerId = null, ignoreHours = false, force = false } = {}) {
   if (!CFG.enabled) return { skipped: "disabled" };
   const h = new Date().getHours();
   if (!ignoreHours && (h < CFG.spamFrom || h > CFG.spamTo)) return { skipped: "outside hours" };
@@ -383,7 +392,7 @@ async function sendGapSpam(bot, { workerId = null, ignoreHours = false } = {}) {
 
     for (const w of list) {
       if (!w.inBot) { stats.notInBot++; continue; }
-      if (!w.spamAllowed) { stats.fused++; continue; }
+      if (!w.spamAllowed && !force) { stats.fused++; continue; } // force — тільки для тесту одному працівнику
 
       const t = tx(w.lang);
       const firstName = String(w.full_name || "").split(" ")[0] || "";

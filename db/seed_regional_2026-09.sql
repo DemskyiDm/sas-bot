@@ -8,12 +8,23 @@
 -- ══════════════════════════════════════════════════════════════════════
 BEGIN;
 
-INSERT INTO reg.regions (name, regional_coordinator_id) VALUES
-  ('Brychka',  (SELECT id FROM public.coordinators WHERE full_name ILIKE '%brychka%'  AND is_active LIMIT 1)),
-  ('Demski',   (SELECT id FROM public.coordinators WHERE full_name ILIKE '%demsk%'    AND is_active LIMIT 1)),
-  ('Drobakha', (SELECT id FROM public.coordinators WHERE full_name ILIKE '%drobakha%' AND is_active LIMIT 1)),
-  ('Warszawa', NULL)
+INSERT INTO reg.regions (name) VALUES
+  ('Brychka'), ('Demski'), ('Drobakha'), ('Warszawa')
 ON CONFLICT (name) DO NOTHING;
+
+-- Регіональні координатори. Кілька на регіон — просто кілька рядків.
+INSERT INTO reg.region_leads (region_id, coordinator_id)
+SELECT r.id, c.id
+FROM (VALUES
+  ('Brychka',  '%denys%brychka%'),
+  ('Demski',   '%dmytro%demsk%'),
+  ('Drobakha', '%maksym%drobakha%')
+) AS m(region, coord)
+JOIN reg.regions r ON r.name = m.region
+JOIN LATERAL (SELECT MIN(cc.id) AS id FROM public.coordinators cc
+               WHERE cc.full_name ILIKE m.coord AND cc.is_active
+              HAVING COUNT(*) = 1) c ON true
+ON CONFLICT DO NOTHING;
 
 WITH m(site_key, region, coord) AS (VALUES
   -- Brychka
@@ -88,6 +99,13 @@ ON CONFLICT (site_key) WHERE valid_to IS NULL DO NOTHING;
 -- VALUES ('G&G', 'structural', DATE '2026-08-01', 'Klient ogranicza zamówienie');
 
 COMMIT;
+
+-- Перевірка: регіональні координатори регіонів
+SELECT r.name AS region, COALESCE(string_agg(c.full_name, ', ' ORDER BY c.full_name), '— brak —') AS koordynatorzy_regionalni
+FROM reg.regions r
+LEFT JOIN reg.region_leads rl ON rl.region_id = r.id
+LEFT JOIN public.coordinators c ON c.id = rl.coordinator_id
+GROUP BY r.name ORDER BY r.name;
 
 -- Перевірка: хто за що відповідає (переглянути очима!)
 SELECT rg.name AS region, so.site_key AS obiekt, COALESCE(c.full_name, '— brak —') AS koordynator

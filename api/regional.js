@@ -15,11 +15,15 @@ const STATUS_ORDER = { R: 0, A: 1, G: 2, S: 3, N: 4 };
 // Адмін бачить усе. Регіональний — тільки регіони, де він призначений.
 async function getScope(coordinator) {
   const r = await db.query(
-    `SELECT r.id, r.name, r.regional_coordinator_id, c.full_name AS regional_name
+    `SELECT r.id, r.name,
+            COALESCE((SELECT json_agg(json_build_object('id', c.id, 'name', c.full_name) ORDER BY c.full_name)
+                        FROM reg.region_leads rl
+                        JOIN public.coordinators c ON c.id = rl.coordinator_id
+                       WHERE rl.region_id = r.id), '[]') AS leads
        FROM reg.regions r
-       LEFT JOIN public.coordinators c ON c.id = r.regional_coordinator_id
       WHERE r.is_active
-        AND ($1::boolean OR r.regional_coordinator_id = $2)
+        AND ($1::boolean OR EXISTS (SELECT 1 FROM reg.region_leads rl
+                                     WHERE rl.region_id = r.id AND rl.coordinator_id = $2))
       ORDER BY r.name`,
     [!!coordinator.is_admin, coordinator.coordinator_id],
   );
@@ -511,8 +515,12 @@ router.get("/admin/config", requireAdminOnly, async (req, res) => {
   try {
     const [regions, sites, settings, flags] = await Promise.all([
       db.query(
-        `SELECT r.id, r.name, r.regional_coordinator_id, r.is_active, c.full_name AS regional_name
-           FROM reg.regions r LEFT JOIN public.coordinators c ON c.id = r.regional_coordinator_id
+        `SELECT r.id, r.name, r.is_active,
+                COALESCE((SELECT json_agg(json_build_object('id', c.id, 'name', c.full_name) ORDER BY c.full_name)
+                            FROM reg.region_leads rl
+                            JOIN public.coordinators c ON c.id = rl.coordinator_id
+                           WHERE rl.region_id = r.id), '[]') AS leads
+           FROM reg.regions r
           ORDER BY r.is_active DESC, r.name`,
       ),
       db.query(
@@ -549,10 +557,14 @@ router.post("/admin/regions", requireAdminOnly, async (req, res) => {
   try {
     const name = String((req.body && req.body.name) || "").trim();
     if (!name) return res.status(400).json({ ok: false, error: "Nazwa wymagana" });
-    const r = await db.query(
-      `INSERT INTO reg.regions (name, regional_coordinator_id) VALUES ($1, $2) RETURNING id`,
-      [name, req.body.regional_coordinator_id || null],
-    );
+    const r = await db.query(`INSERT INTO reg.regions (name) VALUES ($1) RETURNING id`, [name]);
+    const lead = parseInt((req.body && req.body.coordinator_id) || 0, 10);
+    if (lead)
+      await db.query(
+        `INSERT INTO reg.region_leads (region_id, coordinator_id, created_by) VALUES ($1, $2, $3)
+         ON CONFLICT DO NOTHING`,
+        [r.rows[0].id, lead, req.coordinator.coordinator_id],
+      );
     res.json({ ok: true, id: r.rows[0].id });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -561,16 +573,41 @@ router.post("/admin/regions", requireAdminOnly, async (req, res) => {
 
 router.patch("/admin/regions/:id", requireAdminOnly, async (req, res) => {
   try {
-    const { name, regional_coordinator_id, is_active } = req.body || {};
+    const { name, is_active } = req.body || {};
     await db.query(
       `UPDATE reg.regions SET
           name = COALESCE(NULLIF($2, ''), name),
-          regional_coordinator_id = $3,
-          is_active = COALESCE($4, is_active)
+          is_active = COALESCE($3, is_active)
         WHERE id = $1`,
-      [req.params.id, name ? String(name).trim() : "", regional_coordinator_id || null,
-        typeof is_active === "boolean" ? is_active : null],
+      [req.params.id, name ? String(name).trim() : "", typeof is_active === "boolean" ? is_active : null],
     );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Регіональні координатори регіону: їх може бути кілька
+router.post("/admin/regions/:id/leads", requireAdminOnly, async (req, res) => {
+  try {
+    const coordId = parseInt((req.body && req.body.coordinator_id) || 0, 10);
+    if (!coordId) return res.status(400).json({ ok: false, error: "Wybierz koordynatora" });
+    await db.query(
+      `INSERT INTO reg.region_leads (region_id, coordinator_id, created_by) VALUES ($1, $2, $3)
+       ON CONFLICT DO NOTHING`,
+      [req.params.id, coordId, req.coordinator.coordinator_id],
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+router.delete("/admin/regions/:id/leads/:coordinatorId", requireAdminOnly, async (req, res) => {
+  try {
+    await db.query(`DELETE FROM reg.region_leads WHERE region_id = $1 AND coordinator_id = $2`, [
+      req.params.id, req.params.coordinatorId,
+    ]);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -715,7 +752,8 @@ async function notifyNewRed(bot, week) {
             string_agg(rc.site_key || ' — до ' || to_char(rc.due_at, 'DD.MM HH24:MI'), E'\n' ORDER BY rc.site_key) AS list
        FROM reg.red_cards rc
        JOIN reg.regions rg ON rg.id = rc.region_id
-       JOIN public.coordinators c ON c.id = rg.regional_coordinator_id
+       JOIN reg.region_leads rl ON rl.region_id = rg.id
+       JOIN public.coordinators c ON c.id = rl.coordinator_id AND c.is_active
       WHERE rc.opened_week = $1::date AND rc.status = 'open'
       GROUP BY rg.id, c.telegram_chat_id`,
     [week],
@@ -740,23 +778,32 @@ async function notifyNewRed(bot, week) {
 // Щодня: нагадати про картку, що спливає за добу; ескалувати прострочені
 async function sendCardReminders(bot) {
   const soon = await db.query(
-    `SELECT rc.id, rc.site_key, to_char(rc.due_at,'DD.MM HH24:MI') AS due, c.telegram_chat_id
+    `SELECT rc.id, rc.site_key, to_char(rc.due_at,'DD.MM HH24:MI') AS due,
+            array_agg(c.telegram_chat_id) FILTER (WHERE c.telegram_chat_id IS NOT NULL) AS chats
        FROM reg.red_cards rc
        JOIN reg.regions rg ON rg.id = rc.region_id
-       JOIN public.coordinators c ON c.id = rg.regional_coordinator_id
+       JOIN reg.region_leads rl ON rl.region_id = rg.id
+       JOIN public.coordinators c ON c.id = rl.coordinator_id AND c.is_active
       WHERE rc.status = 'open' AND rc.reminded_at IS NULL
-        AND rc.due_at > now() AND rc.due_at <= now() + INTERVAL '1 day'`,
+        AND rc.due_at > now() AND rc.due_at <= now() + INTERVAL '1 day'
+      GROUP BY rc.id, rc.site_key, rc.due_at`,
   );
   for (const x of soon.rows) {
-    if (await safeSend(bot, x.telegram_chat_id, `⏰ ${x.site_key}: картку червоного об'єкта треба заповнити до ${x.due}.`))
-      await db.query(`UPDATE reg.red_cards SET reminded_at = now() WHERE id = $1`, [x.id]);
+    let ok = false;
+    for (const chat of x.chats || [])
+      ok = (await safeSend(bot, chat, `⏰ ${x.site_key}: картку червоного об'єкта треба заповнити до ${x.due}.`)) || ok;
+    if (ok) await db.query(`UPDATE reg.red_cards SET reminded_at = now() WHERE id = $1`, [x.id]);
   }
   const late = await db.query(
-    `SELECT rc.id, rc.site_key, rg.name AS region, c.full_name AS regional, c.telegram_chat_id
+    `SELECT rc.id, rc.site_key, rg.name AS region,
+            string_agg(c.full_name, ', ' ORDER BY c.full_name) AS regional,
+            array_agg(c.telegram_chat_id) FILTER (WHERE c.telegram_chat_id IS NOT NULL) AS chats
        FROM reg.red_cards rc
        LEFT JOIN reg.regions rg ON rg.id = rc.region_id
-       LEFT JOIN public.coordinators c ON c.id = rg.regional_coordinator_id
-      WHERE rc.status = 'open' AND rc.escalated_at IS NULL AND rc.due_at < now()`,
+       LEFT JOIN reg.region_leads rl ON rl.region_id = rg.id
+       LEFT JOIN public.coordinators c ON c.id = rl.coordinator_id AND c.is_active
+      WHERE rc.status = 'open' AND rc.escalated_at IS NULL AND rc.due_at < now()
+      GROUP BY rc.id, rc.site_key, rg.name`,
   );
   if (!late.rows.length) return;
   const admins = await adminChats();
@@ -764,7 +811,8 @@ async function sendCardReminders(bot) {
     late.rows.map((x) => `${x.site_key} — ${x.region || "без регіону"}${x.regional ? " (" + x.regional + ")" : ""}`).join("\n");
   for (const chat of admins) await safeSend(bot, chat, text);
   for (const x of late.rows) {
-    await safeSend(bot, x.telegram_chat_id, `❗ ${x.site_key}: термін заповнення картки минув. Керівника повідомлено.`);
+    for (const chat of x.chats || [])
+      await safeSend(bot, chat, `❗ ${x.site_key}: термін заповнення картки минув. Керівника повідомлено.`);
     await db.query(`UPDATE reg.red_cards SET escalated_at = now() WHERE id = $1`, [x.id]);
   }
 }

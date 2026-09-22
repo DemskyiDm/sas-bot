@@ -88,8 +88,10 @@ async function init() {
   } else if (me.regions.length > 1) {
     opts.push(`<option value="all">Moje regiony</option>`);
   }
-  me.regions.forEach((r) =>
-    opts.push(`<option value="${r.id}">${esc(r.name)}${r.regional_name ? " — " + esc(r.regional_name) : ""}</option>`));
+  me.regions.forEach((r) => {
+    const leads = (r.leads || []).map((x) => x.name).join(", ");
+    opts.push(`<option value="${r.id}">${esc(r.name)}${leads ? " — " + esc(leads) : ""}</option>`);
+  });
   selR.innerHTML = opts.join("");
   const savedRegion = localStorage.getItem("sas_region_sel");
   if (savedRegion && [...selR.options].some((o) => o.value === savedRegion)) selR.value = savedRegion;
@@ -522,16 +524,27 @@ async function loadSettings() {
 
     <div class="section">
       <div class="section-head">Regiony</div>
-      <table class="rg"><thead><tr><th>Nazwa</th><th>Koordynator regionalny</th><th>Aktywny</th><th></th></tr></thead><tbody>
+      <table class="rg"><thead><tr><th>Nazwa</th><th>Koordynatorzy regionalni</th><th>Aktywny</th><th></th></tr></thead><tbody>
       ${r.regions.map((g) => `<tr>
         <td><input type="text" id="rgName${g.id}" value="${esc(g.name)}" /></td>
-        <td><select id="rgCoord${g.id}">${coordOpts(g.regional_coordinator_id)}</select></td>
+        <td>
+          <div class="leads">${(g.leads || []).map((l) => `<span class="lead-chip">${esc(l.name)}
+            <button title="Usuń z regionu" onclick="removeLead(${g.id}, ${l.id})">✕</button></span>`).join("")
+            || `<span class="muted" style="font-size:11px">— brak —</span>`}</div>
+          <select id="rgAdd${g.id}" onchange="addLead(${g.id})" style="margin-top:6px">
+            <option value="">+ dodaj koordynatora regionalnego</option>
+            ${ST.coordinators.filter((c) => !(g.leads || []).some((l) => l.id === c.id))
+               .map((c) => `<option value="${c.id}">${esc(c.full_name)}</option>`).join("")}
+          </select>
+        </td>
         <td><input type="checkbox" id="rgAct${g.id}" ${g.is_active ? "checked" : ""} /></td>
         <td><button class="btn btn-ghost btn-sm" onclick="saveRegion(${g.id})">Zapisz</button></td></tr>`).join("")}
       <tr><td><input type="text" id="rgNameNew" placeholder="Nowy region" /></td>
         <td><select id="rgCoordNew">${coordOpts(null)}</select></td><td></td>
         <td><button class="btn btn-primary btn-sm" onclick="addRegion()">Dodaj</button></td></tr>
       </tbody></table>
+      <div class="hint">Region może prowadzić kilku koordynatorów regionalnych — każdy widzi ten region,
+        dostaje powiadomienia i wypełnia karty.</div>
     </div>
 
     <div class="section">
@@ -622,7 +635,6 @@ async function runSnapshot(weeks) {
 async function saveRegion(id) {
   const body = {
     name: document.getElementById("rgName" + id).value,
-    regional_coordinator_id: parseInt(document.getElementById("rgCoord" + id).value, 10) || null,
     is_active: document.getElementById("rgAct" + id).checked,
   };
   const r = await api(`/admin/regions/${id}`, { method: "PATCH", body });
@@ -631,10 +643,21 @@ async function saveRegion(id) {
 async function addRegion() {
   const body = {
     name: document.getElementById("rgNameNew").value,
-    regional_coordinator_id: parseInt(document.getElementById("rgCoordNew").value, 10) || null,
+    coordinator_id: parseInt(document.getElementById("rgCoordNew").value, 10) || null,
   };
   const r = await api(`/admin/regions`, { method: "POST", body });
   if (r && r.ok) location.reload(); else alertBox(r);
+}
+async function addLead(regionId) {
+  const sel = document.getElementById("rgAdd" + regionId);
+  const coordinator_id = parseInt(sel.value, 10) || null;
+  if (!coordinator_id) return;
+  const r = await api(`/admin/regions/${regionId}/leads`, { method: "POST", body: { coordinator_id } });
+  if (r && r.ok) loadSettings(); else alertBox(r);
+}
+async function removeLead(regionId, coordinatorId) {
+  const r = await api(`/admin/regions/${regionId}/leads/${coordinatorId}`, { method: "DELETE" });
+  if (r && r.ok) loadSettings(); else alertBox(r);
 }
 async function saveSite(i, encKey) {
   const body = {

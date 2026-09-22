@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SAS Logistic — Region</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <style>
+    /* ── тільки для розділу Region ── */
+    :root { --rag-r: var(--red); --rag-a: var(--accent2); --rag-g: var(--green); --rag-s: #64748b; }
+    .rg-toolbar { display: flex; gap: 8px; align-items: center; }
+    .rg-toolbar label { font-size: 11px; color: var(--text2); }
+    .rg-view { display: none; }
+    .rg-view.active { display: block; }
+    .nav-badge { margin-left: auto; background: var(--red); color: #fff; font-size: 10px; font-weight: 700;
+      border-radius: 9px; padding: 1px 7px; font-family: var(--mono); }
+    .nav-badge:empty { display: none; }
+
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+    .kpi .l { font-size: 11px; color: var(--text2); }
+    .kpi .v { font-size: 26px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .kpi .s { font-size: 11px; color: var(--text3); margin-top: 2px; }
+    .kpi .v .r { color: var(--rag-r); } .kpi .v .a { color: var(--rag-a); } .kpi .v .g { color: var(--rag-g); }
+    .kpi .v .sep { color: var(--text3); font-weight: 400; margin: 0 6px; }
+
+    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+    .section-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border);
+      font-size: 13px; font-weight: 600; flex-wrap: wrap; }
+    .section-head .cnt { font-size: 11px; color: var(--text2); font-weight: 400; }
+    .section-head .spacer { margin-left: auto; }
+    .chips { display: flex; gap: 4px; }
+    .chip { padding: 3px 10px; font-size: 11px; border-radius: 12px; border: 1px solid var(--border);
+      background: transparent; color: var(--text2); cursor: pointer; }
+    .chip.active { background: var(--surface2); color: var(--text); border-color: var(--accent); }
+
+    table.rg { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.rg th { text-align: left; padding: 8px 10px; font-size: 10px; letter-spacing: 1px; color: var(--text3);
+      border-bottom: 1px solid var(--border); font-family: var(--mono); text-transform: uppercase; white-space: nowrap; }
+    table.rg td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    table.rg tr:last-child td { border-bottom: none; }
+    table.rg tbody tr.click { cursor: pointer; }
+    table.rg tbody tr.click:hover td { background: var(--surface2); }
+    table.rg td.num, table.rg th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+    table.rg td.muted { color: var(--text3); }
+
+    .pill { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 20px; padding: 0 6px;
+      border-radius: 10px; font-size: 10px; font-weight: 700; font-family: var(--mono); color: #0f1117; }
+    .pill.R { background: var(--rag-r); } .pill.A { background: var(--rag-a); } .pill.G { background: var(--rag-g); }
+    .pill.S, .pill.N { background: var(--surface2); color: var(--text2); border: 1px solid var(--border); }
+    .m { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; }
+    .dot.R { background: var(--rag-r); } .dot.A { background: var(--rag-a); } .dot.G { background: var(--rag-g); }
+    .dot.x { background: transparent; border: 1px solid var(--text3); }
+    .trend { display: inline-flex; gap: 2px; }
+    .trend i { width: 9px; height: 14px; border-radius: 2px; display: inline-block; background: var(--surface2); }
+    .trend i.R { background: var(--rag-r); } .trend i.A { background: var(--rag-a); } .trend i.G { background: var(--rag-g); }
+    .trend i.S { background: var(--rag-s); }
+
+    .card-tag { font-size: 11px; white-space: nowrap; }
+    .card-tag.open { color: var(--rag-a); } .card-tag.late { color: var(--rag-r); font-weight: 600; }
+    .card-tag.filled { color: var(--rag-g); }
+    .legend { padding: 8px 14px; font-size: 11px; color: var(--text3); border-top: 1px solid var(--border); }
+    .empty, .loading { padding: 28px; text-align: center; color: var(--text3); font-size: 12px; }
+    .error { padding: 14px; color: var(--red); font-size: 12px; }
+
+    /* ── Панель об'єкта ── */
+    .drawer-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 50; display: none; }
+    .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 100vw); background: var(--bg);
+      border-left: 1px solid var(--border); z-index: 51; overflow-y: auto; transform: translateX(100%); transition: transform .2s; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-bg.open { display: block; }
+    .dw-head { position: sticky; top: 0; background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 14px 18px; display: flex; gap: 12px; align-items: flex-start; z-index: 2; }
+    .dw-head h2 { font-size: 17px; font-weight: 700; }
+    .dw-head .sub { font-size: 12px; color: var(--text2); margin-top: 3px; }
+    .dw-close { margin-left: auto; background: transparent; border: 1px solid var(--border); color: var(--text2);
+      border-radius: 5px; width: 28px; height: 28px; cursor: pointer; font-size: 14px; }
+    .dw-body { padding: 16px 18px; }
+    .crit { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+    .crit > div { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; border-top-width: 3px; }
+    .crit > div.R { border-top-color: var(--rag-r); } .crit > div.A { border-top-color: var(--rag-a); }
+    .crit > div.G { border-top-color: var(--rag-g); } .crit > div.x { border-top-color: var(--border); }
+    .crit .l { font-size: 11px; color: var(--text2); }
+    .crit .v { font-size: 22px; font-weight: 700; margin: 2px 0; font-variant-numeric: tabular-nums; }
+    .crit .s { font-size: 11px; color: var(--text3); }
+    .hist { display: flex; gap: 3px; align-items: flex-end; margin: 6px 0 16px; }
+    .hist div { flex: 1; text-align: center; font-size: 9px; color: var(--text3); font-family: var(--mono); }
+    .hist div i { display: block; height: 18px; border-radius: 3px; margin-bottom: 3px; background: var(--surface2); }
+    .hist div i.R { background: var(--rag-r); } .hist div i.A { background: var(--rag-a); }
+    .hist div i.G { background: var(--rag-g); } .hist div i.S { background: var(--rag-s); }
+    .hist div.cur { color: var(--text); font-weight: 700; }
+    .h3 { font-size: 12px; font-weight: 600; color: var(--text); margin: 18px 0 8px; display: flex; gap: 8px; align-items: baseline; }
+    .h3 .c { font-weight: 400; color: var(--text3); font-size: 11px; }
+
+    .redcard { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--rag-r); border-radius: 8px; padding: 12px 14px; }
+    .redcard.filled { border-left-color: var(--rag-g); }
+    .redcard .top { display: flex; gap: 10px; align-items: baseline; font-size: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+    .redcard .top b { font-size: 13px; }
+    .form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .form .full { grid-column: 1 / -1; }
+    .form label { display: block; font-size: 11px; color: var(--text2); margin-bottom: 4px; }
+    .form select, .form input, .form textarea { width: 100%; }
+    textarea, input[type="date"], input[type="number"] { background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); font-size: 12px; padding: 6px 10px; border-radius: 5px; outline: none; font-family: inherit; }
+    textarea { min-height: 64px; resize: vertical; }
+    .form-actions { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+    .form-msg { font-size: 11px; }
+    .form-msg.err { color: var(--red); } .form-msg.ok { color: var(--green); }
+    .notes { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+    .note { font-size: 12px; margin-bottom: 6px; }
+    .note .meta { font-size: 10px; color: var(--text3); font-family: var(--mono); }
+    .note-add { display: flex; gap: 6px; margin-top: 6px; }
+    .note-add input { flex: 1; }
+    .tag-short { color: var(--red); font-weight: 600; }
+
+    .cfg-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+    .cfg-row { display: flex; gap: 8px; align-items: center; padding: 10px 14px; flex-wrap: wrap; }
+    .hint { font-size: 11px; color: var(--text3); padding: 0 14px 10px; }
+    .noaccess { max-width: 520px; margin: 60px auto; text-align: center; color: var(--text2); font-size: 13px; line-height: 1.6; }
+    .cfg-row label { font-size: 11px; color: var(--text2); }
+    .main { min-width: 0; }   /* щоб широкі таблиці скролились у своєму блоці, а не розтягували сторінку */
+    #boardTable, #coordsTable, #cardsTable, #sitesCfg, .tblwrap { overflow-x: auto; }
+    @media (max-width: 900px) { .crit { grid-template-columns: 1fr; } .form { grid-template-columns: 1fr; } }
+    @media (max-width: 800px) {
+      .topbar { height: auto; flex-wrap: wrap; padding: 10px 16px; gap: 8px; }
+      .topbar-right { display: none; }
+      .rg-toolbar { flex-wrap: wrap; }
+      .content { padding: 12px; }
+      .kpi .v { font-size: 22px; }
+      .dw-head, .dw-body { padding-left: 14px; padding-right: 14px; }
+      .section-head .spacer { display: none; }
+      #boardSearch { width: 100% !important; }
+      .kpis { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <button class="sidebar-toggle" onclick="toggleSidebar()" title="Ukryj / Przypnij menu">◀</button>
+    <div class="logo">
+      <div class="logo-tag">SAS LOGISTIC</div>
+      <div class="logo-name">Region</div>
+    </div>
+    <div class="nav">
+      <div class="nav-item" onclick="location.href='index.html'">⬅️ Panel główny</div>
+      <div class="nav-item active" data-view="board" onclick="showView('board')">🚦 Tablica</div>
+      <div class="nav-item" data-view="coords" onclick="showView('coords')">👥 Koordynatorzy</div>
+      <div class="nav-item" data-view="cards" onclick="showView('cards')">🗂️ Karty <span class="nav-badge" id="badgeCards"></span></div>
+      <div class="nav-item" data-view="settings" id="navSettings" onclick="showView('settings')" style="display:none">⚙️ Ustawienia</div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-title" id="topTitle">Region — tablica</div>
+      <div class="rg-toolbar">
+        <label for="selRegion">Region</label>
+        <select id="selRegion" onchange="onFilterChange()"></select>
+        <label for="selWeek">Tydzień do</label>
+        <select id="selWeek" onchange="onFilterChange()"></select>
+      </div>
+      <div class="topbar-right">
+        <span id="userName" style="font-size: 12px; color: var(--text2)"></span>
+      </div>
+    </div>
+
+    <div class="content" id="content">
+      <!-- ТАБЛИЦЯ -->
+      <div class="rg-view active" id="view-board">
+        <div class="kpis" id="kpis"></div>
+        <div class="section">
+          <div class="section-head">
+            Obiekty <span class="cnt" id="boardCnt"></span>
+            <span class="spacer"></span>
+            <div class="chips" id="boardChips">
+              <button class="chip active" data-f="all" onclick="setBoardFilter('all')">Wszystkie</button>
+              <button class="chip" data-f="R" onclick="setBoardFilter('R')">Czerwone</button>
+              <button class="chip" data-f="A" onclick="setBoardFilter('A')">Żółte</button>
+              <button class="chip" data-f="G" onclick="setBoardFilter('G')">Zielone</button>
+            </div>
+            <input type="text" id="boardSearch" placeholder="Szukaj obiektu…" oninput="renderBoard()" style="width: 160px" />
+          </div>
+          <div id="boardTable"><div class="loading">Ładowanie…</div></div>
+          <div class="legend" id="legend"></div>
+        </div>
+      </div>
+
+      <!-- КООРДИНАТОРИ -->
+      <div class="rg-view" id="view-coords">
+        <div class="section">
+          <div class="section-head">Koordynatorzy regionu <span class="cnt" id="coordsCnt"></span></div>
+          <div id="coordsTable"><div class="loading">Ładowanie…</div></div>
+          <div class="legend">Sortowanie: od największego udziału ludzi w czerwonych obiektach. Rotacja w przeliczeniu na 28 dni.</div>
+        </div>
+      </div>
+
+      <!-- КАРТКИ -->
+      <div class="rg-view" id="view-cards">
+        <div class="section">
+          <div class="section-head">
+            Karty czerwonych obiektów <span class="cnt" id="cardsCnt"></span>
+            <span class="spacer"></span>
+            <div class="chips" id="cardChips">
+              <button class="chip active" data-s="active" onclick="setCardFilter('active')">Aktywne</button>
+              <button class="chip" data-s="overdue" onclick="setCardFilter('overdue')">Po terminie</button>
+              <button class="chip" data-s="closed" onclick="setCardFilter('closed')">Zamknięte</button>
+              <button class="chip" data-s="all" onclick="setCardFilter('all')">Wszystkie</button>
+            </div>
+          </div>
+          <div id="cardsTable"><div class="loading">Ładowanie…</div></div>
+          <div class="legend">Karta otwiera się automatycznie, gdy obiekt staje się czerwony. Termin wypełnienia — 3 dni robocze.
+            Zamyka się sama, gdy obiekt wyjdzie z czerwonego.</div>
+        </div>
+      </div>
+
+      <!-- НАЛАШТУВАННЯ (адмін) -->
+      <div class="rg-view" id="view-settings"><div id="settingsBody"><div class="loading">Ładowanie…</div></div></div>
+    </div>
+  </div>
+
+  <div class="drawer-bg" id="drawerBg" onclick="closeDrawer()"></div>
+  <div class="drawer" id="drawer" aria-hidden="true"></div>
+
+  <script src="js/region.js"></script>
+  <div class="sidebar-hover-zone"
+     onmouseenter="document.querySelector('.sidebar').classList.add('sidebar-peek')"
+     onmouseleave="document.querySelector('.sidebar').classList.remove('sidebar-peek')"></div>
+  <script>
+  function toggleSidebar() {
+    const hidden = document.body.classList.toggle('sidebar-hidden');
+    const btn = document.querySelector('.sidebar-toggle');
+    btn.textContent = hidden ? '▶' : '◀';
+    btn.title = hidden ? 'Przypnij menu' : 'Ukryj menu';
+    localStorage.setItem('sas_sidebar_hidden', hidden ? '1' : '0');
+  }
+  // на телефоні меню сховане за замовчуванням (стан не зберігаємо)
+  if (localStorage.getItem('sas_sidebar_hidden') === '1' || window.innerWidth < 800) {
+    document.body.classList.add('sidebar-hidden');
+    const btn = document.querySelector('.sidebar-toggle');
+    if (btn) { btn.textContent = '▶'; btn.title = 'Przypnij menu'; }
+  }
+  document.querySelector('.sidebar')?.addEventListener('click', (e) => {
+    if (e.target.closest('.nav-item') && document.body.classList.contains('sidebar-hidden')) {
+      document.querySelector('.sidebar').classList.remove('sidebar-peek');
+    }
+  });
+  </script>
+</body>
+</html>

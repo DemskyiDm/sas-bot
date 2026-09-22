@@ -29,6 +29,7 @@
       <div class="nav-item" onclick="showPage('history')">📋 Historia</div>
       <div class="nav-item" onclick="window.location='/analytics.html'">📈 Analityka</div>
       <div class="nav-item" onclick="location.href='raporty.html'">📑 Raporty</div>
+      <div id="regionLink" class="nav-item" onclick="location.href='region.html'" style="display: none">🚦 Region</div>
       <div class="nav-item" onclick="showPage('settings')">⚙️ Ustawienia</div>
       <div id="adminLink" class="nav-item" onclick="window.location = '/admin.html'" style="display: none">
         ⚙️ Admin panel
@@ -1058,6 +1059,12 @@ document.querySelector('.sidebar')?.addEventListener('click', (e) => {
     document.querySelector('.sidebar').classList.remove('sidebar-peek');
   }
 });
+</script>
+<script>
+fetch('/api/regional/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (d) { if (d && d.has_access) document.getElementById('regionLink').style.display = ''; })
+  .catch(function () {});
 </script>
 </body>
 

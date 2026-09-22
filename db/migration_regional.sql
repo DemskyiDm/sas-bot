@@ -14,12 +14,36 @@ CREATE SCHEMA IF NOT EXISTS reg;
 
 -- ── Довідники ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS reg.regions (
-  id                      SERIAL PRIMARY KEY,
-  name                    TEXT NOT NULL UNIQUE,
-  regional_coordinator_id INT REFERENCES public.coordinators(id),
-  is_active               BOOLEAN NOT NULL DEFAULT true,
-  created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+  id         SERIAL PRIMARY KEY,
+  name       TEXT NOT NULL UNIQUE,
+  is_active  BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Регіональні координатори регіону. Їх може бути кілька на один регіон.
+CREATE TABLE IF NOT EXISTS reg.region_leads (
+  region_id      INT NOT NULL REFERENCES reg.regions(id) ON DELETE CASCADE,
+  coordinator_id INT NOT NULL REFERENCES public.coordinators(id),
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by     INT,
+  PRIMARY KEY (region_id, coordinator_id)
+);
+CREATE INDEX IF NOT EXISTS region_leads_coord_idx ON reg.region_leads(coordinator_id);
+
+-- Перехід зі старої схеми (один координатор у колонці regions):
+-- переносимо його в region_leads і прибираємо колонку.
+DO $mig$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'reg' AND table_name = 'regions'
+                AND column_name = 'regional_coordinator_id') THEN
+    INSERT INTO reg.region_leads (region_id, coordinator_id)
+    SELECT id, regional_coordinator_id FROM reg.regions WHERE regional_coordinator_id IS NOT NULL
+    ON CONFLICT DO NOTHING;
+    ALTER TABLE reg.regions DROP COLUMN regional_coordinator_id;
+  END IF;
+END
+$mig$;
 
 -- Хто відповідає за об'єкт і до якого регіону він належить — з датами.
 -- Поточний запис: valid_to IS NULL. При зміні: старий закривається,

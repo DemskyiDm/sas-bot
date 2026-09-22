@@ -1,0 +1,12 @@
+/* Мобільна версія: тільки плитки показників — 2 в ряд на телефоні.
+   Підключається ПІСЛЯ style.css. На екранах ширше 768px нічого не змінює. */
+@media (max-width: 768px) {
+  .stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px !important; margin-bottom: 12px !important; }
+  .stat-card { padding: 10px 12px !important; min-width: 0; }
+  .stat-label { letter-spacing: .3px !important; white-space: normal; overflow-wrap: normal; word-break: normal; hyphens: none; font-size: 9px !important; }
+  .stat-value { font-size: 24px !important; }
+  .stat-sub { white-space: normal; }
+}
+@media (max-width: 380px) {
+  .stat-value { font-size: 20px !important; }
+}

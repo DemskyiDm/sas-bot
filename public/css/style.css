@@ -20,7 +20,8 @@ body {
   font-family: system-ui, sans-serif;
   background: var(--bg);
   color: var(--text);
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   display: flex;
 }
 
@@ -49,7 +50,7 @@ body {
 .nav-item.active { background: rgba(59, 130, 246, 0.12); color: var(--accent); }
 
 /* ── MAIN ── */
-.main { margin-left: 210px; flex: 1; display: flex; flex-direction: column; }
+.main { margin-left: 210px; flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .topbar {
   height: 50px; background: var(--surface); border-bottom: 1px solid var(--border);
   display: flex; align-items: center; padding: 0 20px; gap: 12px;
@@ -76,7 +77,7 @@ select:focus, input:focus { border-color: var(--accent); }
 .btn-red { background: rgba(239, 68, 68, 0.1); color: var(--red); border: 1px solid rgba(239, 68, 68, 0.3); }
 
 /* ── CONTENT ── */
-.content { padding: 18px 20px; flex: 1; }
+.content { padding: 18px 20px; flex: 1; min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
 .stats-row { display: grid; gap: 12px; margin-bottom: 18px; }
 .stat-card {
   background: var(--surface); border: 1px solid var(--border);
@@ -249,7 +250,7 @@ body.sidebar-hidden .main { margin-left: 0; }
 
 /* ── Hours table: sticky dates row + horizontal scroll ── */
 #pageHours .table-wrap {
-  max-height: calc(100vh - 280px);
+  max-height: none;
   overflow: auto;
   position: relative;
 }
@@ -279,4 +280,38 @@ body.sidebar-hidden .main { margin-left: 0; }
 }
 #pageHours .table-wrap::-webkit-scrollbar-thumb:hover {
   background: var(--accent);
+}
+
+/* Перша колонка (група) прилипає зліва */
+#pageHours .table-wrap table tr > *:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  background: var(--surface);
+}
+#pageHours .table-wrap table tbody tr:first-child > *:first-child {
+  z-index: 6;
+  background: var(--surface2);
+}
+
+/* ── Godziny: картка з таблицею до низу вікна ── */
+#pageHours {
+  flex: 1;
+  min-height: 0;
+  display: flex !important;
+  flex-direction: column;
+}
+#pageHours .card:has(.table-wrap) {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+  overflow: hidden;
+}
+#pageHours .card:has(.table-wrap) .table-wrap {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
 }

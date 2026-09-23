@@ -13,6 +13,8 @@ const {
   wolneKeyboard,
   tabeleKeyboard,
 } = require("./keyboards");
+const campaign = require("./campaign");
+const gaps = require("./gaps");
 
 const ABS_COLORS = { WZ: "wz", DWZ: "dwz", URL: "url", L4: "l4", NN: "nn", UN: "un" };
 
@@ -58,11 +60,22 @@ async function isDismissed(workerId) {
   return ["zwolniony", "rezygnacja"].includes(r.rows[0].status);
 }
 
+// ДДММ → YYYY-MM-DD з правильним роком на межі року
+// (31.12 натиснуто 02.01 → минулий рік; 01.01 натиснуто 31.12 → наступний)
+function resolveDate(ddmm) {
+  const dd = parseInt(ddmm.substring(0, 2), 10);
+  const mm = parseInt(ddmm.substring(2, 4), 10);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let year = now.getFullYear();
+  const diff = (new Date(year, mm - 1, dd) - today) / 86400000;
+  if (diff > 2) year -= 1;
+  else if (diff < -300) year += 1;
+  return `${year}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+}
+
 async function writeHours(workerId, ddmm, hours) {
-  const dd = ddmm.substring(0, 2);
-  const mm = ddmm.substring(2, 4);
-  const year = new Date().getFullYear();
-  const date = `${year}-${mm}-${dd}`;
+  const date = resolveDate(ddmm);
 
   if (!(await workedOnDate(workerId, date))) {
     return { ok: false, reason: "outside_period" };
@@ -79,10 +92,7 @@ async function writeHours(workerId, ddmm, hours) {
 }
 
 async function writeAbsence(workerId, ddmm, absCode) {
-  const dd = ddmm.substring(0, 2);
-  const mm = ddmm.substring(2, 4);
-  const year = new Date().getFullYear();
-  const date = `${year}-${mm}-${dd}`;
+  const date = resolveDate(ddmm);
 
   if (!(await workedOnDate(workerId, date))) {
     return { ok: false, reason: "outside_period" };
@@ -132,8 +142,18 @@ async function sendMessage(bot, chatId, text, extra) {
 }
 
 async function sendDayKeyboard(bot, chatId, session, settings) {
+  // Акція: кнопки показуються тільки працівникам обраних об'єктів і тільки поки не відповіли
+  let campaignRows = null;
+  if (session?.workerId && (await campaign.isEligible(session.workerId))) {
+    campaignRows = campaign.campaignRows(session);
+  }
+  // Серії незаповнених днів (>3 підряд) — кнопки з конкретними датами
+  const gapRows = session?.workerId
+    ? await gaps.gapRowsForWorker(session.workerId, session.lang)
+    : null;
+  const extraRows = [...(gapRows || []), ...(campaignRows || [])];
   await sendMessage(bot, chatId, T(session, "choose_day"), {
-    reply_markup: dayKeyboard(session, settings), // ← передаємо весь settings
+    reply_markup: dayKeyboard(session, settings, extraRows.length ? extraRows : null), // ← передаємо весь settings
   });
 }
 
@@ -195,6 +215,12 @@ async function handleUpdate(bot, update) {
 
     const answer = (text) =>
       bot.telegram.answerCbQuery(cq.id, text || "").catch(() => { });
+
+    if (session.awaitingTabele && !payload.startsWith("TABELE")) {
+      delete session.awaitingTabele;
+      await saveSessionSafe(chatId, session);
+    }
+
 
     // LANG
     if (payload.startsWith("LANG_")) {
@@ -420,7 +446,8 @@ async function handleUpdate(bot, update) {
       return;
     }
 
-        // 800+ — записати згоду
+    // 800+ — записати згоду
+    /*
     if (payload === "CMD_800PLUS") {
       await answer("OK");
       if (!session.workerId) {
@@ -453,6 +480,115 @@ async function handleUpdate(bot, update) {
         await sendMessage(bot, chatId, T(session, "tabele_error"));
       }
       await sendDayKeyboard(bot, chatId, session, settings);
+      return;
+    }
+*/
+
+    // АКЦІЯ — крок 1: обрано варіант → уточнююче питання
+    if (payload.startsWith("AKC_PICK_")) {
+      await answer("OK");
+      if (!session.workerId) {
+        await sendMessage(bot, chatId, T(session, "need_id"));
+        return;
+      }
+      const choice = payload.substring(9) === "yes" ? "yes" : "no";
+
+      // Кнопки могли залишитись у старому повідомленні — не даємо відповісти двічі
+      if (await campaign.hasAnswered(session.workerId)) {
+        await sendMessage(bot, chatId, T(session, "akc_already"));
+        await sendDayKeyboard(bot, chatId, session, settings);
+        return;
+      }
+
+      const label =
+        choice === "yes"
+          ? T(session, "akc_choice_yes", campaign.DEADLINE)
+          : T(session, "akc_choice_no");
+
+      await sendMessage(bot, chatId, T(session, "akc_confirm", label), {
+        reply_markup: campaign.confirmKeyboard(session, choice),
+      });
+      return;
+    }
+
+    // АКЦІЯ — «Назад»: повертаємо вибір варіанту
+    if (payload === "AKC_BACK") {
+      await answer("OK");
+      try {
+        await bot.telegram.editMessageText(
+          chatId,
+          cq.message.message_id,
+          null,
+          T(session, "akc_prompt"),
+          { reply_markup: campaign.promptKeyboard(session) },
+        );
+      } catch (e) {
+        await sendMessage(bot, chatId, T(session, "akc_prompt"), {
+          reply_markup: campaign.promptKeyboard(session),
+        });
+      }
+      return;
+    }
+
+    // АКЦІЯ — крок 2: підтверджено → запис у campaign_responses, кнопки зникають
+    if (payload.startsWith("AKC_OK_")) {
+      await answer("OK");
+      if (!session.workerId) {
+        await sendMessage(bot, chatId, T(session, "need_id"));
+        return;
+      }
+      const choice = payload.substring(7) === "yes" ? "yes" : "no";
+
+      try {
+        await campaign.saveResponse(session.workerId, choice, session.lang);
+      } catch (e) {
+        console.error("campaign save error:", e.message);
+        await sendMessage(bot, chatId, T(session, "tabele_error"));
+        return;
+      }
+
+      // прибираємо кнопки з повідомлення з уточнюючим питанням
+      try {
+        await bot.telegram.editMessageText(
+          chatId,
+          cq.message.message_id,
+          null,
+          T(session, "akc_thanks"),
+        );
+      } catch (e) {
+        await sendMessage(bot, chatId, T(session, "akc_thanks"));
+      }
+
+      await sendDayKeyboard(bot, chatId, session, settings);
+      return;
+    }
+
+    // GAP — дата з нагадування про незаповнені дні (GAP_YYYYMMDD)
+    if (payload.startsWith("GAP_")) {
+      if (payload === "GAP_NOOP") {
+        await answer("");
+        return;
+      }
+      if (!session.workerId) {
+        await answer(T(session, "need_id"));
+        return;
+      }
+      const g = gaps.parseGapPayload(payload);
+      if (!g) {
+        await answer("");
+        await sendDayKeyboard(bot, chatId, session, settings);
+        return;
+      }
+      session.dayOfMonth = g.ddmm;
+      delete session.awaitingHoursManual;
+      await saveSessionSafe(chatId, session);
+      await answer(g.label);
+      await sendMessage(
+        bot,
+        chatId,
+        `${gaps.tx(session.lang).day_picked(g.label)}\n${T(session, "choose_hours")}`,
+        { reply_markup: hoursKeyboard(session, settings) },
+      );
       return;
     }
 
@@ -492,8 +628,8 @@ async function handleUpdate(bot, update) {
       }
 
       const hrs = parseFloat(payload.substring(2).replace(",", "."));
-      if (isNaN(hrs) || hrs < 0 || hrs > 13) {
-        await answer("0-13");
+      if (isNaN(hrs) || hrs <= 0 || hrs > 13) {
+        await answer("0.25-13");
         return;
       }
 
@@ -661,11 +797,12 @@ async function handleUpdate(bot, update) {
       console.error("Tabele save error:", e.message);
       await sendMessage(bot, chatId, T(session, "tabele_error"));
     }
+    
     return;
   }
 
   // Якщо чекаємо фото але надіслали не фото
- if (session.awaitingTabele && !update.message.photo) {
+  if (session.awaitingTabele && !update.message.photo) {
     const escapeCmds = ["0000", "/start", "/lang", "lang", "9999", "/9999"];
     if (escapeCmds.includes(textCmd)) {
       delete session.awaitingTabele;
@@ -750,8 +887,8 @@ async function handleUpdate(bot, update) {
       if (!isNaN(n) && n >= 0 && n <= 13) dec = n;
     }
 
-    if (dec === null) {
-      await sendMessage(bot, chatId, T(session, "bad_hours_format"));
+    if (dec === null || dec <= 0) {
+      await sendMessage(bot, chatId, T(session, "zero_hours"));
       return;
     }
 

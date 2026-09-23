@@ -123,12 +123,13 @@ router.get(
             AND ($3::int[] IS NULL OR f.id = ANY($3::int[]))
         ),
         active_end AS (
-          -- Працюючі на кінець періоду — ЧИСТО ПО ДАТАХ:
-          -- почав до кінця періоду включно, а закінчив ПІЗНІШЕ кінця періоду
-          -- (або ще працює). Хто має last_work_date = останній день періоду —
-          -- НЕ рахується (він уже закінчив).
-          -- 'rezygnacja' виключаємо — ці люди так і не почали працювати.
-          -- Один працівник = один об'єкт (останній період за bhp_date).
+          -- ИСТОРИЧЕСКИЙ подсчёт ПО ДАТАМ из worker_facility_history:
+          -- работает для любого периода в прошлом, а не только "сейчас".
+          -- Условия: начал не позже конца периода (bhp_date <= $2)
+          -- и закончил СТРОГО ПОЗЖЕ конца периода (или ещё работает).
+          -- Кто закончил в последний день периода (lwd = $2) — НЕ считается.
+          -- 'rezygnacja' исключаем — эти люди не начинали работать.
+          -- Один работник = один объект (последний период по bhp_date).
           SELECT t.facility_id, COUNT(*) AS cnt
           FROM (
             SELECT DISTINCT ON (wfh.worker_id) wfh.worker_id, wfh.facility_id
@@ -282,11 +283,48 @@ router.get(
         ORDER BY group_name, facility_name, w.full_name
       `;
 
-      const [summary, absences, missing] = await Promise.all([
+      // ── Зведення неприсутностей по об'єктах і типах (включно з WZ) ──
+      const absSumSql = `
+        SELECT p.facility_id, h.absence_type,
+               COUNT(*)::int AS days,
+               COUNT(DISTINCT h.worker_id)::int AS workers
+        FROM hours_log h
+        JOIN workers w ON w.id = h.worker_id
+        CROSS JOIN LATERAL (
+          SELECT COALESCE(
+            (SELECT wfh.facility_id
+               FROM worker_facility_history wfh
+              WHERE wfh.worker_id = h.worker_id
+                AND h.work_date >= wfh.bhp_date
+                AND (wfh.last_work_date IS NULL OR h.work_date <= wfh.last_work_date)
+              ORDER BY wfh.bhp_date DESC
+              LIMIT 1),
+            (SELECT vc.facility_id FROM v_worker_current vc WHERE vc.id = h.worker_id)
+          ) AS facility_id
+        ) p
+        WHERE h.work_date BETWEEN $1::date AND $2::date
+          AND h.absence_type IS NOT NULL
+          AND w.login NOT LIKE 'TEST_%'
+          AND ($3::int[] IS NULL OR p.facility_id = ANY($3::int[]))
+        GROUP BY p.facility_id, h.absence_type
+      `;
+
+      const [summary, absences, missing, absSummary] = await Promise.all([
         db.query(summarySql, params),
         db.query(absSql, params),
         db.query(missingSql, params),
+        db.query(absSumSql, params),
       ]);
+
+      // Групуємо зведення: { facility_id: { WZ: {days,workers}, UN: {...}, ... } }
+      const absSumMap = {};
+      for (const r of absSummary.rows) {
+        if (!absSumMap[r.facility_id]) absSumMap[r.facility_id] = {};
+        absSumMap[r.facility_id][r.absence_type] = {
+          days: r.days,
+          workers: r.workers,
+        };
+      }
 
       res.json({
         ok: true,
@@ -301,6 +339,7 @@ router.get(
           })),
           absences: absences.rows,
           missing: missing.rows,
+          abs_summary: absSumMap,
         },
       });
     } catch (err) {

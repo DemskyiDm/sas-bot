@@ -129,6 +129,11 @@ const SOURCES = [
   },
   {
     ssId: "1gVEcQZY40SlnMVm3laSjuNpYk0lo8LR6Q1Ke0LQ8mKU",
+    gid: "1351989642",
+    facilityName: "ILS Błonie SAS",
+  },
+  {
+    ssId: "1gVEcQZY40SlnMVm3laSjuNpYk0lo8LR6Q1Ke0LQ8mKU",
     gid: "734840239",
     facilityName: "Inter Cars SAS",
   },
@@ -339,6 +344,11 @@ const SOURCES = [
   },
   {
     ssId: "1WF6mDo07x53SKYOgF0hvwQLDccueNKctZNYRFoXrlWs",
+    gid: "710429418",
+    facilityName: "ID Krajków SAS",
+  },
+  {
+    ssId: "1WF6mDo07x53SKYOgF0hvwQLDccueNKctZNYRFoXrlWs",
     gid: "1672298586",
     facilityName: "Id Logistics Wro APT",
   },
@@ -351,6 +361,11 @@ const SOURCES = [
     ssId: "1WF6mDo07x53SKYOgF0hvwQLDccueNKctZNYRFoXrlWs",
     gid: "1692725338",
     facilityName: "Id Logistics Tyniec APT",
+  },
+   {
+    ssId: "1WF6mDo07x53SKYOgF0hvwQLDccueNKctZNYRFoXrlWs",
+    gid: "749697850",
+    facilityName: "Id Logistics Tyniec WELL",
   },
   {
     ssId: "1WF6mDo07x53SKYOgF0hvwQLDccueNKctZNYRFoXrlWs",
@@ -401,6 +416,11 @@ const SOURCES = [
     ssId: "1bgWR1bYJUXk5zoTXKPRjfV050oYJ9ha9cTNQvchHoIQ",
     gid: "1883894702",
     facilityName: "Partners Lowicz SAS ",
+  },
+  {
+    ssId: "1bgWR1bYJUXk5zoTXKPRjfV050oYJ9ha9cTNQvchHoIQ",
+    gid: "1622778445",
+    facilityName: "CEVA Piotrków Trybunalski well",
   },
   {
     ssId: "1UHwrLJyb6P2Zc4j1ibC8Vif7uLR2_0tiYGHXpApsp_A",
@@ -969,6 +989,9 @@ async function runImport(allowedFacilities = null) {
   // Чистимо unknown, які вже вирішилися
   await recheckUnknowns();
 
+  // Синхронізуємо workers.status з актуальним періодом історії
+  await syncWorkerStatus();
+
   console.log(`\n === IMPORT DONE === `);
 }
 
@@ -1005,6 +1028,34 @@ async function recheckUnknowns() {
 
 function sleep(ms) {
 return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ── SYNC WORKER STATUS ────────────────────────────────────────
+// workers.status — денормалізована копія статусу з актуального періоду
+// worker_facility_history. Актуальним вважаємо: спершу відкритий період
+// (last_work_date IS NULL) з найбільшою bhp_date, інакше — останній
+// закритий період. Без цього список Pracownicy показує 'unknown'.
+async function syncWorkerStatus() {
+  const result = await db.query(`
+    UPDATE workers w
+       SET status = c.status
+      FROM (
+        SELECT DISTINCT ON (h.worker_id)
+               h.worker_id,
+               h.status
+          FROM worker_facility_history h
+         ORDER BY h.worker_id,
+                  (h.last_work_date IS NULL) DESC,
+                  h.bhp_date DESC NULLS LAST,
+                  h.id DESC
+      ) c
+     WHERE w.id = c.worker_id
+       AND w.status IS DISTINCT FROM c.status
+    RETURNING w.id
+  `);
+  if (result.rowCount > 0) {
+    console.log(`  Synced status for ${result.rowCount} workers`);
+  }
 }
 
 module.exports = { runImport };

@@ -100,12 +100,12 @@
     .rp-empty { padding: 24px; text-align: center; color: var(--text3); font-size: 12px; }
     .rp-loading { padding: 24px; text-align: center; color: var(--text2); font-size: 12px; }
   </style>
+  <link rel="stylesheet" href="/css/mobile.css" />
+     
 </head>
 <body>
   <!-- SIDEBAR -->
   <div class="sidebar">
-  <button class="sidebar-toggle" onclick="toggleSidebar()" title="Ukryj / Przypnij menu">◀</button>
-  <!-- существующий .logo и .nav -->
     <div class="logo">
       <div class="logo-tag">SAS LOGISTIC</div>
       <div class="logo-name">Raporty</div>
@@ -273,20 +273,57 @@
           <div class="rp-card"><div class="v purple">${missDays}</div><div class="l">Puste dni bez wpisu (${missWorkers} os.)</div></div>
         </div>`;
 
+      const absSummary = data.abs_summary || {};
+      const ABS_TYPES = ['WZ', 'DWZ', 'UN', 'URL', 'L4', 'NN'];
+
+      function getAbsCell(facilityId, type) {
+        const s = absSummary[facilityId];
+        return s && s[type] ? s[type] : { days: 0, workers: 0 };
+      }
+
+      function facAbsCells(facilityId) {
+        return ABS_TYPES.map(t => {
+          const c = getAbsCell(facilityId, t);
+          return `<td class="num">${c.workers || ''}</td><td class="num">${c.days || ''}</td>`;
+        }).join('');
+      }
+
+      function groupAbsCells(facIds) {
+        return ABS_TYPES.map(t => {
+          let days = 0, workers = 0;
+          for (const fid of facIds) {
+            const c = getAbsCell(fid, t);
+            days += c.days; workers += c.workers;
+          }
+          return `<td class="num">${workers || ''}</td><td class="num">${days || ''}</td>`;
+        }).join('');
+      }
+
+      const absHeaders = ABS_TYPES.map(t =>
+        `<th class="num" colspan="2" style="font-size:9px;text-align:center;border-bottom:none">${t}</th>`
+      ).join('');
+      const absSubHeaders = ABS_TYPES.map(() =>
+        `<th class="num" style="font-size:8px;color:var(--text3);padding-top:0">os.</th><th class="num" style="font-size:8px;color:var(--text3);padding-top:0">dni</th>`
+      ).join('');
+
       // ── таблиця по групах/об'єктах ──
       html += `
-        <div class="rp-section">
+        <div class="rp-section" style="overflow-x:auto">
           <div class="rp-section-head">Obiekty i grupy
             <span class="cnt">${data.period.from} — ${data.period.to}</span>
           </div>
           <table class="rp-table">
-            <thead><tr>
-              <th>Obiekt</th>
-              <th class="num">Pracuje (koniec okresu)</th>
-              <th class="num">Przyszło</th>
-              <th class="num">Zwolniono</th>
-              <th class="num">Godziny</th>
-            </tr></thead>
+            <thead>
+              <tr>
+                <th rowspan="2">Obiekt</th>
+                <th class="num" rowspan="2">Pracuje</th>
+                <th class="num" rowspan="2">Przyszło</th>
+                <th class="num" rowspan="2">Zwolniono</th>
+                <th class="num" rowspan="2">Godziny</th>
+                ${absHeaders}
+              </tr>
+              <tr>${absSubHeaders}</tr>
+            </thead>
             <tbody>`;
 
       const groups = groupFacilities(facs);
@@ -294,7 +331,6 @@
       for (const g of Object.keys(groups).sort()) {
         const rows = groups[g];
 
-        // група з одним об'єктом — один рядок, без окремого заголовка групи
         if (rows.length === 1) {
           const f = rows[0];
           html += `<tr class="rp-group-row">
@@ -303,17 +339,20 @@
             <td class="num">${f.hired ? "+" + f.hired : 0}</td>
             <td class="num">${f.fired ? "−" + f.fired : 0}</td>
             <td class="num">${fmtHours(f.hours)}</td>
+            ${facAbsCells(f.facility_id)}
           </tr>`;
           continue;
         }
 
         const gs = groupTotals(rows);
+        const gFacIds = rows.map(r => r.facility_id);
         html += `<tr class="rp-group-row">
           <td>${esc(g)}</td>
           <td class="num">${gs.active}</td>
           <td class="num">${gs.hired ? "+" + gs.hired : 0}</td>
           <td class="num">${gs.fired ? "−" + gs.fired : 0}</td>
           <td class="num">${fmtHours(gs.hours)}</td>
+          ${groupAbsCells(gFacIds)}
         </tr>`;
         for (const f of rows) {
           if (!f.active_end && !f.hired && !f.fired && !f.hours) continue;
@@ -323,34 +362,23 @@
             <td class="num" style="color:var(--green)">${f.hired ? "+" + f.hired : ""}</td>
             <td class="num" style="color:var(--red)">${f.fired ? "−" + f.fired : ""}</td>
             <td class="num">${f.hours ? fmtHours(f.hours) : ""}</td>
+            ${facAbsCells(f.facility_id)}
           </tr>`;
         }
       }
 
+      const allFacIds = facs.map(f => f.facility_id);
       html += `<tr class="rp-total-row">
           <td>RAZEM</td>
           <td class="num">${tot.active}</td>
           <td class="num">+${tot.hired}</td>
           <td class="num">−${tot.fired}</td>
           <td class="num">${fmtHours(tot.hours)}</td>
+          ${groupAbsCells(allFacIds)}
         </tr></tbody></table></div>`;
 
-      // ── неприсутності ──
-      html += renderWorkerSection(
-        "Nieobecności",
-        "wszystkie oprócz WZ (dzień wolny wg grafiku)",
-        abs,
-        (it) => {
-          const cls = ["URL", "L4", "NN"].includes(it.absence_type)
-            ? it.absence_type : "other";
-          return `<div style="margin-bottom:2px">
-            <span class="abs-chip ${cls}">${esc(it.absence_type)} × ${it.cnt}</span>
-            <span class="abs-days">${it.days.map(shortDay).join(", ")}</span>
-          </div>`;
-        },
-        `${absDays} dni / ${absWorkers} pracowników`,
-        "Brak nieobecności w wybranym okresie 🎉",
-      );
+      // ── неприсутності (групування по типу → об'єкт → працівники) ──
+      html += renderAbsencesByType(abs, absDays, absWorkers);
 
       // ── пусті дні (bez godzin) ──
       html += renderWorkerSection(
@@ -419,6 +447,86 @@
       return html;
     }
 
+    // ── Рендер неприсутностей по ТИПУ → об'єкт → працівники ──
+    function renderAbsencesByType(abs, absDays, absWorkers) {
+      let html = `<div class="rp-section">
+        <div class="rp-section-head">Nieobecności
+          <span class="cnt">wszystkie oprócz WZ (dzień wolny wg grafiku)</span>
+          <span class="spacer"></span>
+          <span class="cnt">${absDays} dni / ${absWorkers} pracowników</span>
+        </div>`;
+
+      if (!abs.length) {
+        html += `<div class="rp-empty">Brak nieobecności w wybranym okresie 🎉</div></div>`;
+        return html;
+      }
+
+      // Збираємо: тип → об'єкт → працівники
+      const byType = {};
+      for (const r of abs) {
+        const t = r.absence_type;
+        if (!byType[t]) byType[t] = { total: 0, facilities: {} };
+        byType[t].total += r.cnt;
+        const fKey = r.facility_id;
+        if (!byType[t].facilities[fKey]) {
+          byType[t].facilities[fKey] = {
+            name: r.facility_name,
+            group: r.group_name,
+            workers: [],
+          };
+        }
+        byType[t].facilities[fKey].workers.push(r);
+      }
+
+      // Сортуємо типи
+      const typeOrder = ['UN', 'NN', 'URL', 'L4', 'DWZ', 'DW', 'DW2'];
+      const sortedTypes = Object.keys(byType).sort((a, b) => {
+        const ia = typeOrder.indexOf(a), ib = typeOrder.indexOf(b);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b);
+      });
+
+      for (const t of sortedTypes) {
+        const typeData = byType[t];
+        const cls = ["URL", "L4", "NN"].includes(t) ? t : "other";
+        const workerSet = new Set();
+        Object.values(typeData.facilities).forEach(f =>
+          f.workers.forEach(w => workerSet.add(w.worker_id))
+        );
+
+        html += `<div class="rp-fac-block">
+          <div class="rp-fac-title">
+            <span class="abs-chip ${cls}" style="font-size:12px;padding:2px 10px">${esc(t)}</span>
+            <span class="g" style="margin-left:auto">${typeData.total} dni / ${workerSet.size} os.</span>
+          </div>`;
+
+        const facKeys = Object.keys(typeData.facilities).sort((a, b) =>
+          (typeData.facilities[a].group + typeData.facilities[a].name).localeCompare(
+            typeData.facilities[b].group + typeData.facilities[b].name
+          ),
+        );
+
+        html += `<table class="rp-table"><tbody>`;
+        for (const fk of facKeys) {
+          const fb = typeData.facilities[fk];
+          if (facKeys.length > 1) {
+            html += `<tr><td colspan="2" style="padding:5px 14px;font-size:11px;font-weight:600;color:var(--text2);background:var(--surface2)">${esc(fb.name)} <span style="color:var(--text3);font-size:10px;font-family:var(--mono)">${esc(fb.group)}</span></td></tr>`;
+          }
+          for (const w of fb.workers) {
+            html += `<tr>
+              <td style="width:280px;padding-left:${facKeys.length > 1 ? '26px' : '14px'}">${esc(w.full_name)}<br>
+                <span style="color:var(--text3);font-family:var(--mono);font-size:10px">${esc(w.login)}</span></td>
+              <td><span class="abs-days">${w.days.map(shortDay).join(", ")}</span>
+                <span style="color:var(--text3);font-size:10px;margin-left:6px">(${w.cnt})</span></td>
+            </tr>`;
+          }
+        }
+        html += `</tbody></table></div>`;
+      }
+
+      html += `</div>`;
+      return html;
+    }
+
     // ── EXCEL EXPORT (.xlsx) ────────────────────────────────
     // Та сама структура, що на сторінці: групи → об'єкти з підсумками,
     // + колонка Nieobecności (15.06 - Nazwisko L4, по рядку на день)
@@ -434,16 +542,13 @@
       const abs = lastData.absences || [];
       const missing = lastData.missing || [];
 
-      // неприсутності по об'єкту → рядки "15.06 - Nazwisko L4" (посортовані по даті)
+      // неприсутності по об'єкту, згруповані по типу: "UN:\nPetrov 01.07, 03.07\nIvanov 05.07"
       const absByFac = {};
       for (const r of abs) {
-        const arr = (absByFac[r.facility_id] = absByFac[r.facility_id] || []);
-        for (const d of r.days) {
-          arr.push({ d, line: `${shortDay(d)} - ${r.full_name} ${r.absence_type}` });
-        }
-      }
-      for (const k in absByFac) {
-        absByFac[k].sort((a, b) => a.d.localeCompare(b.d));
+        if (!absByFac[r.facility_id]) absByFac[r.facility_id] = {};
+        const byType = absByFac[r.facility_id];
+        if (!byType[r.absence_type]) byType[r.absence_type] = [];
+        byType[r.absence_type].push(`${r.full_name} ${r.days.map(shortDay).join(", ")}`);
       }
 
       // пусті дні по об'єкту → рядки "Nazwisko — 16.06, 17.06 (2)"
@@ -453,18 +558,52 @@
         arr.push(`${r.full_name} — ${r.days.map(shortDay).join(", ")} (${r.cnt})`);
       }
 
+      const xlsAbsSummary = lastData.abs_summary || {};
+      const XLS_ABS_TYPES = ['WZ', 'DWZ', 'UN', 'URL', 'L4', 'NN'];
+
+      function xlsAbsVals(facilityId) {
+        const s = xlsAbsSummary[facilityId] || {};
+        const vals = [];
+        for (const t of XLS_ABS_TYPES) {
+          const c = s[t];
+          vals.push(c ? c.workers : null);
+          vals.push(c ? c.days : null);
+        }
+        return vals;
+      }
+      function xlsAbsSum(facIds) {
+        const vals = [];
+        for (const t of XLS_ABS_TYPES) {
+          let days = 0, workers = 0;
+          for (const fid of facIds) {
+            const s = xlsAbsSummary[fid];
+            if (s && s[t]) { days += s[t].days; workers += s[t].workers; }
+          }
+          vals.push(workers || null);
+          vals.push(days || null);
+        }
+        return vals;
+      }
+
+      const absHeaderCols = [];
+      for (const t of XLS_ABS_TYPES) {
+        absHeaderCols.push(`${t} os.`);
+        absHeaderCols.push(`${t} dni`);
+      }
+
       const header = [
         "Grupa / Obiekt",
         "Pracuje (koniec okresu)",
         "Przyszło",
         "Zwolniono",
         "Godziny",
-        "Nieobecności (oprócz WZ)",
+        ...absHeaderCols,
+        "Nieobecności (szczegóły)",
         "Bez godzin (puste dni)",
       ];
 
       const aoa = [];
-      const rowTypes = []; // 'title' | 'header' | 'group' | 'fac' | 'total' — для стилів
+      const rowTypes = [];
       function pushRow(row, type) { aoa.push(row); rowTypes.push(type); }
 
       pushRow(["Raport: Koordynacja nieobecność"], "title");
@@ -476,7 +615,11 @@
       const tot = groupTotals(facs);
 
       function facRow(f, indent) {
-        const absLines = (absByFac[f.facility_id] || []).map((x) => x.line);
+        const absMap = absByFac[f.facility_id] || {};
+        const absLines = Object.entries(absMap)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([type, workers]) => `${type}:\n${workers.join("\n")}`)
+          .join("\n\n");
         const missLines = missByFac[f.facility_id] || [];
         return [
           (indent ? "    " : "") + f.facility_name,
@@ -484,7 +627,8 @@
           f.hired,
           f.fired,
           num(f.hours),
-          absLines.join("\n"),
+          ...xlsAbsVals(f.facility_id),
+          absLines,
           missLines.join("\n"),
         ];
       }
@@ -492,32 +636,37 @@
       for (const g of Object.keys(groups).sort()) {
         const rows = groups[g];
 
-        // група з одним об'єктом — один рядок, без окремого рядка групи
         if (rows.length === 1) {
           pushRow(facRow(rows[0], false), "group");
           continue;
         }
 
         const gs = groupTotals(rows);
-        pushRow([`▶ ${g}`, gs.active, gs.hired, gs.fired, num(gs.hours), "", ""], "group");
+        const gFacIds = rows.map(r => r.facility_id);
+        pushRow([`▶ ${g}`, gs.active, gs.hired, gs.fired, num(gs.hours), ...xlsAbsSum(gFacIds), "", ""], "group");
         for (const f of rows) {
-          const absLines = absByFac[f.facility_id] || [];
+          const hasAbs = absByFac[f.facility_id] && Object.keys(absByFac[f.facility_id]).length > 0;
           const missLines = missByFac[f.facility_id] || [];
           if (!f.active_end && !f.hired && !f.fired && !f.hours &&
-              !absLines.length && !missLines.length) continue;
+              !hasAbs && !missLines.length) continue;
           pushRow(facRow(f, true), "fac");
         }
       }
 
-      pushRow(["RAZEM", tot.active, tot.hired, tot.fired, num(tot.hours), "", ""], "total");
+      const allFacIds = facs.map(f => f.facility_id);
+      pushRow(["RAZEM", tot.active, tot.hired, tot.fired, num(tot.hours), ...xlsAbsSum(allFacIds), "", ""], "total");
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
 
-      // ширини колонок
+      // ширини колонок: 5 базових + 12 типів (по 2 на тип) + 2 текстових
       ws["!cols"] = [
-        { wch: 36 }, { wch: 12 }, { wch: 10 }, { wch: 10 },
-        { wch: 10 }, { wch: 48 }, { wch: 55 },
+        { wch: 36 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
+        ...XLS_ABS_TYPES.flatMap(() => [{ wch: 7 }, { wch: 7 }]),
+        { wch: 48 }, { wch: 55 },
       ];
+
+      // Індекси текстових колонок (зсунулись через 12 нових)
+      const textColStart = 5 + XLS_ABS_TYPES.length * 2;
 
       // стилі (xlsx-js-style): wrapText для текстових колонок, жирні заголовки,
       // висота рядка під кількість ліній
@@ -547,8 +696,8 @@
           if (type === "group") s = { ...s, ...GROUP_FILL, alignment: { vertical: "top" } };
           if (type === "total") s = { ...s, ...TOTAL_FILL, alignment: { vertical: "top" } };
 
-          // колонки Nieobecności / Bez godzin — перенос рядків усередині клітинки
-          if (C === 5 || C === 6) {
+          // колонки Nieobecności (szczegóły) і Bez godzin — wrapText
+          if (C === textColStart || C === textColStart + 1) {
             s.alignment = { ...s.alignment, wrapText: true };
             if (typeof cell.v === "string" && cell.v) {
               maxLines = Math.max(maxLines, cell.v.split("\n").length);
@@ -609,31 +758,5 @@
 
     loadReports();
   </script>
-  <div class="sidebar-hover-zone"
-     onmouseenter="document.querySelector('.sidebar').classList.add('sidebar-peek')"
-     onmouseleave="document.querySelector('.sidebar').classList.remove('sidebar-peek')">
-</div>
-
-<script>
-function toggleSidebar() {
-  const hidden = document.body.classList.toggle('sidebar-hidden');
-  const btn = document.querySelector('.sidebar-toggle');
-  btn.textContent = hidden ? '▶' : '◀';
-  btn.title = hidden ? 'Przypnij menu' : 'Ukryj menu';
-  localStorage.setItem('sas_sidebar_hidden', hidden ? '1' : '0');
-}
-// Відновлюємо стан при завантаженні
-if (localStorage.getItem('sas_sidebar_hidden') === '1') {
-  document.body.classList.add('sidebar-hidden');
-  const btn = document.querySelector('.sidebar-toggle');
-  if (btn) { btn.textContent = '▶'; btn.title = 'Przypnij menu'; }
-}
-// Автоматично ховаємо peek при кліку на пункт меню
-document.querySelector('.sidebar')?.addEventListener('click', (e) => {
-  if (e.target.closest('.nav-item') && document.body.classList.contains('sidebar-hidden')) {
-    document.querySelector('.sidebar').classList.remove('sidebar-peek');
-  }
-});
-</script>
 </body>
 </html>

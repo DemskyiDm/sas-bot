@@ -15,7 +15,7 @@ function langKeyboard() {
   };
 }
 
-function dayKeyboard(session, settings) {
+function dayKeyboard(session, settings, extraRows) {
   const today = new Date();
   const rows = [];
   let row = [];
@@ -51,10 +51,16 @@ function dayKeyboard(session, settings) {
     { text: T(session, "month_sum_btn"), callback_data: "CMD_9999" },
     { text: T(session, "logout_btn"), callback_data: "CMD_0000" },
   ]);
+/*
+  rows.push([
+    { text: T(session, "btn_800plus"), callback_data: "CMD_800PLUS" },
+  ]);*/
 
-    rows.push([
- { text: T(session, "btn_800plus"), callback_data: "CMD_800PLUS" },
-  ]);
+  // Акція — рядки кнопок приходять ззовні (bot/campaign.js), поки працівник не відповів
+  if (Array.isArray(extraRows) && extraRows.length) {
+    extraRows.forEach((r) => rows.push(r));
+  }
+
   return { inline_keyboard: rows };
 }
 function hoursKeyboard(session, settings) {
@@ -62,14 +68,14 @@ function hoursKeyboard(session, settings) {
 
   let values = [];
   if (format === 'whole') {
-    values = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
   } else if (format === 'quarter') {
     values = [1, 2, 3, 4, 4.75, 5.75, 6.75, 7.75, 8.75, 9.75, 10.75, 11.75];
   } else if (format === 'both') {
     // цілі + .75 по черзі
     values = [];
     for (let i = 0; i <= 12; i++) {
-      values.push(i);
+      if (i > 0) values.push(i);
       if (i < 12) values.push(i + 0.75);
     }
   }
@@ -146,4 +152,4 @@ function tabeleKeyboard(session) {
   };
 }
 
-module.exports = { langKeyboard, dayKeyboard, hoursKeyboard, wolneKeyboard, tabeleKeyboard  };
+module.exports = { langKeyboard, dayKeyboard, hoursKeyboard, wolneKeyboard, tabeleKeyboard };

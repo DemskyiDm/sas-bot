@@ -214,7 +214,18 @@ async function batchDayoff(action) {
     body: JSON.stringify({ ids, action }),
   });
   if (res && res.ok) {
-    showToast(action === "approve" ? `✅ Zatwierdzono: ${res.updated}` : `❌ Odrzucono: ${res.updated}`);
+    if (action === "approve") {
+      const h = res.hours || {};
+      const nConf = (h.conflicts || []).reduce(
+        (s, c) => s + (c.occupied || []).length + (c.out_of_period || []).length, 0);
+      showToast(
+        `✅ Zatwierdzono: ${res.updated} · URL w grafiku: ${h.applied_days || 0} dni` +
+        (nConf ? ` · ⚠️ pominięto ${nConf}` : ""),
+      );
+      if (nConf) console.warn("Day-off → URL, pominięte dni:", h.conflicts);
+    } else {
+      showToast(`❌ Odrzucono: ${res.updated}`);
+    }
     selectedDayoff.clear();
     loadDayoffPage();
   } else {
@@ -324,7 +335,17 @@ async function updateDayoff(id, status) {
     body: JSON.stringify({ status }),
   });
   if (res && res.ok) {
-    showToast(status === "approved" ? "✅ Підтверджено" : "❌ Відхилено");
+    if (status === "approved") {
+      const h = res.hours || { applied: [], occupied: [], out_of_period: [] };
+      const fmt = (arr) =>
+        arr.map((d) => d.substring(8, 10) + "." + d.substring(5, 7)).join(", ");
+      let msg = `✅ Підтверджено · URL у графіку: ${h.applied.length} дн.`;
+      if (h.occupied.length) msg += ` · ⚠️ зайнято: ${fmt(h.occupied)}`;
+      if (h.out_of_period.length) msg += ` · ⛔ поза періодом: ${fmt(h.out_of_period)}`;
+      showToast(msg);
+    } else {
+      showToast("❌ Відхилено");
+    }
     loadDayoffPage();
   } else {
     showToast("⚠️ Помилка при оновленні");
@@ -717,6 +738,119 @@ function getFilteredAdvances() {
   });
 }
 
+// ── EXCEL: kolory i ramki ─────────────────────────────────────
+// Ті самі кольори, що в панелі (public/css/style.css → .day-cell.*),
+// але освітлені під білий фон Excel.
+const XLS_BORDER = { style: "thin", color: { rgb: "C9D1D9" } };
+const XLS_BOX = { top: XLS_BORDER, bottom: XLS_BORDER, left: XLS_BORDER, right: XLS_BORDER };
+
+const XLS_ABS = {
+  WZ:  { fill: "FAE5F6", font: "A03C90" }, // wolne
+  URL: { fill: "E9F3E3", font: "4F7A38" }, // urlop
+  L4:  { fill: "E7F1FA", font: "2C6A9B" }, // zwolnienie
+  NN:  { fill: "FAE3E3", font: "B23A3A" }, // nieobecność nieusprawiedliwiona
+  DWZ: { fill: "F0E9FF", font: "6B3FBF" },
+  UN:  { fill: "FFF3DC", font: "8A6100" },
+};
+const XLS_HOURS   = { fill: "E8F7EE", font: "1B7F3B" }; // godziny
+const XLS_MISSING = { fill: "FDEAEA", font: "C0392B" }; // brak wpisu
+const XLS_OUTSIDE = { fill: "E9ECEF", font: "8A939B" }; // poza okresem zatrudnienia
+const XLS_FUTURE  = { fill: "FFFFFF", font: "AAB2BC" }; // dzień jeszcze nie nadszedł
+const XLS_HEADER  = { fill: "1F2A44", font: "FFFFFF" };
+
+function xlsCell(ws, r, c) {
+  const ref = XLSX.utils.encode_cell({ r, c });
+  if (!ws[ref]) ws[ref] = { t: "s", v: "" }; // порожня клітинка теж має бути в рамці
+  return ws[ref];
+}
+
+function xlsPaint(cell, look, extra) {
+  cell.s = {
+    border: XLS_BOX,
+    alignment: { horizontal: "center", vertical: "center" },
+    ...(extra || {}),
+  };
+  if (look) {
+    cell.s.fill = { patternType: "solid", fgColor: { rgb: look.fill } };
+    cell.s.font = { color: { rgb: look.font }, bold: true, sz: 10 };
+  }
+  return cell;
+}
+
+// Рамки + шапка для будь-якого аркуша; dayCols/dayMeta — тільки для «Godziny».
+function styleSheet(ws, opts) {
+  const o = opts || {};
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+
+  for (let R = range.s.r; R <= range.e.r; R++) {
+    for (let C = range.s.c; C <= range.e.c; C++) {
+      const cell = xlsCell(ws, R, C);
+
+      if (R === 0) {
+        xlsPaint(cell, XLS_HEADER);
+        cell.s.alignment = { horizontal: "center", vertical: "center", wrapText: true };
+        continue;
+      }
+
+      const isDay = o.dayCols && C >= o.dayCols.from && C <= o.dayCols.to;
+      if (isDay && o.dayMeta) {
+        const state = (o.dayMeta[R - 1] || [])[C - o.dayCols.from];
+        const look =
+          state === "outside" ? XLS_OUTSIDE :
+          state === "future"  ? XLS_FUTURE  :
+          state === "missing" ? XLS_MISSING :
+          state === "hours"   ? XLS_HOURS   :
+          XLS_ABS[state] || null;
+        xlsPaint(cell, look);
+      } else {
+        cell.s = {
+          border: XLS_BOX,
+          alignment: {
+            horizontal: typeof cell.v === "number" ? "right" : "left",
+            vertical: "center",
+          },
+        };
+      }
+    }
+  }
+
+  ws["!rows"] = [{ hpt: 26 }];
+  return ws;
+}
+
+// Окремий аркуш-легенда, щоб кольори читались без пояснень
+function legendSheet() {
+  const rows = [
+    ["Oznaczenie", "Znaczenie"],
+    ["8 / 12 …", "Godziny przepracowane"],
+    ["URL", "Urlop"],
+    ["WZ", "Wolne"],
+    ["L4", "Zwolnienie lekarskie"],
+    ["NN", "Nieobecność nieusprawiedliwiona"],
+    ["DWZ", "Dodatkowe wolne"],
+    ["UN", "Urlop na żądanie / inne"],
+    ["(puste, czerwone)", "Brak wpisu za ten dzień"],
+    ["(puste, szare)", "Poza okresem zatrudnienia"],
+  ];
+  const looks = [null, XLS_HOURS, XLS_ABS.URL, XLS_ABS.WZ, XLS_ABS.L4, XLS_ABS.NN,
+    XLS_ABS.DWZ, XLS_ABS.UN, XLS_MISSING, XLS_OUTSIDE];
+
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"] = [{ wch: 20 }, { wch: 42 }];
+  rows.forEach((_, R) => {
+    const c0 = xlsCell(ws, R, 0);
+    const c1 = xlsCell(ws, R, 1);
+    if (R === 0) {
+      xlsPaint(c0, XLS_HEADER);
+      xlsPaint(c1, XLS_HEADER);
+    } else {
+      xlsPaint(c0, looks[R]);
+      c1.s = { border: XLS_BOX, alignment: { horizontal: "left", vertical: "center" } };
+    }
+  });
+  return ws;
+}
+
 function exportToExcel(type) {
   if (typeof XLSX === "undefined") {
     showToast("⚠️ Biblioteka Excel nie jest załadowana");
@@ -724,6 +858,7 @@ function exportToExcel(type) {
   }
   let data = [],
     filename = "";
+  let hoursMeta = null; // для «Godziny»: стан кожного дня → колір у Excel
   const today = new Date().toISOString().substring(0, 10);
 
   if (type === "workers") {
@@ -798,6 +933,22 @@ function exportToExcel(type) {
       String(i + 1).padStart(2, "0")
     );
 
+    // межі «сьогодні» — щоб майбутні дні не фарбувались як «brak»
+    const now = new Date();
+    const selMonth = new Date(parseInt(year), parseInt(mm) - 1, 1);
+    const curMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const todayDay =
+      selMonth > curMonth ? 0
+        : selMonth.getTime() === curMonth.getTime() ? now.getDate()
+          : 31;
+
+    const dayAtMidnight = (v) => {
+      const d = new Date(v);
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    };
+
+    hoursMeta = [];
+
     data = filtered.map((w) => {
       const dayMap = {};
       (w.hours || []).forEach((h) => {
@@ -805,21 +956,38 @@ function exportToExcel(type) {
         dayMap[d] = h;
       });
 
+      const bhp = w.bhp_date ? dayAtMidnight(w.bhp_date) : null;
+      const last = w.last_work_date ? dayAtMidnight(w.last_work_date) : null;
+
       let total = 0;
       const dayCells = {};
+      const rowMeta = [];
+
       dayHeaders.forEach((day) => {
-        const h = dayMap[parseInt(day)];
-        if (h) {
-          if (h.hours !== null) {
-            dayCells[day] = parseFloat(h.hours);
-            total += parseFloat(h.hours);
-          } else {
-            dayCells[day] = h.absence_type || "";
-          }
+        const dn = parseInt(day);
+        const dayDate = new Date(parseInt(year), parseInt(mm) - 1, dn);
+        const h = dayMap[dn];
+
+        if ((bhp && dayDate < bhp) || (last && dayDate > last)) {
+          dayCells[day] = "";
+          rowMeta.push("outside");
+        } else if (h && h.hours !== null) {
+          dayCells[day] = parseFloat(h.hours);
+          total += parseFloat(h.hours);
+          rowMeta.push("hours");
+        } else if (h) {
+          dayCells[day] = h.absence_type || "";
+          rowMeta.push((h.absence_type || "").toUpperCase());
+        } else if (dn > todayDay) {
+          dayCells[day] = "";
+          rowMeta.push("future");
         } else {
-          dayCells[day] = null;
+          dayCells[day] = "";
+          rowMeta.push("missing");
         }
       });
+
+      hoursMeta.push(rowMeta);
 
       const row = {};
       row["Pracownik"] = w.full_name;
@@ -881,15 +1049,31 @@ function exportToExcel(type) {
     return;
   }
   const ws = XLSX.utils.json_to_sheet(data);
-  ws["!cols"] = Object.keys(data[0]).map((key) => ({
-    wch:
-      Math.max(
-        key.length,
-        ...data.map((row) => String(row[key] || "").length),
-      ) + 2,
-  }));
+  const keys = Object.keys(data[0]);
+  const isDayKey = (k) => /^\s*\d{1,2}$/.test(k);
+
+  ws["!cols"] = keys.map((key) =>
+    isDayKey(key)
+      ? { wch: 4.5 }
+      : {
+        wch: Math.min(
+          40,
+          Math.max(
+            key.length,
+            ...data.map((row) => String(row[key] ?? "").length),
+          ) + 2,
+        ),
+      },
+  );
+
+  const dayIdx = keys.map((k, i) => (isDayKey(k) ? i : -1)).filter((i) => i >= 0);
+  styleSheet(ws, dayIdx.length && hoursMeta
+    ? { dayCols: { from: dayIdx[0], to: dayIdx[dayIdx.length - 1] }, dayMeta: hoursMeta }
+    : {});
+
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Data");
+  if (hoursMeta) XLSX.utils.book_append_sheet(wb, legendSheet(), "Legenda");
   XLSX.writeFile(wb, filename);
   showToast(`✅ Eksport: ${data.length} wierszy`);
 }

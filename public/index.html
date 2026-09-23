@@ -6,7 +6,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SAS Logistic — Panel</title>
   <link rel="stylesheet" href="/css/style.css" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <!-- xlsx-js-style: те саме API, що й xlsx, але вміє кольори/рамки (як у raporty.html) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+  <link rel="stylesheet" href="/css/mobile.css" />
+     
 </head>
 
 <body>
@@ -28,6 +31,7 @@
       <div class="nav-item" onclick="showPage('history')">📋 Historia</div>
       <div class="nav-item" onclick="window.location='/analytics.html'">📈 Analityka</div>
       <div class="nav-item" onclick="location.href='raporty.html'">📑 Raporty</div>
+      <div id="regionLink" class="nav-item" onclick="location.href='region.html'" style="display: none">🚦 Region</div>
       <div class="nav-item" onclick="showPage('settings')">⚙️ Ustawienia</div>
       <div id="adminLink" class="nav-item" onclick="window.location = '/admin.html'" style="display: none">
         ⚙️ Admin panel
@@ -901,7 +905,7 @@
       </div>
       <div class="modal-field">
         <div class="modal-label">GODZINY (lub wybierz nieobecnosc)</div>
-        <input class="modal-input" id="modalHours" type="number" min="0" max="13" step="0.25" placeholder="np. 8" />
+        <input class="modal-input" id="modalHours" type="number" min="0.25" max="13" step="0.25" placeholder="np. 8" />
         <div class="modal-abs">
           <div class="abs-btn" onclick="setAbs('WZ', event)">DW — Dzień wolny</div>
           <div class="abs-btn" onclick="setAbs('DWZ', event)">DWZ — Dzień wolny zakładowy</div>
@@ -1057,6 +1061,12 @@ document.querySelector('.sidebar')?.addEventListener('click', (e) => {
     document.querySelector('.sidebar').classList.remove('sidebar-peek');
   }
 });
+</script>
+<script>
+fetch('/api/regional/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (d) { if (d && d.has_access) document.getElementById('regionLink').style.display = ''; })
+  .catch(function () {});
 </script>
 </body>
 

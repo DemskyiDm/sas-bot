@@ -681,6 +681,9 @@ router.put("/coordinators", async (req, res) => {
   try {
     if (!req.scope.isAdmin) return fail(res, new Error("Admin only"), 403);
     const map = req.body?.enabled || {};
+    const langs = req.body?.lang || {};
+    for (const l of Object.values(langs))
+      if (!["uk", "ru", "pl"].includes(l)) return fail(res, new Error(`Zły język: ${l}`), 400);
     const off = [];
     let changed = 0;
     for (const [idRaw, val] of Object.entries(map)) {
@@ -700,8 +703,55 @@ router.put("/coordinators", async (req, res) => {
       );
       if (r.rows.length) { changed++; if (!on) off.push(id); }
     }
+    // мова повідомлень координатору (Telegram): uk / ru / pl
+    for (const [idRaw, l] of Object.entries(langs)) {
+      const id = parseInt(idRaw, 10);
+      if (!id) continue;
+      await db.query(`UPDATE public.coordinators SET lang = $2 WHERE id = $1`, [id, l]);
+      changed++;
+    }
     const cancelled = await careBot.cancelForCoordinators(off);
     res.json({ ok: true, changed, cancelled });
+  } catch (e) { fail(res, e); }
+});
+
+// ── Тестовий набір повідомлень (адмін) ────────────────────────────────
+router.get("/test", async (req, res) => {
+  try {
+    if (!req.scope.isAdmin) return fail(res, new Error("Admin only"), 403);
+    const c = await db.query(
+      `SELECT c.id, c.full_name, (c.telegram_chat_id IS NOT NULL) AS has_tg, COALESCE(c.lang::text, 'uk') AS lang,
+              care.is_on(c.id) AS enabled
+         FROM public.coordinators c WHERE c.is_active ORDER BY (c.id = $1) DESC, c.full_name`,
+      [req.scope.me],
+    );
+    res.json({ ok: true, me: req.scope.me, coordinators: c.rows, items: careBot.TEST_ITEMS, sent: await careBot.testSummary() });
+  } catch (e) { fail(res, e); }
+});
+
+router.post("/test/send", async (req, res) => {
+  try {
+    if (!req.scope.isAdmin) return fail(res, new Error("Admin only"), 403);
+    const ids = (req.body?.coordinators || []).map((x) => parseInt(x, 10)).filter(Boolean);
+    const all = [...careBot.TEST_ITEMS.coordinator, ...careBot.TEST_ITEMS.worker];
+    const items = (req.body?.items || []).filter((x) => all.includes(x));
+    if (!ids.length) return fail(res, new Error("Wybierz koordynatora"), 400);
+    if (!items.length) return fail(res, new Error("Wybierz, co wysłać"), 400);
+    if (ids.length > 10) return fail(res, new Error("Maksymalnie 10 koordynatorów naraz"), 400);
+    const result = await careBot.sendTestSet({
+      coordinatorIds: ids, items,
+      coordLang: String(req.body?.coord_lang || "profile"), workerLang: String(req.body?.worker_lang || "uk"),
+      by: req.scope.me,
+    });
+    res.json({ ok: true, result });
+  } catch (e) { fail(res, e); }
+});
+
+router.post("/test/clear", async (req, res) => {
+  try {
+    if (!req.scope.isAdmin) return fail(res, new Error("Admin only"), 403);
+    const ids = (req.body?.coordinators || []).map((x) => parseInt(x, 10)).filter(Boolean);
+    res.json({ ok: true, result: await careBot.clearTests(ids.length ? ids : null) });
   } catch (e) { fail(res, e); }
 });
 

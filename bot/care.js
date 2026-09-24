@@ -356,7 +356,7 @@ async function taskText(task, lang) {
   }
   if (hints.length) lines.push(`${t.ask}: ${hints.join("; ")}`);
   if (reasons.includes("survey")) {
-    const ans = await flaggedAnswers(task.worker_id, lang);
+    const ans = task._answers || await flaggedAnswers(task.worker_id, lang);
     if (ans.length) lines.push(`📝 ${t.survey_block}:\n` + ans.map((x) => `• ${esc(x.q)} → <b>${esc(x.a)}</b>`).join("\n"));
   }
   if (task.kind === "manual" && task.comment && task.status === "open") lines.push(`📝 ${t.manual}: ${esc(task.comment)}`);
@@ -817,6 +817,7 @@ async function handleCallback(bot, cq) {
   const answer = (text) => BOT.telegram.answerCbQuery(cq.id, text || "").catch(() => {});
   try {
     const parts = payload.split("_");
+    if (parts[1] === "X") return await onTestCallback(cq, chatId, parts);   // тестовий набір
     if (parts[0] === "SV") return await onSurveyAnswer(cq, chatId, parts.slice(1));
 
     if (parts[0] === "SC") {
@@ -990,8 +991,275 @@ async function refreshAssessmentMsg(id) {
   return tgEdit(a.tg_chat_id, a.tg_message_id, tc(a.lang).assess_done(esc(a.full_name), a.value));
 }
 
+
+// ══════════════════════════════════════════════════════════════════════
+//  Тестовий набір: усі повідомлення модуля — вибраному координатору,
+//  з робочими кнопками, але БЕЗ запису в завдання, анкети чи статистику.
+//  Кнопки мають вигляд CR_X_… / SV_X_… / SC_X_…; потім усе можна прибрати з чату.
+// ══════════════════════════════════════════════════════════════════════
+const TEST_ITEMS = {
+  coordinator: ["morning", "urgent", "manual", "assess", "esc_coord", "lead_leaving", "lead_esc"],
+  worker: ["d3", "d14", "d30", "d60", "exit", "remind", "spot"],
+};
+const TT = {
+  uk: { mark: "🧪 ТЕСТ — нічого не записується", coordPart: "🧪 <b>Тест Rozmowy.</b> Далі — повідомлення, які отримує координатор. Кнопки працюють, але нічого не записується.",
+        workerPart: (l) => `🧪 <b>Далі — як це бачить працівник</b> (мова анкет: ${l}). Відповідайте кнопками, щоб пройти анкету.`,
+        leadNote: "так це бачить регіональний", gone: "🧪 тест прибрано", toast: "🧪 Тест: нічого не записано",
+        toastLeaving: "🧪 Тест: у робочому режимі регіональний отримав би повідомлення" },
+  ru: { mark: "🧪 ТЕСТ — ничего не записывается", coordPart: "🧪 <b>Тест Rozmowy.</b> Дальше — сообщения, которые получает координатор. Кнопки работают, но ничего не записывается.",
+        workerPart: (l) => `🧪 <b>Дальше — как это видит работник</b> (язык анкет: ${l}). Отвечайте кнопками, чтобы пройти анкету.`,
+        leadNote: "так это видит региональный", gone: "🧪 тест убран", toast: "🧪 Тест: ничего не записано",
+        toastLeaving: "🧪 Тест: в рабочем режиме региональный получил бы сообщение" },
+  pl: { mark: "🧪 TEST — nic nie jest zapisywane", coordPart: "🧪 <b>Test Rozmowy.</b> Dalej — wiadomości, które dostaje koordynator. Przyciski działają, ale nic nie jest zapisywane.",
+        workerPart: (l) => `🧪 <b>Dalej — tak to widzi pracownik</b> (język ankiet: ${l}). Odpowiadaj przyciskami, żeby przejść ankietę.`,
+        leadNote: "tak to widzi regionalny", gone: "🧪 test usunięty", toast: "🧪 Test: nic nie zapisano",
+        toastLeaving: "🧪 Test: w trybie roboczym regionalny dostałby wiadomość" },
+  en: { mark: "🧪 TEST — nothing is saved", coordPart: "🧪 <b>Rozmowy test.</b>", workerPart: (l) => `🧪 <b>How the worker sees it</b> (${l}).`,
+        leadNote: "as the regional lead sees it", gone: "🧪 test removed", toast: "🧪 Test: nothing saved", toastLeaving: "🧪 Test" },
+};
+const tt = (l) => TT[l] || TT.uk;
+const LANG_NAME = { uk: "українська", ru: "русский", pl: "polski", en: "English" };
+
+let testTableReady = false;
+async function ensureTestTable() {
+  if (testTableReady) return;
+  await db.query(`CREATE TABLE IF NOT EXISTS care.test_msgs (
+      id SERIAL PRIMARY KEY, chat_id BIGINT NOT NULL, coordinator_id INT, kind TEXT NOT NULL, lang TEXT,
+      message_id BIGINT, payload JSONB NOT NULL DEFAULT '{}', sent_by INT, sent_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+  testTableReady = true;
+}
+
+// Надіслати одне тестове повідомлення; keyboardFn(id) будує кнопки з id запису
+async function tSend(ctx, kind, lang, text, keyboardFn = null, payload = {}) {
+  const row = (await db.query(
+    `INSERT INTO care.test_msgs (chat_id, coordinator_id, kind, lang, payload, sent_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    [ctx.chat, ctx.coordId, kind, lang, JSON.stringify(payload), ctx.by])).rows[0];
+  const body = kind === "part" ? text : `<i>${tt(lang).mark}</i>\n${text}`;   // заголовки розділів — без позначки
+  const r = await tgSend(ctx.chat, body, keyboardFn ? kb(keyboardFn(row.id)) : {});
+  if (r.ok) await db.query(`UPDATE care.test_msgs SET message_id = $2 WHERE id = $1`, [row.id, r.messageId]);
+  else await db.query(`DELETE FROM care.test_msgs WHERE id = $1`, [row.id]);
+  ctx.sent += r.ok ? 1 : 0;
+  await sleep(250);   // не більше ~4 повідомлень на секунду в один чат
+  return r.ok ? row.id : null;
+}
+
+function fakeTask(kind, lang, site, extra = {}) {
+  const base = {
+    id: 0, worker_id: null, kind, status: "open", priority: kind === "survey" ? 0 : kind === "manual" ? 1 : 5,
+    full_name: "TEST OKSANA", login: "TEST001", site_key: site, tenure: 64,
+    reasons: ["streak:2", "nn:3", "drop:18/42", "pre80:64"], comment: null,
+  };
+  return { ...base, ...extra };
+}
+function testTaskKeyboard(t, id) {
+  return [
+    [{ text: t.btn.S, callback_data: `CR_X_${id}_S` }, { text: t.btn.P, callback_data: `CR_X_${id}_P` }],
+    [{ text: t.btn.L, callback_data: `CR_X_${id}_L` }, { text: t.btn.N, callback_data: `CR_X_${id}_N` }],
+  ];
+}
+function testProblemKeyboard(t, id) {
+  const codes = Object.keys(t.prob);
+  const rows = [];
+  for (let i = 0; i < codes.length; i += 2)
+    rows.push(codes.slice(i, i + 2).map((c) => ({ text: t.prob[c], callback_data: `CR_X_${id}_P_${c}` })));
+  rows.push([{ text: t.btn.B, callback_data: `CR_X_${id}_B` }]);
+  return rows;
+}
+
+async function sendTestTask(ctx, lang, task) {
+  const t = tc(lang);
+  return tSend(ctx, "task", lang, await taskText(task, lang), (id) => testTaskKeyboard(t, id), { task });
+}
+
+async function testQuestion(ctx, sid, survey, sort, lang) {
+  const q = (await db.query(`SELECT * FROM care.questions WHERE survey_code = $1 AND sort = $2`, [survey, sort])).rows[0];
+  if (!q) return null;
+  const n = await questionCount(survey);
+  const opts = optionRows(q, lang, 0).map((row) => row.map((b) => {
+    const code = b.callback_data.split("_").slice(3).join("_");
+    return { text: b.text, callback_data: `SV_X_${sid}_${sort}_${code}` };
+  }));
+  return tSend(ctx, "survey_q", lang, `<b>${esc(q.text[lang] || q.text.uk)}</b>  <i>(${sort}/${n})</i>`, () => opts, { sid, sort });
+}
+
+async function testSurvey(ctx, code, wlang, withReminder = false) {
+  const sv = (await db.query(`SELECT * FROM care.surveys WHERE code = $1`, [code])).rows[0];
+  if (!sv) return;
+  const first = (await db.query(`SELECT MIN(sort) AS m FROM care.questions WHERE survey_code = $1`, [code])).rows[0].m;
+  if (!first) return;
+  // «сесія» анкети: тут зберігається, на якому питанні людина
+  const sid = await tSend(ctx, "survey", wlang, withReminder ? tw(wlang).remind : esc(sv.intro[wlang] || sv.intro.uk), null,
+    { survey: code, q: first, flag: null, isExit: sv.day_offset == null });
+  if (sid) await testQuestion(ctx, sid, code, first, wlang);
+}
+
+// Головна: надіслати вибране вибраним координаторам
+async function sendTestSet({ coordinatorIds, items, coordLang = "profile", workerLang = "uk", by = null }) {
+  await ensureTestTable();
+  const coords = (await db.query(
+    `SELECT c.id, c.full_name, c.telegram_chat_id, COALESCE(c.lang::text, 'uk') AS lang,
+            (SELECT o.site_key FROM reg.site_owner o WHERE o.coordinator_id = c.id AND o.valid_to IS NULL ORDER BY o.site_key LIMIT 1) AS site
+       FROM public.coordinators c WHERE c.id = ANY($1::int[])`, [coordinatorIds])).rows;
+  const want = new Set(items);
+  const result = [];
+  for (const c of coords) {
+    if (!c.telegram_chat_id) { result.push({ id: c.id, name: c.full_name, sent: 0, error: "no_telegram" }); continue; }
+    const lang = ["uk", "ru", "pl"].includes(coordLang) ? coordLang : (["uk", "ru", "pl"].includes(c.lang) ? c.lang : "uk");
+    const wl = ["uk", "ru", "pl", "en"].includes(workerLang) ? workerLang : "uk";
+    const t = tc(lang);
+    const site = c.site || "HYDRO LODZ";
+    const ctx = { chat: c.telegram_chat_id, coordId: c.id, by, sent: 0 };
+    const coordItems = TEST_ITEMS.coordinator.filter((k) => want.has(k));
+    const workerItems = TEST_ITEMS.worker.filter((k) => want.has(k));
+    try {
+      if (coordItems.length) await tSend(ctx, "part", lang, tt(lang).coordPart);
+      if (want.has("morning")) {
+        await tSend(ctx, "info", lang, `${t.head(2)}\n${t.head_tip}`);
+        await sendTestTask(ctx, lang, fakeTask("risk", lang, site));
+        await sendTestTask(ctx, lang, fakeTask("risk", lang, site, { full_name: "TEST PETRO", login: "TEST002", tenure: 11, reasons: ["gap:4", "new:11"] }));
+      }
+      if (want.has("urgent")) {
+        const sq = (await db.query(`SELECT text, options FROM care.questions WHERE survey_code = 'd3' AND code = 'housing3'`)).rows[0];
+        const no = sq && sq.options.find((o) => o.c === "no");
+        await sendTestTask(ctx, lang, fakeTask("survey", lang, site, {
+          tenure: 3, reasons: ["survey", "new:3"],
+          _answers: sq ? [{ q: sq.text[lang] || sq.text.uk, a: no.t[lang] || no.t.uk }] : [],
+        }));
+      }
+      if (want.has("manual")) {
+        const note = { uk: "скарга бригадира на запізнення", ru: "жалоба бригадира на опоздания", pl: "skarga brygadzisty na spóźnienia" }[lang];
+        await sendTestTask(ctx, lang, fakeTask("manual", lang, site, { reasons: ["manual", "nn:1"], comment: note, tenure: 40 }));
+      }
+      if (want.has("assess")) {
+        await tSend(ctx, "assess", lang, t.assess_q("TEST OKSANA", esc(site), 7),
+          (id) => [[3, 2, 1].map((v) => ({ text: t.assess_btn[v], callback_data: `CR_X_${id}_A_${v}` }))], { name: "TEST OKSANA" });
+      }
+      if (want.has("esc_coord")) await tSend(ctx, "info", lang, t.esc_coord(2, 2));
+      if (want.has("lead_leaving"))
+        await tSend(ctx, "info", lang, `<i>(${tt(lang).leadNote})</i>\n` + t.leaving("TEST OKSANA", esc(site), 64, esc(c.full_name)));
+      if (want.has("lead_esc"))
+        await tSend(ctx, "info", lang, `<i>(${tt(lang).leadNote})</i>\n${t.esc_head(2)}\n• <b>${esc(c.full_name)}</b>: 2 — TEST OKSANA, TEST PETRO`);
+
+      if (workerItems.length) await tSend(ctx, "part", lang, tt(lang).workerPart(LANG_NAME[wl]));
+      for (const code of ["d3", "d14", "d30", "d60", "exit"]) if (want.has(code)) await testSurvey(ctx, code, wl);
+      if (want.has("remind")) await testSurvey(ctx, "d14", wl, true);
+      if (want.has("spot")) {
+        const w = tw(wl);
+        await tSend(ctx, "spot", wl, w.spot_q,
+          (id) => [[{ text: w.spot_yes, callback_data: `SC_X_${id}_Y` }, { text: w.spot_no, callback_data: `SC_X_${id}_N` }]]);
+      }
+      result.push({ id: c.id, name: c.full_name, sent: ctx.sent });
+    } catch (e) {
+      console.error("[care] test", c.id, e.message);
+      result.push({ id: c.id, name: c.full_name, sent: ctx.sent, error: e.message });
+    }
+  }
+  return result;
+}
+
+// Кнопки в тестових повідомленнях — поводяться як справжні, але пишуть лише в test_msgs
+async function onTestCallback(cq, chatId, parts) {
+  const answer = (text) => BOT.telegram.answerCbQuery(cq.id, text || "").catch(() => {});
+  await ensureTestTable();
+  const [kind0, , idRaw, action, ...rest] = parts;
+  const row = (await db.query(`SELECT * FROM care.test_msgs WHERE id = $1`, [idRaw])).rows[0];
+  if (!row || String(row.chat_id) !== String(chatId)) return answer();
+  const msgId = cq.message.message_id;
+  const lang = row.lang || "uk";
+  const mark = `<i>${tt(lang).mark}</i>\n`;
+
+  if (kind0 === "CR" && action === "A") {                         // оцінка новачка
+    const v = parseInt(rest[0], 10);
+    await answer(tt(lang).toast);
+    await tgEdit(chatId, msgId, mark + tc(lang).assess_done(esc(row.payload.name || "TEST"), v));
+    return;
+  }
+  if (kind0 === "CR") {                                            // завдання
+    const t = tc(lang);
+    const task = row.payload.task;
+    if (!task) return answer();
+    const save = (tk) => db.query(`UPDATE care.test_msgs SET payload = $2 WHERE id = $1`, [row.id, JSON.stringify({ task: tk })]);
+    if (action === "U") {
+      Object.assign(task, { status: "open", outcome: null, problem_code: null, done_at: null });
+      await save(task); await answer();
+      return tgEdit(chatId, msgId, mark + await taskText(task, lang), testTaskKeyboard(t, row.id));
+    }
+    if (task.status !== "open") return answer(t.already);
+    if (action === "P" && !rest.length) {
+      await answer();
+      return tgEdit(chatId, msgId, mark + (await taskText(task, lang)) + `\n\n<b>${t.pick_problem}</b>`, testProblemKeyboard(t, row.id));
+    }
+    if (action === "B") { await answer(); return tgEdit(chatId, msgId, mark + await taskText(task, lang), testTaskKeyboard(t, row.id)); }
+    const OUT = { S: "stays", P: "problem", L: "leaving", N: "no_answer" };
+    if (!OUT[action] || (rest.length && !t.prob[rest[0]])) return answer();
+    Object.assign(task, { status: "done", outcome: OUT[action], problem_code: action === "P" ? rest[0] : null, done_at: new Date().toISOString() });
+    await save(task);
+    await answer(action === "L" ? tt(lang).toastLeaving : tt(lang).toast);
+    return tgEdit(chatId, msgId, mark + await taskText(task, lang), [[{ text: t.btn.U, callback_data: `CR_X_${row.id}_U` }]]);
+  }
+  if (kind0 === "SC") {                                            // контрольне питання
+    const w = tw(lang);
+    await answer(tt(lang).toast);
+    return tgEdit(chatId, msgId, `${mark}${w.spot_q}\n→ <b>${action === "Y" ? w.spot_yes : w.spot_no}</b>\n\n${w.spot_thanks}`);
+  }
+  if (kind0 === "SV") {                                            // анкета
+    const sort = parseInt(action, 10);
+    const code = rest.join("_");
+    const st = row.payload;
+    if (!st.survey || st.q !== sort) return answer(tw(lang).stale);
+    const q = (await db.query(`SELECT * FROM care.questions WHERE survey_code = $1 AND sort = $2`, [st.survey, sort])).rows[0];
+    const opt = q && q.options.find((o) => o.c === code);
+    if (!opt) return answer();
+    const next = (await db.query(`SELECT MIN(sort) AS m FROM care.questions WHERE survey_code = $1 AND sort > $2`, [st.survey, sort])).rows[0].m;
+    const rank = { high: 2, low: 1 };
+    st.flag = (rank[opt.f] || 0) > (rank[st.flag] || 0) ? opt.f : st.flag;
+    st.q = next || -1;
+    const upd = await db.query(`UPDATE care.test_msgs SET payload = $2 WHERE id = $1 AND (payload->>'q')::int = $3 RETURNING id`,
+      [row.id, JSON.stringify(st), sort]);
+    if (!upd.rows.length) return answer();
+    await answer();
+    await tgEdit(chatId, msgId, `${mark}${esc(q.text[lang] || q.text.uk)}\n→ <b>${esc(opt.t[lang] || opt.t.uk)}</b>`);
+    const ctx = { chat: chatId, coordId: row.coordinator_id, by: row.sent_by, sent: 0 };
+    if (next) return testQuestion(ctx, row.id, st.survey, next, lang);
+    const w = tw(lang);
+    return tSend(ctx, "info", lang, st.isExit ? w.thanks_exit : st.flag === "high" ? w.thanks_flag : w.thanks);
+  }
+  return answer();
+}
+
+// Прибрати тестові повідомлення з чатів (Telegram дозволяє видаляти до 48 годин; старші — замінюємо на позначку)
+async function clearTests(coordinatorIds = null) {
+  await ensureTestTable();
+  const rows = (await db.query(
+    `SELECT id, chat_id, message_id, lang FROM care.test_msgs WHERE $1::int[] IS NULL OR coordinator_id = ANY($1::int[])`,
+    [coordinatorIds && coordinatorIds.length ? coordinatorIds : null])).rows;
+  let deleted = 0, edited = 0;
+  for (const r of rows) {
+    if (!r.message_id || !BOT) continue;
+    try {
+      await BOT.telegram.deleteMessage(r.chat_id, r.message_id);
+      deleted++;
+    } catch (e) {
+      if (await tgEdit(r.chat_id, r.message_id, `<i>${tt(r.lang).gone}</i>`)) edited++;
+    }
+    await sleep(60);
+  }
+  if (rows.length) await db.query(`DELETE FROM care.test_msgs WHERE id = ANY($1::int[])`, [rows.map((r) => r.id)]);
+  return { messages: rows.length, deleted, edited };
+}
+
+async function testSummary() {
+  await ensureTestTable();
+  const r = await db.query(
+    `SELECT t.coordinator_id, c.full_name, COUNT(*)::int AS n, MIN(t.sent_at) AS first_at, MAX(t.sent_at) AS last_at
+       FROM care.test_msgs t LEFT JOIN public.coordinators c ON c.id = t.coordinator_id
+      GROUP BY t.coordinator_id, c.full_name ORDER BY MAX(t.sent_at) DESC`);
+  return r.rows;
+}
+
 module.exports = {
   schedule, setBot, handleCallback, tick,
   runMorning, runSurveys, runEscalation, runSpotChecks, sendUrgent,
   closeTask, reopenTask, rateAssessment, loadTask, taskText, sendTaskNow, refreshAssessmentMsg, cancelForCoordinators,
+  sendTestSet, clearTests, testSummary, TEST_ITEMS,
 };

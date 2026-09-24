@@ -125,6 +125,20 @@
     .sw { display: inline-flex; align-items: center; cursor: pointer; }
     .sw input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
     .tag { font-size: 10px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--border); color: var(--text2); margin-left: 4px; }
+    .callout-test { background: rgba(167,139,250,.08); border: 1px solid rgba(167,139,250,.35); border-radius: 8px;
+      padding: 10px 14px; font-size: 12px; color: var(--text2); line-height: 1.55; margin-bottom: 16px; }
+    .test-grid { display: grid; grid-template-columns: 1fr 1.3fr; gap: 16px; }
+    .test-list { max-height: 420px; overflow-y: auto; }
+    .test-list label, .test-what label { display: flex; align-items: center; gap: 8px; padding: 6px 14px; font-size: 12px;
+      border-bottom: 1px solid var(--border); cursor: pointer; }
+    .test-list label:hover, .test-what label:hover { background: var(--surface2); }
+    .test-list label.dis { opacity: .45; cursor: default; }
+    .test-list input, .test-what input { width: 15px; height: 15px; accent-color: var(--accent); }
+    .test-what { display: grid; grid-template-columns: 1fr 1fr; }
+    .test-what .col-h { padding: 8px 14px 4px; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--text3);
+      font-family: var(--mono); border-bottom: 1px solid var(--border); }
+    .test-what .n { margin-left: auto; color: var(--text3); font-family: var(--mono); font-size: 10px; }
+    @media (max-width: 900px) { .test-grid { grid-template-columns: 1fr; } .test-what { grid-template-columns: 1fr; } }
     .noaccess { max-width: 520px; margin: 60px auto; text-align: center; color: var(--text2); font-size: 13px; line-height: 1.6; }
 
     .main { min-width: 0; }
@@ -159,6 +173,7 @@
       <div class="nav-item" data-view="surveys" onclick="showView('surveys')">📝 Ankiety</div>
       <div class="nav-item" data-view="control" onclick="showView('control')">🎯 Kontrola</div>
       <div class="nav-item" data-view="coords" id="navCoords" onclick="showView('coords')" style="display:none">👥 Koordynatorzy</div>
+      <div class="nav-item" data-view="test" id="navTest" onclick="showView('test')" style="display:none">🧪 Test</div>
       <div class="nav-item" data-view="settings" id="navSettings" onclick="showView('settings')" style="display:none">⚙️ Ustawienia</div>
     </div>
   </div>
@@ -279,8 +294,52 @@
             <button class="btn btn-primary btn-sm" id="coordSave" onclick="saveCoords()" disabled>Zapisz</button>
           </div>
           <div class="legend">Włączony koordynator codziennie rano dostaje listę rozmów i oceny nowych, a pracownicy jego obiektów — ankiety.
+            Język — w jakim języku bot pisze do koordynatora (domyślnie ukraiński); pracownicy dostają ankiety w języku wybranym przez siebie w bocie.
             Wyłączenie od razu anuluje jego otwarte rozmowy. Włączenie działa od następnego rana (ankiety — od 18:00).
             Koordynator bez Telegrama pracuje tylko w panelu. Regionalni i admin widzą sekcję zawsze.</div>
+        </div>
+      </div>
+
+      <!-- ТЕСТОВИЙ НАБІР (адмін) -->
+      <div class="rz-view" id="view-test">
+        <div class="callout-test">🧪 Wysyła przykładowe wiadomości modułu wybranym koordynatorom na Telegram — tak, jak wyglądają naprawdę.
+          Przyciski działają (można przejść ankietę, zamknąć rozmowę), ale <b>nic nie trafia do zadań, ankiet ani statystyk</b>.
+          Każda wiadomość ma oznaczenie „🧪 TEST”. Po obejrzeniu — „Usuń” zdejmuje je z czatu.</div>
+        <div class="test-grid">
+          <div class="section">
+            <div class="section-head">1. Komu wysłać <span class="cnt" id="testWhoCnt"></span>
+              <span class="spacer"></span><input type="text" id="testSearch" placeholder="Szukaj…" oninput="renderTestWho()" style="width:130px" /></div>
+            <div id="testWho" class="test-list"><div class="loading">Ładowanie…</div></div>
+          </div>
+          <div class="section">
+            <div class="section-head">2. Co wysłać
+              <span class="spacer"></span>
+              <button class="btn btn-ghost btn-sm" onclick="testAll(true)">Zaznacz wszystko</button>
+              <button class="btn btn-ghost btn-sm" onclick="testAll(false)">Odznacz</button></div>
+            <div id="testWhat" class="test-what"></div>
+            <div class="form" style="border-top:1px solid var(--border)">
+              <div><label>Język wiadomości do koordynatora</label>
+                <select id="testCoordLang"><option value="profile">jak w ustawieniach koordynatora</option>
+                  <option value="uk">українська</option><option value="ru">русский</option><option value="pl">polski</option></select></div>
+              <div><label>Język ankiet (jak widzi pracownik)</label>
+                <select id="testWorkerLang"><option value="uk">українська</option><option value="ru">русский</option>
+                  <option value="pl">polski</option><option value="en">English</option></select></div>
+            </div>
+            <div class="savebar">
+              <span class="form-msg" id="testEst"></span><span class="spacer"></span>
+              <span class="form-msg" id="testMsg"></span>
+              <button class="btn btn-primary btn-sm" id="testSend" onclick="sendTest()">🧪 Wyślij test</button>
+            </div>
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-head">3. Wysłane testy <span class="cnt" id="testSentCnt"></span>
+            <span class="spacer"></span>
+            <span class="form-msg" id="testClearMsg"></span>
+            <button class="btn btn-red btn-sm" id="testClearAll" onclick="clearTest(null)">Usuń wszystkie testowe wiadomości</button></div>
+          <div class="tblwrap" id="testSent"></div>
+          <div class="legend">Telegram pozwala botowi usunąć wiadomość do 48 godzin po wysłaniu. Starsze testowe wiadomości
+            zostaną zamienione na „🧪 test usunięty” (bez przycisków).</div>
         </div>
       </div>
 

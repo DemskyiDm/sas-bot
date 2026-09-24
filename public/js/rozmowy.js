@@ -24,7 +24,7 @@ const OUT = {
   no_answer: { l: "📵 Nie odebrał", c: "muted" },
 };
 const TITLES = { tasks: "Do rozmowy", risk: "Ryzyko odejścia", surveys: "Ankiety", control: "Kontrola koordynacji",
-  coords: "Koordynatorzy", settings: "Ustawienia" };
+  coords: "Koordynatorzy", test: "Test wiadomości", settings: "Ustawienia" };
 const SURVEY_NAME = { d3: "3. dzień", d14: "14 dni", d30: "30 dni", d60: "60 dni", exit: "Po odejściu" };
 
 // ── Утиліти ───────────────────────────────────────────────────────────
@@ -130,6 +130,7 @@ async function init() {
   if (me.is_admin) {
     document.getElementById("navSettings").style.display = "";
     document.getElementById("navCoords").style.display = "";
+    document.getElementById("navTest").style.display = "";
   }
   const h = (location.hash || "").replace("#", "");
   showView(TITLES[h] ? h : "tasks");
@@ -148,7 +149,7 @@ function showView(v) {
   document.querySelectorAll(".nav-item[data-view]").forEach((el) => el.classList.toggle("active", el.dataset.view === v));
   document.getElementById("topTitle").textContent = TITLES[v];
   document.getElementById("selDaysBox").style.display = v === "surveys" || v === "control" ? "" : "none";
-  document.getElementById("toolbar").style.visibility = v === "settings" || v === "coords" ? "hidden" : "";
+  document.getElementById("toolbar").style.visibility = ["settings", "coords", "test"].includes(v) ? "hidden" : "";
   if (v === "surveys" && !document.getElementById("selDays").dataset.touched) document.getElementById("selDays").value = "90";
   if (v === "control" && !document.getElementById("selDays").dataset.touched) document.getElementById("selDays").value = "28";
   history.replaceState(null, "", "#" + v);
@@ -164,6 +165,7 @@ function load() {
   else if (ST.view === "surveys") loadSurveys();
   else if (ST.view === "control") loadControl();
   else if (ST.view === "coords") loadCoords();
+  else if (ST.view === "test") loadTest();
   else if (ST.view === "settings") loadSettings();
 }
 
@@ -616,6 +618,9 @@ async function runJob(job) {
 ST.coordFilter = "all";
 ST.coordRows = [];
 ST.coordEdit = {};   // id → bool (tylko zmienione)
+ST.langEdit = {};    // id → uk | ru | pl (tylko zmienione)
+const LANG_LABEL = { uk: "українська", ru: "русский", pl: "polski" };
+function coordLang(c) { return ["uk", "ru", "pl"].includes(c.lang) ? c.lang : "uk"; }
 
 function setCoordFilter(f) {
   ST.coordFilter = f;
@@ -629,6 +634,7 @@ async function loadCoords() {
   if (!r.ok) { document.getElementById("coordTable").innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
   ST.coordRows = r.data;
   ST.coordEdit = {};
+  ST.langEdit = {};
   document.getElementById("coordMsg").textContent = "";
   renderCoords();
 }
@@ -649,16 +655,19 @@ function renderCoords() {
   document.getElementById("coordCnt").textContent = `${rows.length}`;
   document.getElementById("coordTable").innerHTML = rows.length ? `<table class="rg"><thead><tr>
       <th style="width:40px"></th><th>Koordynator</th><th>Region</th><th class="num">Obiekty</th><th class="num">Pracownicy</th>
-      <th>Telegram</th><th class="num">Otwarte rozmowy</th><th>Włączony od</th></tr></thead><tbody>
+      <th>Telegram</th><th title="Język wiadomości od bota dla koordynatora">Język</th><th class="num">Otwarte rozmowy</th><th>Włączony od</th></tr></thead><tbody>
     ${rows.map((c) => {
       const v = coordOn(c);
-      return `<tr class="${v ? "" : "off"} ${c.id in ST.coordEdit ? "changed" : ""}">
+      const lang = ST.langEdit[c.id] || coordLang(c);
+      return `<tr class="${v ? "" : "off"} ${c.id in ST.coordEdit || c.id in ST.langEdit ? "changed" : ""}">
         <td><label class="sw"><input type="checkbox" ${v ? "checked" : ""} onchange="toggleCoord(${c.id}, this.checked)" /></label></td>
         <td class="nw"><b>${esc(c.full_name)}</b>${c.is_lead ? `<span class="tag">regionalny</span>` : ""}</td>
         <td class="muted">${esc(c.regions || "—")}</td>
         <td class="num">${c.sites || "—"}</td>
         <td class="num">${c.workers || "—"}</td>
-        <td>${c.has_tg ? `<span class="green">✓</span> <span class="muted">${esc(c.lang)}</span>` : `<span class="amber">brak — tylko panel</span>`}</td>
+        <td>${c.has_tg ? `<span class="green">✓</span>` : `<span class="amber">brak — tylko panel</span>`}</td>
+        <td><select onchange="setCoordLang(${c.id}, this.value)" style="padding:2px 6px; font-size:11px">
+          ${Object.entries(LANG_LABEL).map(([k, l]) => `<option value="${k}" ${k === lang ? "selected" : ""}>${l}</option>`).join("")}</select></td>
         <td class="num">${c.open_tasks || ""}</td>
         <td class="muted">${c.enabled && c.enabled_at ? ddt(c.enabled_at) : ""}</td></tr>`;
     }).join("")}</tbody></table>` : `<div class="empty">Brak koordynatorów w tym widoku</div>`;
@@ -668,6 +677,12 @@ function toggleCoord(id, val) {
   const c = ST.coordRows.find((x) => x.id === id);
   if (!c) return;
   if (val === c.enabled) delete ST.coordEdit[id]; else ST.coordEdit[id] = val;
+  renderCoords();
+}
+function setCoordLang(id, val) {
+  const c = ST.coordRows.find((x) => x.id === id);
+  if (!c) return;
+  if (val === coordLang(c)) delete ST.langEdit[id]; else ST.langEdit[id] = val;
   renderCoords();
 }
 function markAll(val) {
@@ -685,13 +700,17 @@ function updateCoordBar() {
   const plus = ids.filter((id) => ST.coordEdit[id]).length, minus = ids.length - plus;
   const msg = document.getElementById("coordMsg");
   msg.className = "form-msg";
-  msg.textContent = ids.length ? `Zmiany: +${plus} / −${minus}${offTasks ? ` · anulujemy ${offTasks} otwartych rozmów` : ""}` : "";
-  document.getElementById("coordSave").disabled = !ids.length;
+  const nLang = Object.keys(ST.langEdit).length;
+  const parts = [];
+  if (ids.length) parts.push(`+${plus} / −${minus}`);
+  if (nLang) parts.push(`język: ${nLang}`);
+  msg.textContent = parts.length ? `Zmiany: ${parts.join(" · ")}${offTasks ? ` · anulujemy ${offTasks} otwartych rozmów` : ""}` : "";
+  document.getElementById("coordSave").disabled = !ids.length && !nLang;
 }
 async function saveCoords() {
   const btn = document.getElementById("coordSave");
   btn.disabled = true;
-  const r = await api("/coordinators", { method: "PUT", body: { enabled: ST.coordEdit } });
+  const r = await api("/coordinators", { method: "PUT", body: { enabled: ST.coordEdit, lang: ST.langEdit } });
   const msg = document.getElementById("coordMsg");
   if (!r || !r.ok) { msg.className = "form-msg err"; msg.textContent = r ? r.error : "Błąd"; btn.disabled = false; return; }
   await loadCoords();
@@ -699,4 +718,104 @@ async function saveCoords() {
   msg.textContent = `Zapisano${r.cancelled ? ` · anulowano ${r.cancelled} rozmów` : ""}`;
   const me = await api("/me");
   if (me && me.ok) { ST.me.coordinators = me.coordinators; fillCoords(); }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  🧪 Test — przykładowe wiadomości do wybranych koordynatorów (admin)
+// ══════════════════════════════════════════════════════════════════════
+const TEST_LABEL = {
+  morning: ["Poranna lista (nagłówek + 2 rozmowy)", 3], urgent: ["Pilna rozmowa z ankiety 🔔", 1],
+  manual: ["Zlecenie od regionalnego", 1], assess: ["Ocena nowego 🌱 (👍 😐 👎)", 1],
+  esc_coord: ["Przypomnienie: rozmowy po terminie", 1], lead_leaving: ["Dla regionalnego: „chce odejść”", 1],
+  lead_esc: ["Dla regionalnego: lista po terminie", 1],
+  d3: ["Ankieta — 3. dzień", 2], d14: ["Ankieta — 14 dni", 2], d30: ["Ankieta — 30 dni", 2], d60: ["Ankieta — 60 dni", 2],
+  exit: ["Ankieta po odejściu", 2], remind: ["Przypomnienie o ankiecie", 2], spot: ["Pytanie kontrolne: czy była rozmowa", 1],
+};
+ST.test = null;
+ST.testWho = new Set();
+ST.testWhat = new Set();
+
+async function loadTest() {
+  const r = await api("/test");
+  if (!r) return;
+  if (!r.ok) { document.getElementById("testWho").innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
+  ST.test = r;
+  if (!ST.testWho.size && r.me) ST.testWho.add(r.me);
+  renderTestWho();
+  document.getElementById("testWhat").innerHTML =
+    `<div><div class="col-h">Koordynator</div>${r.items.coordinator.map(testItem).join("")}</div>
+     <div><div class="col-h">Pracownik (widok w bocie)</div>${r.items.worker.map(testItem).join("")}</div>`;
+  updateTestEst();
+  renderTestSent();
+}
+function testItem(k) {
+  const [label, n] = TEST_LABEL[k] || [k, 1];
+  return `<label><input type="checkbox" ${ST.testWhat.has(k) ? "checked" : ""} onchange="toggleTestWhat('${k}', this.checked)" />
+    ${esc(label)}<span class="n">${n} wiad.</span></label>`;
+}
+function renderTestWho() {
+  const q = (document.getElementById("testSearch").value || "").toLowerCase();
+  const rows = ST.test.coordinators.filter((c) => !q || c.full_name.toLowerCase().includes(q));
+  document.getElementById("testWhoCnt").textContent = ST.testWho.size ? `wybrano ${ST.testWho.size}` : "";
+  document.getElementById("testWho").innerHTML = rows.map((c) => `
+    <label class="${c.has_tg ? "" : "dis"}" title="${c.has_tg ? "" : "Brak Telegrama — nie da się wysłać"}">
+      <input type="checkbox" ${ST.testWho.has(c.id) ? "checked" : ""} ${c.has_tg ? "" : "disabled"}
+        onchange="toggleTestWho(${c.id}, this.checked)" />
+      <b>${esc(c.full_name)}</b>${c.id === ST.test.me ? `<span class="tag">ty</span>` : ""}
+      <span class="muted" style="margin-left:auto">${c.has_tg ? esc(c.lang) : "bez Telegrama"}${c.enabled ? " · moduł wł." : ""}</span>
+    </label>`).join("") || `<div class="empty">Brak</div>`;
+}
+function toggleTestWho(id, on) { if (on) ST.testWho.add(id); else ST.testWho.delete(id); renderTestWho(); updateTestEst(); }
+function toggleTestWhat(k, on) { if (on) ST.testWhat.add(k); else ST.testWhat.delete(k); updateTestEst(); }
+function testAll(on) {
+  ST.testWhat = new Set(on ? [...ST.test.items.coordinator, ...ST.test.items.worker] : []);
+  document.querySelectorAll("#testWhat input").forEach((i) => (i.checked = on));
+  updateTestEst();
+}
+function updateTestEst() {
+  const items = [...ST.testWhat];
+  let n = items.reduce((a, k) => a + ((TEST_LABEL[k] || [0, 1])[1]), 0);
+  if (items.some((k) => ST.test.items.coordinator.includes(k))) n++;
+  if (items.some((k) => ST.test.items.worker.includes(k))) n++;
+  const who = ST.testWho.size;
+  document.getElementById("testEst").textContent = n && who
+    ? `≈ ${n} wiadomości × ${who} koord. · ok. ${Math.ceil(n * who * 0.3)} s` : "";
+  document.getElementById("testSend").disabled = !n || !who;
+}
+async function sendTest() {
+  const btn = document.getElementById("testSend");
+  const msg = document.getElementById("testMsg");
+  btn.disabled = true; msg.className = "form-msg"; msg.textContent = "Wysyłam…";
+  const r = await api("/test/send", { method: "POST", body: {
+    coordinators: [...ST.testWho], items: [...ST.testWhat],
+    coord_lang: document.getElementById("testCoordLang").value, worker_lang: document.getElementById("testWorkerLang").value,
+  } });
+  btn.disabled = false;
+  if (!r || !r.ok) { msg.className = "form-msg err"; msg.textContent = r ? r.error : "Błąd"; return; }
+  const errs = r.result.filter((x) => x.error);
+  msg.className = "form-msg " + (errs.length ? "err" : "ok");
+  msg.textContent = r.result.map((x) => `${x.name}: ${x.error === "no_telegram" ? "brak Telegrama" : x.error ? "błąd" : x.sent + " wiad."}`).join(" · ");
+  const s = await api("/test");
+  if (s && s.ok) { ST.test.sent = s.sent; renderTestSent(); }
+}
+function renderTestSent() {
+  const rows = ST.test.sent || [];
+  document.getElementById("testSentCnt").textContent = rows.length ? `${rows.reduce((a, x) => a + x.n, 0)} wiad.` : "";
+  document.getElementById("testClearAll").style.display = rows.length ? "" : "none";
+  document.getElementById("testSent").innerHTML = rows.length ? `<table class="rg"><thead><tr><th>Koordynator</th>
+    <th class="num">Wiadomości</th><th>Pierwsza</th><th>Ostatnia</th><th></th></tr></thead><tbody>
+    ${rows.map((x) => `<tr><td><b>${esc(x.full_name || "—")}</b></td><td class="num">${x.n}</td>
+      <td class="muted">${ddt(x.first_at)}</td><td class="muted">${ddt(x.last_at)}</td>
+      <td><button class="btn btn-ghost btn-sm" onclick="clearTest([${x.coordinator_id}])">Usuń</button></td></tr>`).join("")}
+    </tbody></table>` : `<div class="empty">Brak testowych wiadomości w czatach</div>`;
+}
+async function clearTest(ids) {
+  const msg = document.getElementById("testClearMsg");
+  msg.className = "form-msg"; msg.textContent = "Usuwam…";
+  const r = await api("/test/clear", { method: "POST", body: { coordinators: ids || [] } });
+  if (!r || !r.ok) { msg.className = "form-msg err"; msg.textContent = r ? r.error : "Błąd"; return; }
+  msg.className = "form-msg ok";
+  msg.textContent = `Usunięto ${r.result.deleted}${r.result.edited ? ` · oznaczono ${r.result.edited} (starsze niż 48 h)` : ""}`;
+  const s = await api("/test");
+  if (s && s.ok) { ST.test.sent = s.sent; renderTestSent(); }
 }

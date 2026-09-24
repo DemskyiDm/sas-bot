@@ -237,6 +237,19 @@ CREATE TABLE IF NOT EXISTS care.spot_checks (
   status        TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned','asked','answered','skipped'))
 );
 
+-- ── Тестові повідомлення (Rozmowy → Test): нічого не пишуть у робочі таблиці ──
+CREATE TABLE IF NOT EXISTS care.test_msgs (
+  id             SERIAL PRIMARY KEY,
+  chat_id        BIGINT NOT NULL,
+  coordinator_id INT,
+  kind           TEXT NOT NULL,
+  lang           TEXT,
+  message_id     BIGINT,
+  payload        JSONB NOT NULL DEFAULT '{}',
+  sent_by        INT,
+  sent_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- ══════════════════════════════════════════════════════════════════════
 --  Функції
 -- ══════════════════════════════════════════════════════════════════════

@@ -131,6 +131,7 @@ const TC = {
     already: "Вже закрито",
     saved: "Збережено",
     too_late: "Змінити можна лише протягом доби",
+    cancelled: "скасовано — модуль вимкнено",
   },
   ru: {
     head: (n) => `📋 <b>Разговоры на сегодня: ${n}</b>`,
@@ -182,6 +183,7 @@ const TC = {
     already: "Уже закрыто",
     saved: "Сохранено",
     too_late: "Изменить можно только в течение суток",
+    cancelled: "отменено — модуль выключен",
   },
   pl: {
     head: (n) => `📋 <b>Rozmowy na dziś: ${n}</b>`,
@@ -233,6 +235,7 @@ const TC = {
     already: "Już zamknięte",
     saved: "Zapisano",
     too_late: "Zmienić można tylko w ciągu doby",
+    cancelled: "anulowane — moduł wyłączony",
   },
 };
 const tc = (lang) => TC[lang] || TC.uk;
@@ -326,7 +329,7 @@ async function loadTask(id) {
   const r = await db.query(
     `SELECT t.*, w.full_name, w.login, w.telegram_chat_id AS worker_chat,
             a.bhp_date, (care.today() - a.bhp_date)::int AS tenure,
-            c.full_name AS coord_name, c.telegram_chat_id AS coord_chat, COALESCE(c.lang, 'uk') AS coord_lang
+            c.full_name AS coord_name, c.telegram_chat_id AS coord_chat, COALESCE(c.lang::text, 'uk') AS coord_lang
        FROM care.tasks t
        JOIN public.workers w ON w.id = t.worker_id
        LEFT JOIN care.v_active a ON a.worker_id = t.worker_id
@@ -425,9 +428,10 @@ async function sendMorningTo(coord, day) {
 async function runMorning(day) {
   const built = await db.query(`SELECT care.build_tasks($1::date) AS n`, [day]);
   const coords = await db.query(
-    `SELECT c.id, c.full_name, c.telegram_chat_id, COALESCE(c.lang, 'uk') AS lang
+    `SELECT c.id, c.full_name, c.telegram_chat_id, COALESCE(c.lang::text, 'uk') AS lang
        FROM public.coordinators c
-      WHERE c.is_active AND (EXISTS (SELECT 1 FROM care.tasks t WHERE t.coordinator_id = c.id AND t.status = 'open')
+      WHERE c.is_active AND care.is_on(c.id)
+        AND (EXISTS (SELECT 1 FROM care.tasks t WHERE t.coordinator_id = c.id AND t.status = 'open')
                           OR EXISTS (SELECT 1 FROM care.assessments a WHERE a.coordinator_id = c.id AND a.value IS NULL AND a.sent_at IS NULL))`,
   );
   let sent = 0;
@@ -445,7 +449,8 @@ async function runMorning(day) {
 async function sendUrgent() {
   const r = await db.query(
     `UPDATE care.tasks SET sent_at = now()
-      WHERE status = 'open' AND priority = 0 AND sent_at IS NULL RETURNING id`,
+      WHERE status = 'open' AND priority = 0 AND sent_at IS NULL
+        AND (coordinator_id IS NULL OR care.is_on(coordinator_id)) RETURNING id`,
   );
   for (const x of r.rows) {
     const task = await loadTask(x.id);
@@ -462,14 +467,14 @@ async function sendUrgent() {
 // ══════════════════════════════════════════════════════════════════════
 async function leadChats(regionId) {
   const r = await db.query(
-    `SELECT DISTINCT c.telegram_chat_id, COALESCE(c.lang,'uk') AS lang FROM reg.region_leads rl
+    `SELECT DISTINCT c.telegram_chat_id, COALESCE(c.lang::text, 'uk') AS lang FROM reg.region_leads rl
        JOIN public.coordinators c ON c.id = rl.coordinator_id AND c.is_active
       WHERE rl.region_id = $1 AND c.telegram_chat_id IS NOT NULL`,
     [regionId],
   );
   if (regionId && r.rows.length) return r.rows;
   const a = await db.query(
-    `SELECT DISTINCT c.telegram_chat_id, COALESCE(c.lang,'uk') AS lang FROM public.coordinator_auth ca
+    `SELECT DISTINCT c.telegram_chat_id, COALESCE(c.lang::text, 'uk') AS lang FROM public.coordinator_auth ca
        JOIN public.coordinators c ON c.id = ca.coordinator_id
       WHERE ca.is_admin AND c.is_active AND c.telegram_chat_id IS NOT NULL`,
   );
@@ -572,11 +577,11 @@ async function sendQuestion(send, sort, chatId) {
 async function runSurveys(day) {
   await db.query(`SELECT * FROM care.plan_day($1::date)`, [day]);
   const r = await db.query(
-    `SELECT s.*, w.telegram_chat_id, COALESCE(w.lang, w.session_data->>'lang', 'uk') AS wlang, sv.intro
+    `SELECT s.*, w.telegram_chat_id, COALESCE(w.lang::text, w.session_data->>'lang', 'uk') AS wlang, sv.intro
        FROM care.survey_sends s
        JOIN public.workers w ON w.id = s.worker_id
        JOIN care.surveys sv ON sv.code = s.survey_code
-      WHERE s.status = 'planned' AND s.planned_for <= $1::date
+      WHERE s.status = 'planned' AND s.planned_for <= $1::date AND care.is_on(s.coordinator_id)
       ORDER BY s.id`,
     [day],
   );
@@ -627,6 +632,8 @@ async function taskFromSurvey(send) {
   );
   if (!act.rows.length) return null;
   const a = act.rows[0];
+  // модуль вимкнений для координатора об'єкта — завдання не ставимо (відповідь піде в бал ризику)
+  if (a.coordinator_id && !(await db.query(`SELECT care.is_on($1) AS on`, [a.coordinator_id])).rows[0].on) return null;
   const prev = (await db.query(`SELECT id FROM care.tasks WHERE worker_id = $1 AND status = 'open'`, [send.worker_id])).rows[0];
   const prevTask = prev ? await loadTask(prev.id) : null;
   const up = await db.query(
@@ -712,7 +719,7 @@ async function onSurveyAnswer(cq, chatId, parts) {
 // ══════════════════════════════════════════════════════════════════════
 async function runSpotChecks() {
   const r = await db.query(
-    `SELECT sc.id, w.telegram_chat_id, COALESCE(w.lang, w.session_data->>'lang', 'uk') AS lang
+    `SELECT sc.id, w.telegram_chat_id, COALESCE(w.lang::text, w.session_data->>'lang', 'uk') AS lang
        FROM care.spot_checks sc JOIN public.workers w ON w.id = sc.worker_id
       WHERE sc.status = 'planned' AND sc.ask_after <= now() ORDER BY sc.ask_after LIMIT 50`,
   );
@@ -734,7 +741,7 @@ async function runEscalation(day) {
   const n = s.escalate_bdays ?? 2;
   const r = await db.query(
     `SELECT t.id, t.region_id, t.coordinator_id, c.full_name AS coord, c.telegram_chat_id AS coord_chat,
-            COALESCE(c.lang,'uk') AS coord_lang, w.full_name AS worker, t.created_at
+            COALESCE(c.lang::text, 'uk') AS coord_lang, w.full_name AS worker, t.created_at
        FROM care.tasks t
        JOIN public.workers w ON w.id = t.worker_id
        LEFT JOIN public.coordinators c ON c.id = t.coordinator_id
@@ -787,7 +794,7 @@ async function runEscalation(day) {
 // ══════════════════════════════════════════════════════════════════════
 async function coordByChat(chatId) {
   const r = await db.query(
-    `SELECT c.id, c.full_name, COALESCE(c.lang,'uk') AS lang, COALESCE(bool_or(ca.is_admin), false) AS is_admin
+    `SELECT c.id, c.full_name, COALESCE(c.lang::text, 'uk') AS lang, COALESCE(bool_or(ca.is_admin), false) AS is_admin
        FROM public.coordinators c LEFT JOIN public.coordinator_auth ca ON ca.coordinator_id = c.id
       WHERE c.telegram_chat_id = $1 AND c.is_active GROUP BY c.id`,
     [chatId],
@@ -818,7 +825,7 @@ async function handleCallback(bot, cq) {
         `UPDATE care.spot_checks sc SET answer = $2, answered_at = now(), status = 'answered'
            FROM public.workers w
           WHERE sc.id = $1 AND w.id = sc.worker_id AND w.telegram_chat_id = $3 AND sc.status = 'asked'
-          RETURNING COALESCE(w.lang, w.session_data->>'lang', 'uk') AS lang`,
+          RETURNING COALESCE(w.lang::text, w.session_data->>'lang', 'uk') AS lang`,
         [id, v === "Y" ? "yes" : "no", chatId],
       );
       await answer();
@@ -948,6 +955,24 @@ function schedule(bot) {
 
 function setBot(bot) { BOT = bot; }
 
+// Модуль вимкнули координатору: відкриті завдання знімаємо і прибираємо кнопки в Telegram
+async function cancelForCoordinators(ids) {
+  if (!ids.length) return 0;
+  const r = await db.query(
+    `UPDATE care.tasks SET status = 'cancelled'
+      WHERE status = 'open' AND coordinator_id = ANY($1::int[]) RETURNING id, tg_chat_id, tg_message_id`,
+    [ids],
+  );
+  // заплановані, але ще не надіслані анкети на його об'єктах — теж не надсилаємо
+  await db.query(`UPDATE care.survey_sends SET status = 'expired' WHERE status = 'planned' AND coordinator_id = ANY($1::int[])`, [ids]);
+  for (const x of r.rows) {
+    if (!x.tg_chat_id || !x.tg_message_id) continue;
+    const task = await loadTask(x.id);
+    await tgEdit(x.tg_chat_id, x.tg_message_id, (await taskText(task, task.coord_lang)) + `\n\n<i>${tc(task.coord_lang).cancelled}</i>`);
+  }
+  return r.rows.length;
+}
+
 // Доручення з панелі — одразу в Telegram координатору
 async function sendTaskNow(id) {
   const task = await loadTask(id);
@@ -958,7 +983,7 @@ async function sendTaskNow(id) {
 // Оцінку поставили в панелі — прибрати кнопки в Telegram
 async function refreshAssessmentMsg(id) {
   const a = (await db.query(
-    `SELECT a.value, a.tg_chat_id, a.tg_message_id, w.full_name, COALESCE(c.lang,'uk') AS lang
+    `SELECT a.value, a.tg_chat_id, a.tg_message_id, w.full_name, COALESCE(c.lang::text, 'uk') AS lang
        FROM care.assessments a JOIN public.workers w ON w.id = a.worker_id
        LEFT JOIN public.coordinators c ON c.id = a.coordinator_id WHERE a.id = $1`, [id])).rows[0];
   if (!a || !a.value || !a.tg_message_id) return false;
@@ -968,5 +993,5 @@ async function refreshAssessmentMsg(id) {
 module.exports = {
   schedule, setBot, handleCallback, tick,
   runMorning, runSurveys, runEscalation, runSpotChecks, sendUrgent,
-  closeTask, reopenTask, rateAssessment, loadTask, taskText, sendTaskNow, refreshAssessmentMsg,
+  closeTask, reopenTask, rateAssessment, loadTask, taskText, sendTaskNow, refreshAssessmentMsg, cancelForCoordinators,
 };

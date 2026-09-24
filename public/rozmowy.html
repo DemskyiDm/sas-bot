@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SAS Logistic — Rozmowy</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <style>
+    /* ── тільки для розділу Rozmowy ── */
+    .rz-toolbar { display: flex; gap: 8px; align-items: center; }
+    .rz-toolbar label { font-size: 11px; color: var(--text2); }
+    .rz-view { display: none; }
+    .rz-view.active { display: block; }
+    .nav-badge { margin-left: auto; background: var(--red); color: #fff; font-size: 10px; font-weight: 700;
+      border-radius: 9px; padding: 1px 7px; font-family: var(--mono); }
+    .nav-badge:empty { display: none; }
+    .content { overflow-y: auto; }
+
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+    .kpi .l { font-size: 11px; color: var(--text2); }
+    .kpi .v { font-size: 26px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .kpi .s { font-size: 11px; color: var(--text3); margin-top: 2px; }
+    .kpi.warn .v { color: var(--accent2); } .kpi.bad .v { color: var(--red); } .kpi.good .v { color: var(--green); }
+
+    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+    .section-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border);
+      font-size: 13px; font-weight: 600; flex-wrap: wrap; }
+    .section-head .cnt { font-size: 11px; color: var(--text2); font-weight: 400; }
+    .section-head .spacer { margin-left: auto; }
+    .chips { display: flex; gap: 4px; flex-wrap: wrap; }
+    .chip { padding: 3px 10px; font-size: 11px; border-radius: 12px; border: 1px solid var(--border);
+      background: transparent; color: var(--text2); cursor: pointer; }
+    .chip.active { background: var(--surface2); color: var(--text); border-color: var(--accent); }
+
+    table.rg { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.rg th { text-align: left; padding: 8px 10px; font-size: 10px; letter-spacing: 1px; color: var(--text3);
+      border-bottom: 1px solid var(--border); font-family: var(--mono); text-transform: uppercase; white-space: nowrap; }
+    table.rg td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    table.rg tr:last-child td { border-bottom: none; }
+    table.rg td.nw { white-space: nowrap; }
+    table.rg td.num, table.rg th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+    .muted { color: var(--text3); }
+    .tblwrap { overflow-x: auto; }
+    .legend { padding: 8px 14px; font-size: 11px; color: var(--text3); border-top: 1px solid var(--border); line-height: 1.5; }
+    .empty, .loading { padding: 28px; text-align: center; color: var(--text3); font-size: 12px; }
+    .error { padding: 14px; color: var(--red); font-size: 12px; }
+    .red { color: var(--red); } .amber { color: var(--accent2); } .green { color: var(--green); }
+
+    /* ── Картка завдання ── */
+    .tasks { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; padding: 12px; }
+    .task { background: var(--bg); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px;
+      padding: 11px 13px; display: flex; flex-direction: column; gap: 7px; }
+    .task.p0 { border-left-color: var(--red); }
+    .task.late { border-left-color: var(--accent2); }
+    .task.done { border-left-color: var(--green); opacity: .85; }
+    .task.missed { border-left-color: var(--text3); opacity: .7; }
+    .task .top { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+    .task .name { font-size: 14px; font-weight: 600; }
+    .task .id { font-size: 11px; color: var(--text3); font-family: var(--mono); }
+    .task .score { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--text2); }
+    .task .meta { font-size: 11px; color: var(--text2); }
+    .rs { display: flex; flex-wrap: wrap; gap: 4px; }
+    .r { font-size: 10px; padding: 2px 7px; border-radius: 9px; background: var(--surface2); color: var(--text2); border: 1px solid var(--border); }
+    .r.hot { color: #fff; background: rgba(239,68,68,.25); border-color: rgba(239,68,68,.5); }
+    .r.warm { color: var(--accent2); border-color: rgba(245,158,11,.4); }
+    .ask { font-size: 11px; color: var(--text2); }
+    .ask b { color: var(--text); font-weight: 600; }
+    .ans { font-size: 11px; background: var(--surface); border-radius: 6px; padding: 6px 8px; line-height: 1.5; }
+    .ans .hi { color: var(--red); font-weight: 600; } .ans .lo { color: var(--accent2); font-weight: 600; }
+    .acts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .acts button { padding: 8px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2);
+      color: var(--text); font-size: 12px; cursor: pointer; }
+    .acts button:hover { border-color: var(--accent); }
+    .acts button:disabled { opacity: .5; cursor: default; }
+    .probs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; }
+    .probs button { padding: 7px 4px; border-radius: 6px; border: 1px solid rgba(245,158,11,.4); background: transparent;
+      color: var(--accent2); font-size: 11px; cursor: pointer; }
+    .cmt { display: flex; gap: 6px; }
+    .cmt input { flex: 1; font-size: 12px; }
+    .closed-line { font-size: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .linkbtn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 11px; padding: 0; }
+
+    .assess { display: flex; gap: 10px; align-items: center; padding: 9px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+    .assess:last-child { border-bottom: none; }
+    .assess .who { flex: 1; min-width: 180px; font-size: 13px; }
+    .assess .who .meta { font-size: 11px; color: var(--text3); }
+    .assess button { font-size: 16px; padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--surface2); cursor: pointer; }
+    .assess button:hover { border-color: var(--accent); }
+
+    .bar { display: inline-block; height: 8px; border-radius: 4px; background: var(--accent); vertical-align: middle; }
+    .bar.hot { background: var(--red); } .bar.warm { background: var(--accent2); }
+    .qcard { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+    .qcard:last-child { border-bottom: none; }
+    .qcard .qt { font-size: 12px; font-weight: 600; margin-bottom: 6px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+    .qcard .qt .n { font-weight: 400; color: var(--text3); font-size: 11px; }
+    .qopt { display: grid; grid-template-columns: 170px 1fr 70px; gap: 8px; align-items: center; font-size: 11px; margin: 3px 0; }
+    .qopt .lab { color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .qopt .val { text-align: right; font-family: var(--mono); color: var(--text2); }
+    .lock { font-size: 10px; color: var(--purple); border: 1px solid rgba(167,139,250,.4); border-radius: 8px; padding: 1px 6px; font-weight: 400; }
+    .qgroup { font-size: 11px; color: var(--text3); padding: 8px 14px 0; text-transform: uppercase; letter-spacing: 1px; font-family: var(--mono); }
+
+    .form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px 14px; }
+    .form .full { grid-column: 1 / -1; }
+    .form label { display: block; font-size: 11px; color: var(--text2); margin-bottom: 4px; }
+    .form select, .form input { width: 100%; }
+    input[type="number"] { background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-size: 12px;
+      padding: 6px 10px; border-radius: 5px; outline: none; width: 90px; }
+    .form-msg { font-size: 11px; }
+    .form-msg.err { color: var(--red); } .form-msg.ok { color: var(--green); }
+    .found { max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; margin-top: 6px; }
+    .found div { padding: 6px 10px; font-size: 12px; cursor: pointer; border-bottom: 1px solid var(--border); }
+    .found div:hover, .found div.sel { background: var(--surface2); }
+    .found div:last-child { border-bottom: none; }
+    .cfg-row { display: grid; grid-template-columns: 200px 100px 1fr; gap: 10px; align-items: center; padding: 6px 14px;
+      border-bottom: 1px solid var(--border); font-size: 12px; }
+    .cfg-row .k { font-family: var(--mono); font-size: 11px; color: var(--text2); }
+    .cfg-row .note { color: var(--text3); font-size: 11px; }
+    .noaccess { max-width: 520px; margin: 60px auto; text-align: center; color: var(--text2); font-size: 13px; line-height: 1.6; }
+
+    .main { min-width: 0; }
+    @media (max-width: 800px) {
+      .topbar { height: auto; flex-wrap: wrap; padding: 10px 16px; gap: 8px; }
+      .topbar-right { display: none; }
+      .rz-toolbar { flex-wrap: wrap; }
+      .content { padding: 12px; }
+      .kpis { grid-template-columns: 1fr 1fr; }
+      .kpi .v { font-size: 22px; }
+      .tasks { grid-template-columns: 1fr; padding: 8px; }
+      .qopt { grid-template-columns: 110px 1fr 56px; }
+      .form { grid-template-columns: 1fr; }
+      .cfg-row { grid-template-columns: 1fr 90px; }
+      .cfg-row .note { grid-column: 1 / -1; }
+      .section-head .spacer { display: none; }
+    }
+  </style>
+  <link rel="stylesheet" href="/css/mobile.css" />
+</head>
+<body>
+  <div class="sidebar">
+    <button class="sidebar-toggle" onclick="toggleSidebar()" title="Ukryj / Przypnij menu">◀</button>
+    <div class="logo">
+      <div class="logo-tag">SAS LOGISTIC</div>
+      <div class="logo-name">Rozmowy</div>
+    </div>
+    <div class="nav">
+      <div class="nav-item" onclick="location.href='index.html'">⬅️ Panel główny</div>
+      <div class="nav-item active" data-view="tasks" onclick="showView('tasks')">📞 Do rozmowy <span class="nav-badge" id="badgeTasks"></span></div>
+      <div class="nav-item" data-view="risk" onclick="showView('risk')">📈 Ryzyko</div>
+      <div class="nav-item" data-view="surveys" onclick="showView('surveys')">📝 Ankiety</div>
+      <div class="nav-item" data-view="control" onclick="showView('control')">🎯 Kontrola</div>
+      <div class="nav-item" data-view="settings" id="navSettings" onclick="showView('settings')" style="display:none">⚙️ Ustawienia</div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-title" id="topTitle">Do rozmowy</div>
+      <div class="rz-toolbar" id="toolbar">
+        <span id="selRegionBox" style="display:none"><label for="selRegion">Region</label>
+          <select id="selRegion" onchange="onFilterChange(this)"></select></span>
+        <span id="selCoordBox" style="display:none"><label for="selCoord">Koordynator</label>
+          <select id="selCoord" onchange="onFilterChange(this)"></select></span>
+        <span id="selDaysBox" style="display:none"><label for="selDays">Okres</label>
+          <select id="selDays" onchange="onFilterChange(this)">
+            <option value="7">7 dni</option><option value="28" selected>28 dni</option>
+            <option value="90">90 dni</option><option value="180">180 dni</option>
+          </select></span>
+      </div>
+      <div class="topbar-right"><span id="userName" style="font-size: 12px; color: var(--text2)"></span></div>
+    </div>
+
+    <div class="content" id="content">
+      <!-- ЗАВДАННЯ -->
+      <div class="rz-view active" id="view-tasks">
+        <div class="kpis" id="taskKpis"></div>
+        <div class="section" id="newTaskBox" style="display:none"></div>
+        <div class="section" id="assessBox" style="display:none">
+          <div class="section-head">🌱 Jak się wdrażają nowi? <span class="cnt">jedno kliknięcie na osobę</span></div>
+          <div id="assessList"></div>
+        </div>
+        <div class="section">
+          <div class="section-head">
+            Rozmowy <span class="cnt" id="taskCnt"></span>
+            <span class="spacer"></span>
+            <div class="chips" id="taskChips">
+              <button class="chip active" data-s="open" onclick="setTaskFilter('open')">Otwarte</button>
+              <button class="chip" data-s="late" onclick="setTaskFilter('late')">Po terminie</button>
+              <button class="chip" data-s="done" onclick="setTaskFilter('done')">Zamknięte</button>
+              <button class="chip" data-s="missed" onclick="setTaskFilter('missed')">Pominięte</button>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="openNewTask()">➕ Zleć rozmowę</button>
+          </div>
+          <div id="taskList"><div class="loading">Ładowanie…</div></div>
+          <div class="legend">Po rozmowie naciśnij jeden przycisk — to wszystko. To samo można zrobić w Telegramie.
+            Nie zamknięte w ciągu <span id="lgEsc">2</span> dni roboczych — informacja idzie do koordynatora regionalnego.
+            „Chce odejść” — regionalny dostaje wiadomość od razu. Część rozmów bot sprawdza u pracownika.</div>
+        </div>
+      </div>
+
+      <!-- РИЗИК -->
+      <div class="rz-view" id="view-risk">
+        <div class="section">
+          <div class="section-head">
+            Ryzyko odejścia <span class="cnt" id="riskCnt"></span>
+            <span class="spacer"></span>
+            <div class="chips" id="riskChips">
+              <button class="chip active" data-m="list" onclick="setRiskFilter('list')">Od progu listy</button>
+              <button class="chip" data-m="all" onclick="setRiskFilter('all')">Wszyscy z sygnałem</button>
+            </div>
+            <input type="text" id="riskSearch" placeholder="Szukaj…" oninput="renderRisk()" style="width: 150px" />
+          </div>
+          <div class="tblwrap" id="riskTable"><div class="loading">Ładowanie…</div></div>
+          <div class="legend">Bal liczony co noc z danych, które już są: NN i dni bez godzin w ostatnich 14 dniach, spadek godzin,
+            staż (nowi do 30 dni, 60–80 dni przed progiem), niepokojące odpowiedzi w ankietach, ocena koordynatora, czerwony obiekt.
+            Od progu listy osoba może trafić do codziennych rozmów (maksymalnie <span id="lgPerDay">5</span> otwartych na koordynatora).</div>
+        </div>
+      </div>
+
+      <!-- АНКЕТИ -->
+      <div class="rz-view" id="view-surveys">
+        <div class="kpis" id="surveyKpis"></div>
+        <div class="section">
+          <div class="section-head">⚠️ Niepokojące odpowiedzi <span class="cnt" id="recentCnt"></span></div>
+          <div class="tblwrap" id="recentTable"><div class="loading">Ładowanie…</div></div>
+        </div>
+        <div class="section">
+          <div class="section-head">🏭 Obiekty <span class="cnt">średnie z odpowiedzi</span></div>
+          <div class="tblwrap" id="siteSurveyTable"></div>
+        </div>
+        <div class="section">
+          <div class="section-head">📊 Odpowiedzi na pytania</div>
+          <div id="questionsBox"></div>
+          <div class="legend" id="questionsLegend"></div>
+        </div>
+      </div>
+
+      <!-- КОНТРОЛЬ -->
+      <div class="rz-view" id="view-control">
+        <div class="kpis" id="controlKpis"></div>
+        <div class="section">
+          <div class="section-head">Koordynatorzy <span class="cnt" id="controlCnt"></span></div>
+          <div class="tblwrap" id="controlTable"><div class="loading">Ładowanie…</div></div>
+          <div class="legend" id="controlLegend"></div>
+        </div>
+      </div>
+
+      <!-- НАЛАШТУВАННЯ -->
+      <div class="rz-view" id="view-settings"><div id="settingsBody"><div class="loading">Ładowanie…</div></div></div>
+    </div>
+  </div>
+
+  <script src="js/rozmowy.js"></script>
+  <div class="sidebar-hover-zone"
+     onmouseenter="document.querySelector('.sidebar').classList.add('sidebar-peek')"
+     onmouseleave="document.querySelector('.sidebar').classList.remove('sidebar-peek')"></div>
+  <script>
+  function toggleSidebar() {
+    const hidden = document.body.classList.toggle('sidebar-hidden');
+    const btn = document.querySelector('.sidebar-toggle');
+    btn.textContent = hidden ? '▶' : '◀';
+    btn.title = hidden ? 'Przypnij menu' : 'Ukryj menu';
+    localStorage.setItem('sas_sidebar_hidden', hidden ? '1' : '0');
+  }
+  if (localStorage.getItem('sas_sidebar_hidden') === '1' || window.innerWidth < 800) {
+    document.body.classList.add('sidebar-hidden');
+    const btn = document.querySelector('.sidebar-toggle');
+    if (btn) { btn.textContent = '▶'; btn.title = 'Przypnij menu'; }
+  }
+  document.querySelector('.sidebar')?.addEventListener('click', (e) => {
+    if (e.target.closest('.nav-item') && document.body.classList.contains('sidebar-hidden')) {
+      document.querySelector('.sidebar').classList.remove('sidebar-peek');
+    }
+  });
+  </script>
+</body>
+</html>

@@ -201,6 +201,12 @@ async function handleUpdate(bot, update) {
     const payload = String(cq.data || "");
     if (!chatId) return;
 
+    // Розділ «Rozmowy»: завдання координаторам, анкети, перевірки
+    if (/^(CR_|SV_|SC_)/.test(payload)) {
+      await require("./care").handleCallback(bot, cq);
+      return;
+    }
+
     const session = await getSessionSafe(chatId);
 
     let settings = null;
@@ -628,8 +634,8 @@ async function handleUpdate(bot, update) {
       }
 
       const hrs = parseFloat(payload.substring(2).replace(",", "."));
-      if (isNaN(hrs) || hrs <= 0 || hrs > 16) {
-        await answer("0.25-16");
+      if (isNaN(hrs) || hrs <= 0 || hrs > 13) {
+        await answer("0.25-13");
         return;
       }
 
@@ -884,10 +890,10 @@ async function handleUpdate(bot, update) {
       else dec = 24;
     } else {
       const n = parseFloat(s.replace(",", "."));
-      if (!isNaN(n) && n >= 0 && n <= 16) dec = n;
+      if (!isNaN(n) && n >= 0 && n <= 13) dec = n;
     }
 
-    if (dec === null || dec <= 0 || dec > 16) {
+    if (dec === null || dec <= 0) {
       await sendMessage(bot, chatId, T(session, "zero_hours"));
       return;
     }

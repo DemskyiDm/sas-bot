@@ -308,6 +308,8 @@ function renderSite(r) {
 
       <div id="cardBox">${renderCardBox(r.card)}</div>
 
+      <div id="careBox"></div>
+
       <div class="h3">Zbliżają się do progu <span class="c">następne 14 dni — tych ludzi trzeba utrzymać</span></div>
       ${r.approaching.length ? `<div class="tblwrap"><table class="rg"><thead><tr><th>Pracownik</th><th>Obiekt</th><th class="num">Start</th><th class="num">Próg</th><th class="num">Data</th><th class="num">Zostało</th></tr></thead><tbody>
         ${r.approaching.map((a) => `<tr><td>${esc(a.full_name)} <span class="muted">${esc(a.login)}</span></td><td class="muted">${esc(a.facility)}</td>
@@ -328,6 +330,44 @@ function renderSite(r) {
           <td class="num">${a.nn}</td><td class="muted">${esc(a.days)}</td></tr>`).join("")}</tbody></table></div>`
         : `<div class="empty">Brak NN w oknie</div>`}
     </div>`;
+  loadCareBox(r.site_key);
+}
+
+// ── Rozmowy i ankiety po obiekcie (sekcja Rozmowy) ─────────────────────
+async function loadCareBox(siteKey) {
+  const box = document.getElementById("careBox");
+  if (!box) return;
+  let r = null;
+  try {
+    const res = await fetch("/api/care/site?site=" + encodeURIComponent(siteKey), { headers: { "x-session": SESSION } });
+    r = await res.json();
+  } catch (e) { return; }
+  if (!r || !r.ok || document.getElementById("careBox") !== box) return;
+  const t = r.tasks, sv = r.surveys;
+  const PR = { housing: "mieszkanie", money: "pieniądze", schedule: "grafik", team: "zespół", transport: "dojazd", other: "inne" };
+  const pc = (a, b) => (b ? Math.round((a / b) * 100) + "%" : "—");
+  const list = (arr) => arr.map((x) => `${esc(x.label || PR[x.code] || x.code)} (${x.n})`).join(", ");
+  box.innerHTML = `
+    <div class="h3">Rozmowy i ankiety <span class="c">rozmowy — 28 dni, ankiety — 90 dni ·
+      <a href="rozmowy.html" style="color:var(--accent)">otwórz sekcję</a></span></div>
+    <div class="crit">
+      <div class="${t.late ? "A" : "x"}"><div class="l">Rozmowy</div>
+        <div class="v">${t.done28}</div>
+        <div class="s">zamknięte · otwarte ${t.open_now}${t.late ? `, po terminie ${t.late}` : ""}${t.missed ? `, pominięte ${t.missed}` : ""}<br>
+          ✅ ${t.stays} · ⚠️ ${t.problem} · 🚪 ${t.leaving} · 📵 ${t.no_answer}</div></div>
+      <div class="${sv.sent && sv.done / sv.sent < 0.4 ? "A" : "x"}"><div class="l">Ankiety — odpowiedzi</div>
+        <div class="v">${pc(sv.done, sv.sent)}</div>
+        <div class="s">${sv.done} z ${sv.sent}${sv.no_tg ? ` · bez bota ${sv.no_tg}` : ""}</div></div>
+      <div class="${(sv.work5 != null && sv.work5 < 3) || (sv.housing5 != null && sv.housing5 < 3) ? "R" : "x"}"><div class="l">Oceny w ankietach</div>
+        <div class="v" style="font-size:18px">${sv.work5 ?? "—"} <span style="font-size:11px;color:var(--text3)">praca</span>
+          · ${sv.housing5 ?? "—"} <span style="font-size:11px;color:var(--text3)">mieszk.</span></div>
+        <div class="s">${sv.stay_n ? `waha się / odejdzie: ${pc(sv.stay_doubt, sv.stay_n)}` : "brak odpowiedzi"}</div></div>
+    </div>
+    ${r.problems.length || r.top_problems.length || r.exit_reasons.length ? `<div style="font-size:12px; line-height:1.7; margin-bottom:6px">
+      ${r.problems.length ? `<div><span class="muted">Problemy z rozmów:</span> ${list(r.problems)}</div>` : ""}
+      ${r.top_problems.length ? `<div><span class="muted">Problemy z ankiet:</span> ${list(r.top_problems)}</div>` : ""}
+      ${r.exit_reasons.length ? `<div><span class="muted">Powody odejść (ankieta):</span> ${list(r.exit_reasons)}</div>` : ""}
+      <div class="muted" style="font-size:11px">Podpowiedź do karty czerwonego obiektu.</div></div>` : ""}`;
 }
 
 function renderCardBox(c) {

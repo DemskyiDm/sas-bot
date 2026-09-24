@@ -15,6 +15,7 @@ const { requireAdmin } = require("./api/admin");
 const apiRoutes = require("./api/routes");
 const { router: adminRoutes } = require("./api/admin");
 const regional = require("./api/regional");
+const care = require("./api/care");
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const app = express();
@@ -54,6 +55,7 @@ app.use(async (req, res, next) => {
 
 // ── API routes ────────────────────────────────────────────────
 app.use("/api/regional", regional.router);
+app.use("/api/care", care.router);
 app.use("/api", apiRoutes);
 app.use("/api", require("./api/reports"));
 app.use("/admin", adminRoutes);
@@ -340,3 +342,4 @@ app.patch("/api/facility-settings/:id", async (req, res) => {
 scheduleReminder();
 scheduleImport();
 regional.schedule(bot);
+require("./bot/care").schedule(bot);

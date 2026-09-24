@@ -23,7 +23,8 @@ const OUT = {
   leaving: { l: "🚪 Chce odejść", c: "red" },
   no_answer: { l: "📵 Nie odebrał", c: "muted" },
 };
-const TITLES = { tasks: "Do rozmowy", risk: "Ryzyko odejścia", surveys: "Ankiety", control: "Kontrola koordynacji", settings: "Ustawienia" };
+const TITLES = { tasks: "Do rozmowy", risk: "Ryzyko odejścia", surveys: "Ankiety", control: "Kontrola koordynacji",
+  coords: "Koordynatorzy", settings: "Ustawienia" };
 const SURVEY_NAME = { d3: "3. dzień", d14: "14 dni", d30: "30 dni", d60: "60 dni", exit: "Po odejściu" };
 
 // ── Утиліти ───────────────────────────────────────────────────────────
@@ -109,6 +110,14 @@ async function init() {
   if (!me) return;
   if (!me.ok) { document.getElementById("content").innerHTML = `<div class="error">${esc(me.error)}</div>`; return; }
   ST.me = me;
+  if (!me.has_access) {
+    document.querySelectorAll(".nav-item[data-view]").forEach((el) => (el.style.display = "none"));
+    document.getElementById("toolbar").style.display = "none";
+    document.getElementById("content").innerHTML =
+      `<div class="noaccess">📞 Moduł <b>Rozmowy</b> nie jest jeszcze dla Ciebie włączony.<br>
+       Włącza go kierownik działu koordynacji.</div>`;
+    return;
+  }
   document.getElementById("lgEsc").textContent = me.settings.escalate_bdays;
   document.getElementById("lgPerDay").textContent = me.settings.tasks_per_day;
   if (me.is_manager) {
@@ -118,7 +127,10 @@ async function init() {
     rs.innerHTML = `<option value="">Wszystkie</option>` + me.regions.map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join("");
     fillCoords();
   }
-  if (me.is_admin) document.getElementById("navSettings").style.display = "";
+  if (me.is_admin) {
+    document.getElementById("navSettings").style.display = "";
+    document.getElementById("navCoords").style.display = "";
+  }
   const h = (location.hash || "").replace("#", "");
   showView(TITLES[h] ? h : "tasks");
 }
@@ -127,7 +139,7 @@ function fillCoords() {
   const cs = document.getElementById("selCoord");
   const cur = cs.value;
   cs.innerHTML = `<option value="">Wszyscy</option>` +
-    ST.me.coordinators.map((c) => `<option value="${c.id}" ${String(c.id) === cur ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+    ST.me.coordinators.map((c) => `<option value="${c.id}" ${String(c.id) === cur ? "selected" : ""}>${esc(c.name)}${c.enabled ? "" : " (wył.)"}</option>`).join("");
 }
 
 function showView(v) {
@@ -136,7 +148,7 @@ function showView(v) {
   document.querySelectorAll(".nav-item[data-view]").forEach((el) => el.classList.toggle("active", el.dataset.view === v));
   document.getElementById("topTitle").textContent = TITLES[v];
   document.getElementById("selDaysBox").style.display = v === "surveys" || v === "control" ? "" : "none";
-  document.getElementById("toolbar").style.visibility = v === "settings" ? "hidden" : "";
+  document.getElementById("toolbar").style.visibility = v === "settings" || v === "coords" ? "hidden" : "";
   if (v === "surveys" && !document.getElementById("selDays").dataset.touched) document.getElementById("selDays").value = "90";
   if (v === "control" && !document.getElementById("selDays").dataset.touched) document.getElementById("selDays").value = "28";
   history.replaceState(null, "", "#" + v);
@@ -151,6 +163,7 @@ function load() {
   else if (ST.view === "risk") loadRisk();
   else if (ST.view === "surveys") loadSurveys();
   else if (ST.view === "control") loadControl();
+  else if (ST.view === "coords") loadCoords();
   else if (ST.view === "settings") loadSettings();
 }
 
@@ -225,7 +238,10 @@ function renderTasks() {
   document.getElementById("taskCnt").textContent = list.length ? `${list.length}` : "";
   const box = document.getElementById("taskList");
   if (!list.length) {
-    box.innerHTML = `<div class="empty">${ST.taskFilter === "open" ? "Brak otwartych rozmów 👌 Nowa lista przychodzi codziennie rano." : "Brak rozmów w tym widoku"}</div>`;
+    const noneOn = ST.me.is_manager && !ST.me.coordinators.some((c) => c.enabled);
+    box.innerHTML = `<div class="empty">${noneOn
+      ? `Moduł nie jest jeszcze włączony dla żadnego koordynatora.${ST.me.is_admin ? ` <a href="#coords" style="color:var(--accent)">Włącz w 👥 Koordynatorzy</a>` : ""}`
+      : ST.taskFilter === "open" ? "Brak otwartych rozmów 👌 Nowa lista przychodzi codziennie rano." : "Brak rozmów w tym widoku"}</div>`;
     return;
   }
   box.innerHTML = `<div class="tasks">${list.map(taskCard).join("")}</div>`;
@@ -592,4 +608,95 @@ async function runJob(job) {
   const r = await api("/run/" + job, { method: "POST" });
   m.className = "form-msg " + (r && r.ok ? "ok" : "err");
   m.textContent = r && r.ok ? JSON.stringify(r.result) : r ? r.error : "Błąd";
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  Koordynatorzy — komu włączony moduł (admin)
+// ══════════════════════════════════════════════════════════════════════
+ST.coordFilter = "all";
+ST.coordRows = [];
+ST.coordEdit = {};   // id → bool (tylko zmienione)
+
+function setCoordFilter(f) {
+  ST.coordFilter = f;
+  document.querySelectorAll("#coordChips .chip").forEach((c) => c.classList.toggle("active", c.dataset.f === f));
+  renderCoords();
+}
+async function loadCoords() {
+  document.getElementById("coordTable").innerHTML = `<div class="loading">Ładowanie…</div>`;
+  const r = await api("/coordinators");
+  if (!r) return;
+  if (!r.ok) { document.getElementById("coordTable").innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
+  ST.coordRows = r.data;
+  ST.coordEdit = {};
+  document.getElementById("coordMsg").textContent = "";
+  renderCoords();
+}
+function coordOn(c) { return c.id in ST.coordEdit ? ST.coordEdit[c.id] : c.enabled; }
+function renderCoords() {
+  const q = (document.getElementById("coordSearch").value || "").toLowerCase();
+  const all = ST.coordRows;
+  const rows = all.filter((c) => (ST.coordFilter === "all" || (ST.coordFilter === "on") === coordOn(c))
+    && (!q || (c.full_name + " " + (c.regions || "")).toLowerCase().includes(q)));
+  const on = all.filter(coordOn);
+  document.getElementById("coordKpis").innerHTML = `
+    <div class="kpi ${on.length ? "good" : ""}"><div class="l">Włączeni</div><div class="v">${on.length}</div>
+      <div class="s">z ${all.filter((c) => c.sites).length} koordynatorów z obiektami</div></div>
+    <div class="kpi"><div class="l">Pracownicy w module</div><div class="v">${on.reduce((n, c) => n + c.workers, 0)}</div>
+      <div class="s">z ${all.reduce((n, c) => n + c.workers, 0)} pracujących</div></div>
+    <div class="kpi ${on.some((c) => !c.has_tg) ? "warn" : ""}"><div class="l">Włączeni bez Telegrama</div>
+      <div class="v">${on.filter((c) => !c.has_tg).length}</div><div class="s">dostaną zadania tylko w panelu</div></div>`;
+  document.getElementById("coordCnt").textContent = `${rows.length}`;
+  document.getElementById("coordTable").innerHTML = rows.length ? `<table class="rg"><thead><tr>
+      <th style="width:40px"></th><th>Koordynator</th><th>Region</th><th class="num">Obiekty</th><th class="num">Pracownicy</th>
+      <th>Telegram</th><th class="num">Otwarte rozmowy</th><th>Włączony od</th></tr></thead><tbody>
+    ${rows.map((c) => {
+      const v = coordOn(c);
+      return `<tr class="${v ? "" : "off"} ${c.id in ST.coordEdit ? "changed" : ""}">
+        <td><label class="sw"><input type="checkbox" ${v ? "checked" : ""} onchange="toggleCoord(${c.id}, this.checked)" /></label></td>
+        <td class="nw"><b>${esc(c.full_name)}</b>${c.is_lead ? `<span class="tag">regionalny</span>` : ""}</td>
+        <td class="muted">${esc(c.regions || "—")}</td>
+        <td class="num">${c.sites || "—"}</td>
+        <td class="num">${c.workers || "—"}</td>
+        <td>${c.has_tg ? `<span class="green">✓</span> <span class="muted">${esc(c.lang)}</span>` : `<span class="amber">brak — tylko panel</span>`}</td>
+        <td class="num">${c.open_tasks || ""}</td>
+        <td class="muted">${c.enabled && c.enabled_at ? ddt(c.enabled_at) : ""}</td></tr>`;
+    }).join("")}</tbody></table>` : `<div class="empty">Brak koordynatorów w tym widoku</div>`;
+  updateCoordBar();
+}
+function toggleCoord(id, val) {
+  const c = ST.coordRows.find((x) => x.id === id);
+  if (!c) return;
+  if (val === c.enabled) delete ST.coordEdit[id]; else ST.coordEdit[id] = val;
+  renderCoords();
+}
+function markAll(val) {
+  for (const c of ST.coordRows) {
+    const want = val ? c.sites > 0 : false;
+    if (!val || c.sites > 0) {
+      if (want === c.enabled) delete ST.coordEdit[c.id]; else ST.coordEdit[c.id] = want;
+    }
+  }
+  renderCoords();
+}
+function updateCoordBar() {
+  const ids = Object.keys(ST.coordEdit);
+  const offTasks = ST.coordRows.filter((c) => ST.coordEdit[c.id] === false).reduce((n, c) => n + c.open_tasks, 0);
+  const plus = ids.filter((id) => ST.coordEdit[id]).length, minus = ids.length - plus;
+  const msg = document.getElementById("coordMsg");
+  msg.className = "form-msg";
+  msg.textContent = ids.length ? `Zmiany: +${plus} / −${minus}${offTasks ? ` · anulujemy ${offTasks} otwartych rozmów` : ""}` : "";
+  document.getElementById("coordSave").disabled = !ids.length;
+}
+async function saveCoords() {
+  const btn = document.getElementById("coordSave");
+  btn.disabled = true;
+  const r = await api("/coordinators", { method: "PUT", body: { enabled: ST.coordEdit } });
+  const msg = document.getElementById("coordMsg");
+  if (!r || !r.ok) { msg.className = "form-msg err"; msg.textContent = r ? r.error : "Błąd"; btn.disabled = false; return; }
+  await loadCoords();
+  msg.className = "form-msg ok";
+  msg.textContent = `Zapisano${r.cancelled ? ` · anulowano ${r.cancelled} rozmów` : ""}`;
+  const me = await api("/me");
+  if (me && me.ok) { ST.me.coordinators = me.coordinators; fillCoords(); }
 }

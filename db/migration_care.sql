@@ -63,6 +63,21 @@ ON CONFLICT (key) DO NOTHING;
 CREATE OR REPLACE FUNCTION care.setting(p_key TEXT)
 RETURNS NUMERIC LANGUAGE sql STABLE AS $$ SELECT value FROM care.settings WHERE key = p_key $$;
 
+-- ── Кому з координаторів увімкнено модуль ─────────────────────────────
+-- За замовчуванням — нікому: адмін вмикає в панелі (Rozmowy → Ustawienia → Koordynatorzy).
+-- Вимкнений координатор не отримує завдань і оцінок, працівники його об'єктів — анкет.
+CREATE TABLE IF NOT EXISTS care.coordinators (
+  coordinator_id INT PRIMARY KEY REFERENCES public.coordinators(id) ON DELETE CASCADE,
+  enabled        BOOLEAN NOT NULL DEFAULT false,
+  enabled_at     TIMESTAMPTZ,
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_by     INT
+);
+CREATE OR REPLACE FUNCTION care.is_on(p_coord INT)
+RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
+  SELECT COALESCE((SELECT enabled FROM care.coordinators WHERE coordinator_id = p_coord), false)
+$$;
+
 -- Дата за польським часом — не залежить від часового поясу сервера бази
 CREATE OR REPLACE FUNCTION care.today()
 RETURNS DATE LANGUAGE sql STABLE AS $$ SELECT (now() AT TIME ZONE 'Europe/Warsaw')::date $$;
@@ -386,12 +401,15 @@ BEGIN
   -- людина вже не працює — завдання знімаємо
   UPDATE care.tasks t SET status = 'cancelled'
    WHERE t.status = 'open' AND NOT EXISTS (SELECT 1 FROM care.active_on(p_day) a WHERE a.worker_id = t.worker_id);
+  -- координатору вимкнули модуль — теж
+  UPDATE care.tasks t SET status = 'cancelled'
+   WHERE t.status = 'open' AND t.coordinator_id IS NOT NULL AND NOT care.is_on(t.coordinator_id);
 
   WITH cap AS (
     SELECT c.id AS coordinator_id,
            care.setting('tasks_per_day')::int
              - (SELECT COUNT(*) FROM care.tasks t WHERE t.coordinator_id = c.id AND t.status = 'open') AS free
-    FROM public.coordinators c WHERE c.is_active
+    FROM public.coordinators c WHERE c.is_active AND care.is_on(c.id)
   ),
   cand AS (
     SELECT r.*, ROW_NUMBER() OVER (PARTITION BY r.coordinator_id ORDER BY r.score DESC, r.tenure) AS rn
@@ -425,12 +443,13 @@ BEGIN
   INSERT INTO care.survey_sends (survey_code, worker_id, bhp_date, facility_id, site_key, coordinator_id,
                                  region_id, planned_for, status, lang)
   SELECT sv.code, a.worker_id, a.bhp_date, a.facility_id, a.site_key, o.coordinator_id, o.region_id, p_day,
-         CASE WHEN w.telegram_chat_id IS NULL THEN 'no_telegram' ELSE 'planned' END, w.lang
+         CASE WHEN w.telegram_chat_id IS NULL THEN 'no_telegram' ELSE 'planned' END, w.lang::text
   FROM care.active_on(p_day) a
   JOIN public.workers w ON w.id = a.worker_id
   JOIN care.surveys sv ON sv.is_active AND sv.day_offset IS NOT NULL
   LEFT JOIN reg.site_owner o ON o.site_key = a.site_key AND o.valid_to IS NULL
   WHERE (p_day - a.bhp_date) BETWEEN sv.day_offset AND sv.day_offset + care.setting('survey_catchup_days')::int
+    AND care.is_on(o.coordinator_id)
   ON CONFLICT (worker_id, survey_code, bhp_date) DO NOTHING;
   GET DIAGNOSTICS v_s = ROW_COUNT;
 
@@ -439,7 +458,7 @@ BEGIN
                                  region_id, planned_for, status, lang)
   SELECT sv.code, h.worker_id, h.bhp_date, h.facility_id, reg.site_key(f.group_name, f.name),
          o.coordinator_id, o.region_id, p_day,
-         CASE WHEN w.telegram_chat_id IS NULL THEN 'no_telegram' ELSE 'planned' END, w.lang
+         CASE WHEN w.telegram_chat_id IS NULL THEN 'no_telegram' ELSE 'planned' END, w.lang::text
   FROM public.worker_facility_history h
   JOIN public.facilities f ON f.id = h.facility_id
   JOIN public.workers w ON w.id = h.worker_id
@@ -449,6 +468,7 @@ BEGIN
     AND h.last_work_date BETWEEN p_day - 3 AND p_day
     AND COALESCE(w.login, '') NOT LIKE 'TEST_%'
     AND NOT EXISTS (SELECT 1 FROM care.active_on(p_day) x WHERE x.worker_id = h.worker_id)
+    AND care.is_on(o.coordinator_id)
   ON CONFLICT (worker_id, survey_code, bhp_date) DO NOTHING;
   GET DIAGNOSTICS v_e = ROW_COUNT;
 
@@ -459,6 +479,7 @@ BEGIN
   CROSS JOIN (VALUES (care.setting('assess_day_1')::int), (care.setting('assess_day_2')::int)) m(d)
   LEFT JOIN reg.site_owner o ON o.site_key = a.site_key AND o.valid_to IS NULL
   WHERE (p_day - a.bhp_date) BETWEEN m.d AND m.d + 2
+    AND care.is_on(o.coordinator_id)
   ON CONFLICT (worker_id, bhp_date, day_mark) DO NOTHING;
   GET DIAGNOSTICS v_a = ROW_COUNT;
 

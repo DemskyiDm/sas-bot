@@ -32,8 +32,10 @@ async function scopeOf(c) {
     const all = await db.query(`SELECT id, name FROM reg.regions WHERE is_active ORDER BY name`);
     regions = all.rows;
   }
+  const on = await db.query(`SELECT care.is_on($1) AS on`, [c.coordinator_id]);
   return {
     me: c.coordinator_id,
+    enabled: on.rows[0].on,
     isAdmin,
     isRegional: r.rows.length > 0,
     isManager: isAdmin || r.rows.length > 0,
@@ -111,7 +113,7 @@ router.get("/me", async (req, res) => {
     const p = [];
     const where = scopeWhere(sc, {}, "o", p);
     const coords = await db.query(
-      `SELECT DISTINCT c.id, c.full_name AS name FROM public.coordinators c
+      `SELECT DISTINCT c.id, c.full_name AS name, care.is_on(c.id) AS enabled FROM public.coordinators c
         WHERE c.is_active AND (c.id = ${sc.isAdmin ? "c.id" : Number(sc.me)}
            OR EXISTS (SELECT 1 FROM reg.site_owner o WHERE o.coordinator_id = c.id AND o.valid_to IS NULL AND ${where}))
         ORDER BY c.full_name`,
@@ -122,11 +124,18 @@ router.get("/me", async (req, res) => {
       ok: true,
       me: { id: sc.me, name: req.coordinator.full_name },
       is_admin: sc.isAdmin, is_regional: sc.isRegional, is_manager: sc.isManager,
+      enabled: sc.enabled, has_access: sc.isManager || sc.enabled,
       regions: sc.regions, coordinators: coords.rows,
       settings: { tasks_per_day: s.tasks_per_day, escalate_bdays: s.escalate_bdays, coord_min_answers: s.coord_min_answers, risk_min: s.risk_min },
       problems: PROBLEM_LABEL,
     });
   } catch (e) { fail(res, e); }
+});
+
+// Звичайний координатор без увімкненого модуля далі не проходить
+router.use((req, res, next) => {
+  if (req.scope.isManager || req.scope.enabled) return next();
+  res.status(403).json({ ok: false, error: "Moduł Rozmowy nie jest dla Ciebie włączony" });
 });
 
 // ── Завдання ──────────────────────────────────────────────────────────
@@ -236,6 +245,8 @@ router.post("/tasks", async (req, res) => {
       if (!inRegion) coordId = sc.me;
     }
     if (!coordId) return fail(res, new Error("Obiekt nie ma koordynatora — przypisz w Region → Ustawienia"), 400);
+    if (!(await db.query(`SELECT care.is_on($1) AS on`, [coordId])).rows[0].on)
+      return fail(res, new Error("Moduł Rozmowy jest wyłączony dla tego koordynatora (Ustawienia → Koordynatorzy)"), 400);
     if (coordId !== a.coordinator_id) {
       // inny koordynator niż właściciel obiektu: aktywny i (dla regionalnego) z tego samego regionu
       const ok = await db.query(
@@ -638,6 +649,59 @@ router.get("/site", async (req, res) => {
       top_problems: top.rows.filter((x) => x.q === "problem").slice(0, 4),
       exit_reasons: top.rows.filter((x) => x.q === "reason").slice(0, 4),
     });
+  } catch (e) { fail(res, e); }
+});
+
+// ── Кому увімкнено модуль (адмін) ─────────────────────────────────────
+router.get("/coordinators", async (req, res) => {
+  try {
+    if (!req.scope.isAdmin) return fail(res, new Error("Admin only"), 403);
+    const r = await db.query(
+      `WITH act AS (SELECT site_key, COUNT(*)::int AS n FROM care.v_active GROUP BY site_key)
+       SELECT c.id, c.full_name, (c.telegram_chat_id IS NOT NULL) AS has_tg, COALESCE(c.lang::text, 'uk') AS lang,
+              care.is_on(c.id) AS enabled, cc.enabled_at,
+              (SELECT string_agg(DISTINCT rg.name, ', ') FROM reg.site_owner o JOIN reg.regions rg ON rg.id = o.region_id
+                WHERE o.coordinator_id = c.id AND o.valid_to IS NULL) AS regions,
+              (SELECT COUNT(*)::int FROM reg.site_owner o WHERE o.coordinator_id = c.id AND o.valid_to IS NULL) AS sites,
+              (SELECT COALESCE(SUM(act.n), 0)::int FROM reg.site_owner o JOIN act ON act.site_key = o.site_key
+                WHERE o.coordinator_id = c.id AND o.valid_to IS NULL) AS workers,
+              (SELECT COUNT(*)::int FROM care.tasks t WHERE t.coordinator_id = c.id AND t.status = 'open') AS open_tasks,
+              EXISTS (SELECT 1 FROM reg.region_leads rl WHERE rl.coordinator_id = c.id) AS is_lead
+         FROM public.coordinators c
+         LEFT JOIN care.coordinators cc ON cc.coordinator_id = c.id
+        WHERE c.is_active
+        ORDER BY care.is_on(c.id) DESC, (SELECT COUNT(*) FROM reg.site_owner o WHERE o.coordinator_id = c.id AND o.valid_to IS NULL) = 0,
+                 c.full_name`,
+    );
+    res.json({ ok: true, data: r.rows });
+  } catch (e) { fail(res, e); }
+});
+
+router.put("/coordinators", async (req, res) => {
+  try {
+    if (!req.scope.isAdmin) return fail(res, new Error("Admin only"), 403);
+    const map = req.body?.enabled || {};
+    const off = [];
+    let changed = 0;
+    for (const [idRaw, val] of Object.entries(map)) {
+      const id = parseInt(idRaw, 10);
+      if (!id) continue;
+      const on = !!val;
+      const r = await db.query(
+        `INSERT INTO care.coordinators (coordinator_id, enabled, enabled_at, updated_by)
+         VALUES ($1, $2, CASE WHEN $2 THEN now() END, $3)
+         ON CONFLICT (coordinator_id) DO UPDATE
+           SET enabled = EXCLUDED.enabled, updated_at = now(), updated_by = EXCLUDED.updated_by,
+               enabled_at = CASE WHEN EXCLUDED.enabled AND NOT care.coordinators.enabled THEN now()
+                                 WHEN EXCLUDED.enabled THEN care.coordinators.enabled_at END
+           WHERE care.coordinators.enabled IS DISTINCT FROM EXCLUDED.enabled
+         RETURNING coordinator_id`,
+        [id, on, req.scope.me],
+      );
+      if (r.rows.length) { changed++; if (!on) off.push(id); }
+    }
+    const cancelled = await careBot.cancelForCoordinators(off);
+    res.json({ ok: true, changed, cancelled });
   } catch (e) { fail(res, e); }
 });
 

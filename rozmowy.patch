@@ -1,9 +1,9 @@
 diff --git a/api/care.js b/api/care.js
 new file mode 100644
-index 0000000..59f4437
+index 0000000..e959af9
 --- /dev/null
 +++ b/api/care.js
-@@ -0,0 +1,704 @@
+@@ -0,0 +1,768 @@
 +// ══════════════════════════════════════════════════════════════════════
 +//  Розділ «Rozmowy» — API панелі
 +//  Монтується в index.js:  app.use("/api/care", care.router)
@@ -38,8 +38,10 @@ index 0000000..59f4437
 +    const all = await db.query(`SELECT id, name FROM reg.regions WHERE is_active ORDER BY name`);
 +    regions = all.rows;
 +  }
++  const on = await db.query(`SELECT care.is_on($1) AS on`, [c.coordinator_id]);
 +  return {
 +    me: c.coordinator_id,
++    enabled: on.rows[0].on,
 +    isAdmin,
 +    isRegional: r.rows.length > 0,
 +    isManager: isAdmin || r.rows.length > 0,
@@ -117,7 +119,7 @@ index 0000000..59f4437
 +    const p = [];
 +    const where = scopeWhere(sc, {}, "o", p);
 +    const coords = await db.query(
-+      `SELECT DISTINCT c.id, c.full_name AS name FROM public.coordinators c
++      `SELECT DISTINCT c.id, c.full_name AS name, care.is_on(c.id) AS enabled FROM public.coordinators c
 +        WHERE c.is_active AND (c.id = ${sc.isAdmin ? "c.id" : Number(sc.me)}
 +           OR EXISTS (SELECT 1 FROM reg.site_owner o WHERE o.coordinator_id = c.id AND o.valid_to IS NULL AND ${where}))
 +        ORDER BY c.full_name`,
@@ -128,11 +130,18 @@ index 0000000..59f4437
 +      ok: true,
 +      me: { id: sc.me, name: req.coordinator.full_name },
 +      is_admin: sc.isAdmin, is_regional: sc.isRegional, is_manager: sc.isManager,
++      enabled: sc.enabled, has_access: sc.isManager || sc.enabled,
 +      regions: sc.regions, coordinators: coords.rows,
 +      settings: { tasks_per_day: s.tasks_per_day, escalate_bdays: s.escalate_bdays, coord_min_answers: s.coord_min_answers, risk_min: s.risk_min },
 +      problems: PROBLEM_LABEL,
 +    });
 +  } catch (e) { fail(res, e); }
++});
++
++// Звичайний координатор без увімкненого модуля далі не проходить
++router.use((req, res, next) => {
++  if (req.scope.isManager || req.scope.enabled) return next();
++  res.status(403).json({ ok: false, error: "Moduł Rozmowy nie jest dla Ciebie włączony" });
 +});
 +
 +// ── Завдання ──────────────────────────────────────────────────────────
@@ -242,6 +251,8 @@ index 0000000..59f4437
 +      if (!inRegion) coordId = sc.me;
 +    }
 +    if (!coordId) return fail(res, new Error("Obiekt nie ma koordynatora — przypisz w Region → Ustawienia"), 400);
++    if (!(await db.query(`SELECT care.is_on($1) AS on`, [coordId])).rows[0].on)
++      return fail(res, new Error("Moduł Rozmowy jest wyłączony dla tego koordynatora (Ustawienia → Koordynatorzy)"), 400);
 +    if (coordId !== a.coordinator_id) {
 +      // inny koordynator niż właściciel obiektu: aktywny i (dla regionalnego) z tego samego regionu
 +      const ok = await db.query(
@@ -647,6 +658,59 @@ index 0000000..59f4437
 +  } catch (e) { fail(res, e); }
 +});
 +
++// ── Кому увімкнено модуль (адмін) ─────────────────────────────────────
++router.get("/coordinators", async (req, res) => {
++  try {
++    if (!req.scope.isAdmin) return fail(res, new Error("Admin only"), 403);
++    const r = await db.query(
++      `WITH act AS (SELECT site_key, COUNT(*)::int AS n FROM care.v_active GROUP BY site_key)
++       SELECT c.id, c.full_name, (c.telegram_chat_id IS NOT NULL) AS has_tg, COALESCE(c.lang, 'uk') AS lang,
++              care.is_on(c.id) AS enabled, cc.enabled_at,
++              (SELECT string_agg(DISTINCT rg.name, ', ') FROM reg.site_owner o JOIN reg.regions rg ON rg.id = o.region_id
++                WHERE o.coordinator_id = c.id AND o.valid_to IS NULL) AS regions,
++              (SELECT COUNT(*)::int FROM reg.site_owner o WHERE o.coordinator_id = c.id AND o.valid_to IS NULL) AS sites,
++              (SELECT COALESCE(SUM(act.n), 0)::int FROM reg.site_owner o JOIN act ON act.site_key = o.site_key
++                WHERE o.coordinator_id = c.id AND o.valid_to IS NULL) AS workers,
++              (SELECT COUNT(*)::int FROM care.tasks t WHERE t.coordinator_id = c.id AND t.status = 'open') AS open_tasks,
++              EXISTS (SELECT 1 FROM reg.region_leads rl WHERE rl.coordinator_id = c.id) AS is_lead
++         FROM public.coordinators c
++         LEFT JOIN care.coordinators cc ON cc.coordinator_id = c.id
++        WHERE c.is_active
++        ORDER BY care.is_on(c.id) DESC, (SELECT COUNT(*) FROM reg.site_owner o WHERE o.coordinator_id = c.id AND o.valid_to IS NULL) = 0,
++                 c.full_name`,
++    );
++    res.json({ ok: true, data: r.rows });
++  } catch (e) { fail(res, e); }
++});
++
++router.put("/coordinators", async (req, res) => {
++  try {
++    if (!req.scope.isAdmin) return fail(res, new Error("Admin only"), 403);
++    const map = req.body?.enabled || {};
++    const off = [];
++    let changed = 0;
++    for (const [idRaw, val] of Object.entries(map)) {
++      const id = parseInt(idRaw, 10);
++      if (!id) continue;
++      const on = !!val;
++      const r = await db.query(
++        `INSERT INTO care.coordinators (coordinator_id, enabled, enabled_at, updated_by)
++         VALUES ($1, $2, CASE WHEN $2 THEN now() END, $3)
++         ON CONFLICT (coordinator_id) DO UPDATE
++           SET enabled = EXCLUDED.enabled, updated_at = now(), updated_by = EXCLUDED.updated_by,
++               enabled_at = CASE WHEN EXCLUDED.enabled AND NOT care.coordinators.enabled THEN now()
++                                 WHEN EXCLUDED.enabled THEN care.coordinators.enabled_at END
++           WHERE care.coordinators.enabled IS DISTINCT FROM EXCLUDED.enabled
++         RETURNING coordinator_id`,
++        [id, on, req.scope.me],
++      );
++      if (r.rows.length) { changed++; if (!on) off.push(id); }
++    }
++    const cancelled = await careBot.cancelForCoordinators(off);
++    res.json({ ok: true, changed, cancelled });
++  } catch (e) { fail(res, e); }
++});
++
 +// ── Налаштування (адмін) ─────────────────────────────────────────────
 +router.get("/settings", async (req, res) => {
 +  try {
@@ -710,10 +774,10 @@ index 0000000..59f4437
 +module.exports = { router };
 diff --git a/bot/care.js b/bot/care.js
 new file mode 100644
-index 0000000..52d48df
+index 0000000..a1449e4
 --- /dev/null
 +++ b/bot/care.js
-@@ -0,0 +1,972 @@
+@@ -0,0 +1,997 @@
 +// ══════════════════════════════════════════════════════════════════════
 +//  Розділ «Rozmowy»: завдання координаторам на розмову, оцінка новачків,
 +//  анкети працівникам, вибіркова перевірка розмов.
@@ -847,6 +911,7 @@ index 0000000..52d48df
 +    already: "Вже закрито",
 +    saved: "Збережено",
 +    too_late: "Змінити можна лише протягом доби",
++    cancelled: "скасовано — модуль вимкнено",
 +  },
 +  ru: {
 +    head: (n) => `📋 <b>Разговоры на сегодня: ${n}</b>`,
@@ -898,6 +963,7 @@ index 0000000..52d48df
 +    already: "Уже закрыто",
 +    saved: "Сохранено",
 +    too_late: "Изменить можно только в течение суток",
++    cancelled: "отменено — модуль выключен",
 +  },
 +  pl: {
 +    head: (n) => `📋 <b>Rozmowy na dziś: ${n}</b>`,
@@ -949,6 +1015,7 @@ index 0000000..52d48df
 +    already: "Już zamknięte",
 +    saved: "Zapisano",
 +    too_late: "Zmienić można tylko w ciągu doby",
++    cancelled: "anulowane — moduł wyłączony",
 +  },
 +};
 +const tc = (lang) => TC[lang] || TC.uk;
@@ -1143,7 +1210,8 @@ index 0000000..52d48df
 +  const coords = await db.query(
 +    `SELECT c.id, c.full_name, c.telegram_chat_id, COALESCE(c.lang, 'uk') AS lang
 +       FROM public.coordinators c
-+      WHERE c.is_active AND (EXISTS (SELECT 1 FROM care.tasks t WHERE t.coordinator_id = c.id AND t.status = 'open')
++      WHERE c.is_active AND care.is_on(c.id)
++        AND (EXISTS (SELECT 1 FROM care.tasks t WHERE t.coordinator_id = c.id AND t.status = 'open')
 +                          OR EXISTS (SELECT 1 FROM care.assessments a WHERE a.coordinator_id = c.id AND a.value IS NULL AND a.sent_at IS NULL))`,
 +  );
 +  let sent = 0;
@@ -1161,7 +1229,8 @@ index 0000000..52d48df
 +async function sendUrgent() {
 +  const r = await db.query(
 +    `UPDATE care.tasks SET sent_at = now()
-+      WHERE status = 'open' AND priority = 0 AND sent_at IS NULL RETURNING id`,
++      WHERE status = 'open' AND priority = 0 AND sent_at IS NULL
++        AND (coordinator_id IS NULL OR care.is_on(coordinator_id)) RETURNING id`,
 +  );
 +  for (const x of r.rows) {
 +    const task = await loadTask(x.id);
@@ -1292,7 +1361,7 @@ index 0000000..52d48df
 +       FROM care.survey_sends s
 +       JOIN public.workers w ON w.id = s.worker_id
 +       JOIN care.surveys sv ON sv.code = s.survey_code
-+      WHERE s.status = 'planned' AND s.planned_for <= $1::date
++      WHERE s.status = 'planned' AND s.planned_for <= $1::date AND care.is_on(s.coordinator_id)
 +      ORDER BY s.id`,
 +    [day],
 +  );
@@ -1343,6 +1412,8 @@ index 0000000..52d48df
 +  );
 +  if (!act.rows.length) return null;
 +  const a = act.rows[0];
++  // модуль вимкнений для координатора об'єкта — завдання не ставимо (відповідь піде в бал ризику)
++  if (a.coordinator_id && !(await db.query(`SELECT care.is_on($1) AS on`, [a.coordinator_id])).rows[0].on) return null;
 +  const prev = (await db.query(`SELECT id FROM care.tasks WHERE worker_id = $1 AND status = 'open'`, [send.worker_id])).rows[0];
 +  const prevTask = prev ? await loadTask(prev.id) : null;
 +  const up = await db.query(
@@ -1664,6 +1735,24 @@ index 0000000..52d48df
 +
 +function setBot(bot) { BOT = bot; }
 +
++// Модуль вимкнули координатору: відкриті завдання знімаємо і прибираємо кнопки в Telegram
++async function cancelForCoordinators(ids) {
++  if (!ids.length) return 0;
++  const r = await db.query(
++    `UPDATE care.tasks SET status = 'cancelled'
++      WHERE status = 'open' AND coordinator_id = ANY($1::int[]) RETURNING id, tg_chat_id, tg_message_id`,
++    [ids],
++  );
++  // заплановані, але ще не надіслані анкети на його об'єктах — теж не надсилаємо
++  await db.query(`UPDATE care.survey_sends SET status = 'expired' WHERE status = 'planned' AND coordinator_id = ANY($1::int[])`, [ids]);
++  for (const x of r.rows) {
++    if (!x.tg_chat_id || !x.tg_message_id) continue;
++    const task = await loadTask(x.id);
++    await tgEdit(x.tg_chat_id, x.tg_message_id, (await taskText(task, task.coord_lang)) + `\n\n<i>${tc(task.coord_lang).cancelled}</i>`);
++  }
++  return r.rows.length;
++}
++
 +// Доручення з панелі — одразу в Telegram координатору
 +async function sendTaskNow(id) {
 +  const task = await loadTask(id);
@@ -1684,7 +1773,7 @@ index 0000000..52d48df
 +module.exports = {
 +  schedule, setBot, handleCallback, tick,
 +  runMorning, runSurveys, runEscalation, runSpotChecks, sendUrgent,
-+  closeTask, reopenTask, rateAssessment, loadTask, taskText, sendTaskNow, refreshAssessmentMsg,
++  closeTask, reopenTask, rateAssessment, loadTask, taskText, sendTaskNow, refreshAssessmentMsg, cancelForCoordinators,
 +};
 diff --git a/bot/handlers.js b/bot/handlers.js
 index 0b99a50..4df8574 100644
@@ -1705,10 +1794,10 @@ index 0b99a50..4df8574 100644
      let settings = null;
 diff --git a/db/migration_care.sql b/db/migration_care.sql
 new file mode 100644
-index 0000000..136269e
+index 0000000..d19583f
 --- /dev/null
 +++ b/db/migration_care.sql
-@@ -0,0 +1,501 @@
+@@ -0,0 +1,522 @@
 +-- ══════════════════════════════════════════════════════════════════════
 +--  Розділ «Rozmowy» — оцінка людей, завдання на розмову, анкети.
 +--  Окрема схема care. Потрібна вже встановлена схема reg (розділ Region):
@@ -1773,6 +1862,21 @@ index 0000000..136269e
 +
 +CREATE OR REPLACE FUNCTION care.setting(p_key TEXT)
 +RETURNS NUMERIC LANGUAGE sql STABLE AS $$ SELECT value FROM care.settings WHERE key = p_key $$;
++
++-- ── Кому з координаторів увімкнено модуль ─────────────────────────────
++-- За замовчуванням — нікому: адмін вмикає в панелі (Rozmowy → Ustawienia → Koordynatorzy).
++-- Вимкнений координатор не отримує завдань і оцінок, працівники його об'єктів — анкет.
++CREATE TABLE IF NOT EXISTS care.coordinators (
++  coordinator_id INT PRIMARY KEY REFERENCES public.coordinators(id) ON DELETE CASCADE,
++  enabled        BOOLEAN NOT NULL DEFAULT false,
++  enabled_at     TIMESTAMPTZ,
++  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
++  updated_by     INT
++);
++CREATE OR REPLACE FUNCTION care.is_on(p_coord INT)
++RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
++  SELECT COALESCE((SELECT enabled FROM care.coordinators WHERE coordinator_id = p_coord), false)
++$$;
 +
 +-- Дата за польським часом — не залежить від часового поясу сервера бази
 +CREATE OR REPLACE FUNCTION care.today()
@@ -2097,12 +2201,15 @@ index 0000000..136269e
 +  -- людина вже не працює — завдання знімаємо
 +  UPDATE care.tasks t SET status = 'cancelled'
 +   WHERE t.status = 'open' AND NOT EXISTS (SELECT 1 FROM care.active_on(p_day) a WHERE a.worker_id = t.worker_id);
++  -- координатору вимкнули модуль — теж
++  UPDATE care.tasks t SET status = 'cancelled'
++   WHERE t.status = 'open' AND t.coordinator_id IS NOT NULL AND NOT care.is_on(t.coordinator_id);
 +
 +  WITH cap AS (
 +    SELECT c.id AS coordinator_id,
 +           care.setting('tasks_per_day')::int
 +             - (SELECT COUNT(*) FROM care.tasks t WHERE t.coordinator_id = c.id AND t.status = 'open') AS free
-+    FROM public.coordinators c WHERE c.is_active
++    FROM public.coordinators c WHERE c.is_active AND care.is_on(c.id)
 +  ),
 +  cand AS (
 +    SELECT r.*, ROW_NUMBER() OVER (PARTITION BY r.coordinator_id ORDER BY r.score DESC, r.tenure) AS rn
@@ -2142,6 +2249,7 @@ index 0000000..136269e
 +  JOIN care.surveys sv ON sv.is_active AND sv.day_offset IS NOT NULL
 +  LEFT JOIN reg.site_owner o ON o.site_key = a.site_key AND o.valid_to IS NULL
 +  WHERE (p_day - a.bhp_date) BETWEEN sv.day_offset AND sv.day_offset + care.setting('survey_catchup_days')::int
++    AND care.is_on(o.coordinator_id)
 +  ON CONFLICT (worker_id, survey_code, bhp_date) DO NOTHING;
 +  GET DIAGNOSTICS v_s = ROW_COUNT;
 +
@@ -2160,6 +2268,7 @@ index 0000000..136269e
 +    AND h.last_work_date BETWEEN p_day - 3 AND p_day
 +    AND COALESCE(w.login, '') NOT LIKE 'TEST_%'
 +    AND NOT EXISTS (SELECT 1 FROM care.active_on(p_day) x WHERE x.worker_id = h.worker_id)
++    AND care.is_on(o.coordinator_id)
 +  ON CONFLICT (worker_id, survey_code, bhp_date) DO NOTHING;
 +  GET DIAGNOSTICS v_e = ROW_COUNT;
 +
@@ -2170,6 +2279,7 @@ index 0000000..136269e
 +  CROSS JOIN (VALUES (care.setting('assess_day_1')::int), (care.setting('assess_day_2')::int)) m(d)
 +  LEFT JOIN reg.site_owner o ON o.site_key = a.site_key AND o.valid_to IS NULL
 +  WHERE (p_day - a.bhp_date) BETWEEN m.d AND m.d + 2
++    AND care.is_on(o.coordinator_id)
 +  ON CONFLICT (worker_id, bhp_date, day_mark) DO NOTHING;
 +  GET DIAGNOSTICS v_a = ROW_COUNT;
 +
@@ -2212,10 +2322,10 @@ index 0000000..136269e
 +COMMIT;
 diff --git a/docs/ROZMOWY.md b/docs/ROZMOWY.md
 new file mode 100644
-index 0000000..21783c2
+index 0000000..a089280
 --- /dev/null
 +++ b/docs/ROZMOWY.md
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,184 @@
 +# Раздел «Rozmowy» — установка и работа
 +
 +Оценка людей, задания координаторам на разговор, контроль разговоров, анкеты новым работникам.
@@ -2241,7 +2351,7 @@ index 0000000..21783c2
 +| `public/rozmowy.html`, `public/js/rozmowy.js` | Страница раздела. |
 +| `bot/handlers.js` | +5 строк: кнопки `CR_`, `SV_`, `SC_` уходят в `bot/care.js`. |
 +| `index.js` | +3 строки: роутер и расписание. |
-+| `public/index.html`, `public/region.html` | +1 пункт меню «📞 Rozmowy». |
++| `public/index.html`, `public/region.html` | Пункт меню «📞 Rozmowy» (в главном меню — только тем, кому модуль включён, и руководителям). |
 +| `public/js/region.js` | В карточке объекта (Region) — блок «Rozmowy i ankiety». |
 +
 +## Установка на сервер (C:\sas-bot)
@@ -2272,14 +2382,38 @@ index 0000000..21783c2
 +     require("./bot/care").schedule(bot);
 +     ```
 +   - **public/index.html** — в меню перед «🚦 Region»:
-+     `<div class="nav-item" onclick="location.href='rozmowy.html'">📞 Rozmowy</div>`
++     `<div id="rozmowyLink" class="nav-item" onclick="location.href='rozmowy.html'" style="display: none">📞 Rozmowy</div>`
++     и в скрипт внизу, рядом с проверкой Region:
++     ```js
++     fetch('/api/care/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
++       .then(function (r) { return r.ok ? r.json() : null; })
++       .then(function (d) { if (d && d.has_access) document.getElementById('rozmowyLink').style.display = ''; })
++       .catch(function () {});
++     ```
 +4. `pm2 restart sas-bot`.
-+5. Проверить: панель → **📞 Rozmowy → ⚙️ Ustawienia → «Przelicz ryzyko teraz»** — покажет, сколько людей посчитано
++5. **Включить координаторов**: панель → **📞 Rozmowy → 👥 Koordynatorzy** → отметить, кому включаем → «Zapisz».
++   **После установки модуль выключен для всех** — ни задания, ни анкеты никуда не уйдут, пока вы не отметите людей.
++6. Проверить: **⚙️ Ustawienia → «Przelicz ryzyko teraz»** — покажет, сколько людей посчитано
 +   и сколько анкет/оценок запланировано. Вкладка **Ryzyko** заполнится.
 +
 +**Первый запуск.** Если поставить днём, утренний список не уйдёт сразу — он отправляется только с 8:00 до 11:00,
 +первые задания придут на следующий рабочий день. Анкеты — в 18:00 того же дня.
 +Чтобы запускать по частям: в Ustawienia `surveys_enabled = 0` (только задания) или `tasks_enabled = 0` (только анкеты).
++
++## Кому включён модуль (👥 Koordynatorzy)
++
++Отдельное меню для админа: список всех активных координаторов с галочкой, регионом, числом объектов и людей,
++есть ли у координатора Telegram и сколько у него открытых разговоров. Можно включать по одному (пилот) или
++«Zaznacz wszystkich z obiektami».
++
++- **Включён** — утром получает задания и оценки новичков, работники его объектов получают анкеты,
++  сам видит раздел в меню панели.
++- **Выключен** — ничего не получает, его работникам анкеты не идут, пункт «📞 Rozmowy» в меню скрыт.
++  При выключении его открытые разговоры сразу отменяются (в Telegram кнопки пропадают с пометкой «скасовано»),
++  запланированные анкеты не отправляются. Уже начатые анкеты работники могут дозаполнить.
++- Включение действует со следующего утра (анкеты — с 18:00).
++- Бал риска считается для всех — региональные и админ видят его в Ryzyko и для невключённых.
++- Региональные и админ видят раздел всегда, даже если сами не включены как координаторы.
 +
 +## Бал риска
 +
@@ -2359,7 +2493,8 @@ index 0000000..21783c2
 +- **Координатор** — свои задания, своих людей в Ryzyko, анкеты своих объектов (без вопросов 🔒),
 +  свою строку в Kontrola (без проверок у работников и оценок 🔒).
 +- **Региональный** — всё по своим регионам, поручения координаторам своего региона, вопросы 🔒 суммарно.
-+- **Админ** — всё + Ustawienia.
++- **Админ** — всё + 👥 Koordynatorzy + Ustawienia.
++- **Координатор, которому модуль не включён**, раздела не видит.
 +
 +## Telegram для региональных и админа
 +
@@ -2405,17 +2540,28 @@ index e32d9d8..7833d44 100644
 +require("./bot/care").schedule(bot);
 \ No newline at end of file
 diff --git a/public/index.html b/public/index.html
-index dd68e90..058d0b5 100644
+index dd68e90..dc4539c 100644
 --- a/public/index.html
 +++ b/public/index.html
 @@ -31,6 +31,7 @@
        <div class="nav-item" onclick="showPage('history')">📋 Historia</div>
        <div class="nav-item" onclick="window.location='/analytics.html'">📈 Analityka</div>
        <div class="nav-item" onclick="location.href='raporty.html'">📑 Raporty</div>
-+      <div class="nav-item" onclick="location.href='rozmowy.html'">📞 Rozmowy</div>
++      <div id="rozmowyLink" class="nav-item" onclick="location.href='rozmowy.html'" style="display: none">📞 Rozmowy</div>
        <div id="regionLink" class="nav-item" onclick="location.href='region.html'" style="display: none">🚦 Region</div>
        <div class="nav-item" onclick="showPage('settings')">⚙️ Ustawienia</div>
        <div id="adminLink" class="nav-item" onclick="window.location = '/admin.html'" style="display: none">
+@@ -1067,6 +1068,10 @@ fetch('/api/regional/me', { headers: { 'x-session': localStorage.getItem('sas_se
+   .then(function (r) { return r.ok ? r.json() : null; })
+   .then(function (d) { if (d && d.has_access) document.getElementById('regionLink').style.display = ''; })
+   .catch(function () {});
++fetch('/api/care/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
++  .then(function (r) { return r.ok ? r.json() : null; })
++  .then(function (d) { if (d && d.has_access) document.getElementById('rozmowyLink').style.display = ''; })
++  .catch(function () {});
+ </script>
+ </body>
+ 
 diff --git a/public/js/region.js b/public/js/region.js
 index f985283..1661244 100644
 --- a/public/js/region.js
@@ -2476,10 +2622,10 @@ index f985283..1661244 100644
  function renderCardBox(c) {
 diff --git a/public/js/rozmowy.js b/public/js/rozmowy.js
 new file mode 100644
-index 0000000..3247d88
+index 0000000..0029839
 --- /dev/null
 +++ b/public/js/rozmowy.js
-@@ -0,0 +1,595 @@
+@@ -0,0 +1,702 @@
 +// ══════════════════════════════════════════════════════════════════════
 +//  Розділ «Rozmowy» — завдання на розмову, ризик, анкети, контроль
 +// ══════════════════════════════════════════════════════════════════════
@@ -2505,7 +2651,8 @@ index 0000000..3247d88
 +  leaving: { l: "🚪 Chce odejść", c: "red" },
 +  no_answer: { l: "📵 Nie odebrał", c: "muted" },
 +};
-+const TITLES = { tasks: "Do rozmowy", risk: "Ryzyko odejścia", surveys: "Ankiety", control: "Kontrola koordynacji", settings: "Ustawienia" };
++const TITLES = { tasks: "Do rozmowy", risk: "Ryzyko odejścia", surveys: "Ankiety", control: "Kontrola koordynacji",
++  coords: "Koordynatorzy", settings: "Ustawienia" };
 +const SURVEY_NAME = { d3: "3. dzień", d14: "14 dni", d30: "30 dni", d60: "60 dni", exit: "Po odejściu" };
 +
 +// ── Утиліти ───────────────────────────────────────────────────────────
@@ -2591,6 +2738,14 @@ index 0000000..3247d88
 +  if (!me) return;
 +  if (!me.ok) { document.getElementById("content").innerHTML = `<div class="error">${esc(me.error)}</div>`; return; }
 +  ST.me = me;
++  if (!me.has_access) {
++    document.querySelectorAll(".nav-item[data-view]").forEach((el) => (el.style.display = "none"));
++    document.getElementById("toolbar").style.display = "none";
++    document.getElementById("content").innerHTML =
++      `<div class="noaccess">📞 Moduł <b>Rozmowy</b> nie jest jeszcze dla Ciebie włączony.<br>
++       Włącza go kierownik działu koordynacji.</div>`;
++    return;
++  }
 +  document.getElementById("lgEsc").textContent = me.settings.escalate_bdays;
 +  document.getElementById("lgPerDay").textContent = me.settings.tasks_per_day;
 +  if (me.is_manager) {
@@ -2600,7 +2755,10 @@ index 0000000..3247d88
 +    rs.innerHTML = `<option value="">Wszystkie</option>` + me.regions.map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join("");
 +    fillCoords();
 +  }
-+  if (me.is_admin) document.getElementById("navSettings").style.display = "";
++  if (me.is_admin) {
++    document.getElementById("navSettings").style.display = "";
++    document.getElementById("navCoords").style.display = "";
++  }
 +  const h = (location.hash || "").replace("#", "");
 +  showView(TITLES[h] ? h : "tasks");
 +}
@@ -2609,7 +2767,7 @@ index 0000000..3247d88
 +  const cs = document.getElementById("selCoord");
 +  const cur = cs.value;
 +  cs.innerHTML = `<option value="">Wszyscy</option>` +
-+    ST.me.coordinators.map((c) => `<option value="${c.id}" ${String(c.id) === cur ? "selected" : ""}>${esc(c.name)}</option>`).join("");
++    ST.me.coordinators.map((c) => `<option value="${c.id}" ${String(c.id) === cur ? "selected" : ""}>${esc(c.name)}${c.enabled ? "" : " (wył.)"}</option>`).join("");
 +}
 +
 +function showView(v) {
@@ -2618,7 +2776,7 @@ index 0000000..3247d88
 +  document.querySelectorAll(".nav-item[data-view]").forEach((el) => el.classList.toggle("active", el.dataset.view === v));
 +  document.getElementById("topTitle").textContent = TITLES[v];
 +  document.getElementById("selDaysBox").style.display = v === "surveys" || v === "control" ? "" : "none";
-+  document.getElementById("toolbar").style.visibility = v === "settings" ? "hidden" : "";
++  document.getElementById("toolbar").style.visibility = v === "settings" || v === "coords" ? "hidden" : "";
 +  if (v === "surveys" && !document.getElementById("selDays").dataset.touched) document.getElementById("selDays").value = "90";
 +  if (v === "control" && !document.getElementById("selDays").dataset.touched) document.getElementById("selDays").value = "28";
 +  history.replaceState(null, "", "#" + v);
@@ -2633,6 +2791,7 @@ index 0000000..3247d88
 +  else if (ST.view === "risk") loadRisk();
 +  else if (ST.view === "surveys") loadSurveys();
 +  else if (ST.view === "control") loadControl();
++  else if (ST.view === "coords") loadCoords();
 +  else if (ST.view === "settings") loadSettings();
 +}
 +
@@ -2707,7 +2866,10 @@ index 0000000..3247d88
 +  document.getElementById("taskCnt").textContent = list.length ? `${list.length}` : "";
 +  const box = document.getElementById("taskList");
 +  if (!list.length) {
-+    box.innerHTML = `<div class="empty">${ST.taskFilter === "open" ? "Brak otwartych rozmów 👌 Nowa lista przychodzi codziennie rano." : "Brak rozmów w tym widoku"}</div>`;
++    const noneOn = ST.me.is_manager && !ST.me.coordinators.some((c) => c.enabled);
++    box.innerHTML = `<div class="empty">${noneOn
++      ? `Moduł nie jest jeszcze włączony dla żadnego koordynatora.${ST.me.is_admin ? ` <a href="#coords" style="color:var(--accent)">Włącz w 👥 Koordynatorzy</a>` : ""}`
++      : ST.taskFilter === "open" ? "Brak otwartych rozmów 👌 Nowa lista przychodzi codziennie rano." : "Brak rozmów w tym widoku"}</div>`;
 +    return;
 +  }
 +  box.innerHTML = `<div class="tasks">${list.map(taskCard).join("")}</div>`;
@@ -3075,6 +3237,97 @@ index 0000000..3247d88
 +  m.className = "form-msg " + (r && r.ok ? "ok" : "err");
 +  m.textContent = r && r.ok ? JSON.stringify(r.result) : r ? r.error : "Błąd";
 +}
++
++// ══════════════════════════════════════════════════════════════════════
++//  Koordynatorzy — komu włączony moduł (admin)
++// ══════════════════════════════════════════════════════════════════════
++ST.coordFilter = "all";
++ST.coordRows = [];
++ST.coordEdit = {};   // id → bool (tylko zmienione)
++
++function setCoordFilter(f) {
++  ST.coordFilter = f;
++  document.querySelectorAll("#coordChips .chip").forEach((c) => c.classList.toggle("active", c.dataset.f === f));
++  renderCoords();
++}
++async function loadCoords() {
++  document.getElementById("coordTable").innerHTML = `<div class="loading">Ładowanie…</div>`;
++  const r = await api("/coordinators");
++  if (!r) return;
++  if (!r.ok) { document.getElementById("coordTable").innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
++  ST.coordRows = r.data;
++  ST.coordEdit = {};
++  document.getElementById("coordMsg").textContent = "";
++  renderCoords();
++}
++function coordOn(c) { return c.id in ST.coordEdit ? ST.coordEdit[c.id] : c.enabled; }
++function renderCoords() {
++  const q = (document.getElementById("coordSearch").value || "").toLowerCase();
++  const all = ST.coordRows;
++  const rows = all.filter((c) => (ST.coordFilter === "all" || (ST.coordFilter === "on") === coordOn(c))
++    && (!q || (c.full_name + " " + (c.regions || "")).toLowerCase().includes(q)));
++  const on = all.filter(coordOn);
++  document.getElementById("coordKpis").innerHTML = `
++    <div class="kpi ${on.length ? "good" : ""}"><div class="l">Włączeni</div><div class="v">${on.length}</div>
++      <div class="s">z ${all.filter((c) => c.sites).length} koordynatorów z obiektami</div></div>
++    <div class="kpi"><div class="l">Pracownicy w module</div><div class="v">${on.reduce((n, c) => n + c.workers, 0)}</div>
++      <div class="s">z ${all.reduce((n, c) => n + c.workers, 0)} pracujących</div></div>
++    <div class="kpi ${on.some((c) => !c.has_tg) ? "warn" : ""}"><div class="l">Włączeni bez Telegrama</div>
++      <div class="v">${on.filter((c) => !c.has_tg).length}</div><div class="s">dostaną zadania tylko w panelu</div></div>`;
++  document.getElementById("coordCnt").textContent = `${rows.length}`;
++  document.getElementById("coordTable").innerHTML = rows.length ? `<table class="rg"><thead><tr>
++      <th style="width:40px"></th><th>Koordynator</th><th>Region</th><th class="num">Obiekty</th><th class="num">Pracownicy</th>
++      <th>Telegram</th><th class="num">Otwarte rozmowy</th><th>Włączony od</th></tr></thead><tbody>
++    ${rows.map((c) => {
++      const v = coordOn(c);
++      return `<tr class="${v ? "" : "off"} ${c.id in ST.coordEdit ? "changed" : ""}">
++        <td><label class="sw"><input type="checkbox" ${v ? "checked" : ""} onchange="toggleCoord(${c.id}, this.checked)" /></label></td>
++        <td class="nw"><b>${esc(c.full_name)}</b>${c.is_lead ? `<span class="tag">regionalny</span>` : ""}</td>
++        <td class="muted">${esc(c.regions || "—")}</td>
++        <td class="num">${c.sites || "—"}</td>
++        <td class="num">${c.workers || "—"}</td>
++        <td>${c.has_tg ? `<span class="green">✓</span> <span class="muted">${esc(c.lang)}</span>` : `<span class="amber">brak — tylko panel</span>`}</td>
++        <td class="num">${c.open_tasks || ""}</td>
++        <td class="muted">${c.enabled && c.enabled_at ? ddt(c.enabled_at) : ""}</td></tr>`;
++    }).join("")}</tbody></table>` : `<div class="empty">Brak koordynatorów w tym widoku</div>`;
++  updateCoordBar();
++}
++function toggleCoord(id, val) {
++  const c = ST.coordRows.find((x) => x.id === id);
++  if (!c) return;
++  if (val === c.enabled) delete ST.coordEdit[id]; else ST.coordEdit[id] = val;
++  renderCoords();
++}
++function markAll(val) {
++  for (const c of ST.coordRows) {
++    const want = val ? c.sites > 0 : false;
++    if (!val || c.sites > 0) {
++      if (want === c.enabled) delete ST.coordEdit[c.id]; else ST.coordEdit[c.id] = want;
++    }
++  }
++  renderCoords();
++}
++function updateCoordBar() {
++  const ids = Object.keys(ST.coordEdit);
++  const offTasks = ST.coordRows.filter((c) => ST.coordEdit[c.id] === false).reduce((n, c) => n + c.open_tasks, 0);
++  const plus = ids.filter((id) => ST.coordEdit[id]).length, minus = ids.length - plus;
++  const msg = document.getElementById("coordMsg");
++  msg.className = "form-msg";
++  msg.textContent = ids.length ? `Zmiany: +${plus} / −${minus}${offTasks ? ` · anulujemy ${offTasks} otwartych rozmów` : ""}` : "";
++  document.getElementById("coordSave").disabled = !ids.length;
++}
++async function saveCoords() {
++  const btn = document.getElementById("coordSave");
++  btn.disabled = true;
++  const r = await api("/coordinators", { method: "PUT", body: { enabled: ST.coordEdit } });
++  const msg = document.getElementById("coordMsg");
++  if (!r || !r.ok) { msg.className = "form-msg err"; msg.textContent = r ? r.error : "Błąd"; btn.disabled = false; return; }
++  await loadCoords();
++  msg.className = "form-msg ok";
++  msg.textContent = `Zapisano${r.cancelled ? ` · anulowano ${r.cancelled} rozmów` : ""}`;
++  const me = await api("/me");
++  if (me && me.ok) { ST.me.coordinators = me.coordinators; fillCoords(); }
++}
 diff --git a/public/region.html b/public/region.html
 index 9b43779..b7a4422 100644
 --- a/public/region.html
@@ -3089,10 +3342,10 @@ index 9b43779..b7a4422 100644
  
 diff --git a/public/rozmowy.html b/public/rozmowy.html
 new file mode 100644
-index 0000000..3bc1128
+index 0000000..7b083b0
 --- /dev/null
 +++ b/public/rozmowy.html
-@@ -0,0 +1,278 @@
+@@ -0,0 +1,315 @@
 +<!doctype html>
 +<html lang="pl">
 +<head>
@@ -3212,6 +3465,14 @@ index 0000000..3bc1128
 +      border-bottom: 1px solid var(--border); font-size: 12px; }
 +    .cfg-row .k { font-family: var(--mono); font-size: 11px; color: var(--text2); }
 +    .cfg-row .note { color: var(--text3); font-size: 11px; }
++    .savebar { display: flex; gap: 8px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--border); flex-wrap: wrap; }
++    .savebar .spacer { margin-left: auto; }
++    table.rg tr.changed td { background: rgba(59,130,246,.08); }
++    table.rg tr.off td { color: var(--text3); }
++    table.rg tr.off td b { color: var(--text2); }
++    .sw { display: inline-flex; align-items: center; cursor: pointer; }
++    .sw input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
++    .tag { font-size: 10px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--border); color: var(--text2); margin-left: 4px; }
 +    .noaccess { max-width: 520px; margin: 60px auto; text-align: center; color: var(--text2); font-size: 13px; line-height: 1.6; }
 +
 +    .main { min-width: 0; }
@@ -3245,6 +3506,7 @@ index 0000000..3bc1128
 +      <div class="nav-item" data-view="risk" onclick="showView('risk')">📈 Ryzyko</div>
 +      <div class="nav-item" data-view="surveys" onclick="showView('surveys')">📝 Ankiety</div>
 +      <div class="nav-item" data-view="control" onclick="showView('control')">🎯 Kontrola</div>
++      <div class="nav-item" data-view="coords" id="navCoords" onclick="showView('coords')" style="display:none">👥 Koordynatorzy</div>
 +      <div class="nav-item" data-view="settings" id="navSettings" onclick="showView('settings')" style="display:none">⚙️ Ustawienia</div>
 +    </div>
 +  </div>
@@ -3342,6 +3604,34 @@ index 0000000..3bc1128
 +      </div>
 +
 +      <!-- НАЛАШТУВАННЯ -->
++      <!-- КОМУ УВІМКНЕНО (адмін) -->
++      <div class="rz-view" id="view-coords">
++        <div class="kpis" id="coordKpis"></div>
++        <div class="section">
++          <div class="section-head">
++            Komu włączony moduł Rozmowy <span class="cnt" id="coordCnt"></span>
++            <span class="spacer"></span>
++            <div class="chips" id="coordChips">
++              <button class="chip active" data-f="all" onclick="setCoordFilter('all')">Wszyscy</button>
++              <button class="chip" data-f="on" onclick="setCoordFilter('on')">Włączeni</button>
++              <button class="chip" data-f="off" onclick="setCoordFilter('off')">Wyłączeni</button>
++            </div>
++            <input type="text" id="coordSearch" placeholder="Szukaj…" oninput="renderCoords()" style="width: 140px" />
++          </div>
++          <div class="tblwrap" id="coordTable"><div class="loading">Ładowanie…</div></div>
++          <div class="savebar">
++            <button class="btn btn-ghost btn-sm" onclick="markAll(true)">Zaznacz wszystkich z obiektami</button>
++            <button class="btn btn-ghost btn-sm" onclick="markAll(false)">Odznacz wszystkich</button>
++            <span class="spacer"></span>
++            <span class="form-msg" id="coordMsg"></span>
++            <button class="btn btn-primary btn-sm" id="coordSave" onclick="saveCoords()" disabled>Zapisz</button>
++          </div>
++          <div class="legend">Włączony koordynator codziennie rano dostaje listę rozmów i oceny nowych, a pracownicy jego obiektów — ankiety.
++            Wyłączenie od razu anuluje jego otwarte rozmowy. Włączenie działa od następnego rana (ankiety — od 18:00).
++            Koordynator bez Telegrama pracuje tylko w panelu. Regionalni i admin widzą sekcję zawsze.</div>
++        </div>
++      </div>
++
 +      <div class="rz-view" id="view-settings"><div id="settingsBody"><div class="loading">Ładowanie…</div></div></div>
 +    </div>
 +  </div>

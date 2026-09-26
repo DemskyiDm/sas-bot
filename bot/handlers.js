@@ -634,8 +634,8 @@ async function handleUpdate(bot, update) {
       }
 
       const hrs = parseFloat(payload.substring(2).replace(",", "."));
-      if (isNaN(hrs) || hrs <= 0 || hrs > 13) {
-        await answer("0.25-13");
+      if (isNaN(hrs) || hrs <= 0 || hrs > 17) {
+        await answer("0.25-16");
         return;
       }
 
@@ -890,7 +890,7 @@ async function handleUpdate(bot, update) {
       else dec = 24;
     } else {
       const n = parseFloat(s.replace(",", "."));
-      if (!isNaN(n) && n >= 0 && n <= 13) dec = n;
+      if (!isNaN(n) && n >= 0 && n <= 16) dec = n;
     }
 
     if (dec === null || dec <= 0) {

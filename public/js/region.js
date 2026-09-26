@@ -115,6 +115,12 @@ async function init() {
     return;
   }
   const h = location.hash.replace("#", "");
+  // region.html#site=<obiekt> — odnośnik z pulpitu kierownika: od razu karta obiektu
+  if (h.startsWith("site=")) {
+    showView("board");
+    openSite(h.slice(5));
+    return;
+  }
   showView(["board", "coords", "cards", "settings"].includes(h) ? h : "board");
 }
 

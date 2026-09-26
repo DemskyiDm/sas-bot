@@ -33,6 +33,7 @@
       <div class="nav-item" onclick="location.href='raporty.html'">📑 Raporty</div>
       <div id="rozmowyLink" class="nav-item" onclick="location.href='rozmowy.html'" style="display: none">📞 Rozmowy</div>
       <div id="regionLink" class="nav-item" onclick="location.href='region.html'" style="display: none">🚦 Region</div>
+      <div id="boardLink" class="nav-item" onclick="location.href='zarzad.html'" style="display: none">📊 Pulpit kierownika</div>
       <div class="nav-item" onclick="showPage('settings')">⚙️ Ustawienia</div>
       <div id="adminLink" class="nav-item" onclick="window.location = '/admin.html'" style="display: none">
         ⚙️ Admin panel
@@ -1067,6 +1068,10 @@ document.querySelector('.sidebar')?.addEventListener('click', (e) => {
 fetch('/api/regional/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
   .then(function (r) { return r.ok ? r.json() : null; })
   .then(function (d) { if (d && d.has_access) document.getElementById('regionLink').style.display = ''; })
+  .catch(function () {});
+fetch('/api/board/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (d) { if (d && d.has_access) document.getElementById('boardLink').style.display = ''; })
   .catch(function () {});
 fetch('/api/care/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
   .then(function (r) { return r.ok ? r.json() : null; })

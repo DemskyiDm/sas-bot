@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SAS Logistic — Pulpit kierownika</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <style>
+    /* ── тільки для «Pulpit kierownika» ── */
+    :root { --rag-r: var(--red); --rag-a: var(--accent2); --rag-g: var(--green); --rag-s: #64748b;
+      --s-hire: #3987e5; --s-dep: #d95926; --seq: 57,135,229; }
+    .content { overflow-y: auto; }
+    .content > * { flex-shrink: 0; }
+    .content.busy > * { opacity: .55; transition: opacity .15s; }
+    .main { min-width: 0; }
+    .bd-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .bd-toolbar label { font-size: 11px; color: var(--text2); }
+    .bd-toolbar .grp { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .topbar-title { white-space: nowrap; }
+    .chips { display: flex; gap: 4px; flex-wrap: wrap; }
+    .chip { padding: 3px 10px; font-size: 11px; border-radius: 12px; border: 1px solid var(--border);
+      background: transparent; color: var(--text2); cursor: pointer; }
+    .chip.active { background: var(--surface2); color: var(--text); border-color: var(--accent); }
+    .fchip { display: none; align-items: center; gap: 6px; font-size: 11px; padding: 3px 6px 3px 10px; border-radius: 12px;
+      background: rgba(59,130,246,.15); color: var(--text); border: 1px solid var(--accent); }
+    .fchip button { background: none; border: none; color: var(--text2); cursor: pointer; font-size: 12px; }
+    .period-line { font-size: 12px; color: var(--text2); margin: 0 0 12px; line-height: 1.6; }
+    .period-line b { color: var(--text); font-weight: 600; }
+    .crumb a { color: var(--accent); cursor: pointer; text-decoration: none; }
+
+    .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; cursor: pointer;
+      display: flex; flex-direction: column; gap: 3px; text-align: left; color: var(--text); font: inherit; }
+    .kpi:hover { border-color: var(--accent); }
+    .kpi .l { font-size: 11px; color: var(--text2); }
+    .kpi .row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+    .kpi .v { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .kpi .d { font-size: 12px; font-weight: 600; font-family: var(--mono); }
+    .kpi .d.good { color: var(--green); } .kpi .d.bad { color: var(--red); } .kpi .d.flat { color: var(--text3); }
+    .kpi .s { font-size: 11px; color: var(--text3); line-height: 1.4; }
+    .kpi.off .v { color: var(--text3); font-size: 18px; }
+
+    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+    .section-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border);
+      font-size: 13px; font-weight: 600; flex-wrap: wrap; }
+    .section-head .cnt { font-size: 11px; color: var(--text2); font-weight: 400; }
+    .section-head .spacer { margin-left: auto; }
+    .grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+    .grid2 > .section { margin-bottom: 16px; }
+    .legend { padding: 8px 14px; font-size: 11px; color: var(--text3); border-top: 1px solid var(--border); line-height: 1.5; }
+    .empty, .loading { padding: 26px; text-align: center; color: var(--text3); font-size: 12px; }
+    .error { padding: 14px; color: var(--red); font-size: 12px; }
+    .muted { color: var(--text3); }
+    .linkbtn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 11px; padding: 0; }
+
+    /* Do decyzji */
+    .dec { display: flex; gap: 10px; align-items: flex-start; padding: 8px 14px; border-bottom: 1px solid var(--border); cursor: pointer; }
+    .dec:last-child { border-bottom: none; }
+    .dec:hover { background: var(--surface2); }
+    .dec .sev { font-size: 10px; font-weight: 700; font-family: var(--mono); border-radius: 4px; padding: 2px 6px; flex: none; margin-top: 1px; }
+    .dec .sev.s1 { background: rgba(239,68,68,.2); color: #fca5a5; border: 1px solid rgba(239,68,68,.5); }
+    .dec .sev.s2 { background: rgba(245,158,11,.15); color: #fcd34d; border: 1px solid rgba(245,158,11,.45); }
+    .dec .sev.s3 { background: var(--surface2); color: var(--text2); border: 1px solid var(--border); }
+    .dec .t { font-size: 13px; }
+    .dec .sub { font-size: 11px; color: var(--text3); margin-top: 1px; }
+
+    /* Heatmap */
+    table.hm { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.hm th { font-size: 10px; color: var(--text3); font-family: var(--mono); font-weight: 400; padding: 6px 4px; text-align: center; white-space: nowrap; }
+    table.hm th.l, table.hm td.l { text-align: left; padding-left: 14px; }
+    table.hm td { padding: 3px 2px; border-top: 1px solid var(--border); }
+    table.hm td.l { white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+    table.hm td.l a { color: var(--text); cursor: pointer; text-decoration: none; }
+    table.hm td.l a:hover { color: var(--accent); }
+    table.hm tr.company td.l { font-weight: 700; }
+    table.hm td.hc { font-family: var(--mono); color: var(--text2); text-align: right; padding-right: 10px; font-size: 11px; }
+    .cell { height: 22px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px;
+      font-weight: 700; font-family: var(--mono); color: #0f1117; min-width: 26px; cursor: default; border: 2px solid transparent; }
+    .cell:hover { border-color: var(--text); }
+    .cell.R { background: var(--rag-r); } .cell.A { background: var(--rag-a); } .cell.G { background: var(--rag-g); }
+    .cell.S { background: var(--rag-s); } .cell.N, .cell.x { background: var(--surface2); color: var(--text3); }
+    .key { display: inline-flex; align-items: center; gap: 5px; margin-right: 12px; }
+    .key i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+    /* Charts */
+    .chart { padding: 10px 14px 6px; }
+    .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .chart text { font-size: 10px; fill: var(--text3); font-family: system-ui, sans-serif; }
+    .chart .lbl { fill: var(--text2); }
+    .chart .val { fill: var(--text); font-weight: 600; }
+    .chart .grid { stroke: var(--border); stroke-width: 1; }
+    .chart .hit { fill: transparent; cursor: default; }
+    .chart .hit:hover { fill: rgba(255,255,255,.04); }
+    .lg { display: flex; gap: 14px; font-size: 11px; color: var(--text2); padding: 0 14px 8px; flex-wrap: wrap; }
+    .lg span { display: inline-flex; align-items: center; gap: 6px; }
+    .lg i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+    .lg i.dot { border-radius: 50%; }
+    .lg i.ring { border-radius: 50%; background: transparent !important; border: 2px solid var(--accent); }
+
+    table.rg { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.rg th { text-align: left; padding: 8px 10px; font-size: 10px; letter-spacing: .5px; color: var(--text3);
+      border-bottom: 1px solid var(--border); font-family: var(--mono); text-transform: uppercase; white-space: nowrap; }
+    table.rg th.src { text-transform: none; letter-spacing: 0; font-family: inherit; font-size: 11px; white-space: normal; line-height: 1.35; }
+    table.rg th.sort { cursor: pointer; } table.rg th.sort:hover { color: var(--text); }
+    table.rg td { padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    table.rg tr:last-child td { border-bottom: none; }
+    table.rg td.num, table.rg th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+    table.rg td.c, table.rg th.c { text-align: center; }
+    table.rg tbody tr.click { cursor: pointer; }
+    table.rg tbody tr.click:hover td { background: var(--surface2); }
+    table.rg tr.total td { font-weight: 700; border-top: 1px solid var(--border-strong, var(--border)); }
+    .tblwrap { overflow-x: auto; }
+    .seq { border-radius: 4px; padding: 3px 6px; display: inline-block; min-width: 44px; text-align: right; }
+    .red { color: var(--red); } .amber { color: var(--accent2); } .green { color: var(--green); }
+    .tag { font-size: 10px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--border); color: var(--text2); white-space: nowrap; }
+    .tag.on { border-color: var(--accent); color: var(--text); }
+
+    .vtiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; padding: 12px 14px; }
+    .vt { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+    .vt .l { font-size: 11px; color: var(--text2); }
+    .vt .v { font-size: 20px; font-weight: 700; margin-top: 3px; font-variant-numeric: tabular-nums; }
+    .vt .s { font-size: 10px; color: var(--text3); margin-top: 2px; }
+    .lock { font-size: 10px; color: var(--purple); }
+    .axes { display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--text2); flex-wrap: wrap; }
+    .cmp { padding: 12px 14px; font-size: 12px; }
+    .cmp table { width: 100%; border-collapse: collapse; }
+    .cmp td, .cmp th { padding: 5px 6px; border-bottom: 1px solid var(--border); text-align: right; font-family: var(--mono); }
+    .cmp th { font-size: 10px; color: var(--text3); font-weight: 400; }
+    .cmp td:first-child, .cmp th:first-child { text-align: left; font-family: inherit; }
+
+    /* Tooltip */
+    #tip { position: fixed; z-index: 80; pointer-events: none; background: #0b0f17; border: 1px solid var(--border);
+      border-radius: 6px; padding: 7px 9px; font-size: 11px; color: var(--text2); display: none; max-width: 280px; line-height: 1.5;
+      box-shadow: 0 4px 14px rgba(0,0,0,.4); }
+    #tip b { color: var(--text); }
+    #tip .k { display: inline-block; width: 12px; height: 2px; vertical-align: middle; margin-right: 6px; }
+
+    /* Drawer */
+    .drawer-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 50; display: none; }
+    .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(980px, 100vw); background: var(--bg);
+      border-left: 1px solid var(--border); z-index: 51; overflow-y: auto; transform: translateX(100%); transition: transform .2s; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-bg.open { display: block; }
+    .dw-head { position: sticky; top: 0; background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 14px 18px; display: flex; gap: 12px; align-items: flex-start; z-index: 2; }
+    .dw-head h2 { font-size: 17px; font-weight: 700; }
+    .dw-head .sub { font-size: 12px; color: var(--text2); margin-top: 3px; }
+    .dw-tools { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+    .dw-close { background: transparent; border: 1px solid var(--border); color: var(--text2);
+      border-radius: 5px; width: 28px; height: 28px; cursor: pointer; font-size: 14px; }
+    .dw-body { padding: 14px 18px; }
+    .noaccess { max-width: 520px; margin: 60px auto; text-align: center; color: var(--text2); font-size: 13px; line-height: 1.6; }
+
+    @media (max-width: 1200px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+    @media (max-width: 800px) {
+      .topbar { height: auto; flex-wrap: wrap; padding: 10px 16px; gap: 8px; }
+      .topbar-right { display: none; }
+      .content { padding: 12px; }
+      .kpi .v { font-size: 22px; }
+      .dw-head, .dw-body { padding-left: 12px; padding-right: 12px; }
+    }
+  </style>
+  <link rel="stylesheet" href="/css/mobile.css" />
+</head>
+<body>
+  <div class="sidebar">
+    <button class="sidebar-toggle" onclick="toggleSidebar()" title="Ukryj / Przypnij menu">◀</button>
+    <div class="logo">
+      <div class="logo-tag">SAS LOGISTIC</div>
+      <div class="logo-name">Pulpit kierownika</div>
+    </div>
+    <div class="nav">
+      <div class="nav-item" onclick="location.href='index.html'">⬅️ Panel główny</div>
+      <div class="nav-item active" data-sec="sec-kpi" onclick="goSec('sec-kpi')">📊 Przegląd</div>
+      <div class="nav-item" data-sec="sec-dec" onclick="goSec('sec-dec')">⚠️ Do decyzji</div>
+      <div class="nav-item" data-sec="sec-rag" onclick="goSec('sec-rag')">🚦 Regiony</div>
+      <div class="nav-item" data-sec="sec-flow" onclick="goSec('sec-flow')">📈 Ruch kadrowy</div>
+      <div class="nav-item" data-sec="sec-coh" onclick="goSec('sec-coh')">🧬 Kohorty i przyczyny</div>
+      <div class="nav-item" data-sec="sec-voice" onclick="goSec('sec-voice')">🗣️ Głos pracownika</div>
+      <div class="nav-item" data-sec="sec-coord" onclick="goSec('sec-coord')">👥 Koordynatorzy</div>
+      <div class="nav-item" id="navRegion" style="display:none" onclick="location.href='region.html'">🚦 Region</div>
+      <div class="nav-item" id="navRozmowy" style="display:none" onclick="location.href='rozmowy.html'">📞 Rozmowy</div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-title">Pulpit kierownika</div>
+      <div class="bd-toolbar" id="toolbar">
+        <span class="grp"><label for="selRegion">Region</label><select id="selRegion" onchange="onFilter()"></select></span>
+        <span class="grp"><label for="selClient">Klient</label><select id="selClient" onchange="onFilter()"></select></span>
+        <div class="chips" id="periodChips">
+          <button class="chip" data-p="7" onclick="setPeriod(7)">Tydzień</button>
+          <button class="chip active" data-p="28" onclick="setPeriod(28)">4 tygodnie</button>
+          <button class="chip" data-p="91" onclick="setPeriod(91)">13 tygodni</button>
+        </div>
+        <span class="grp"><label for="selTo">do</label><select id="selTo" onchange="onFilter()"></select></span>
+        <span class="fchip" id="coordChip"><span id="coordChipName"></span><button onclick="clearCoord()" aria-label="Usuń filtr koordynatora">✕</button></span>
+      </div>
+      <div class="topbar-right"><span id="userName" style="font-size: 12px; color: var(--text2)"></span></div>
+    </div>
+
+    <div class="content" id="content">
+      <div class="period-line" id="periodLine"></div>
+
+      <div id="sec-kpi" class="kpis"><div class="loading">Ładowanie…</div></div>
+
+      <div class="section" id="sec-dec">
+        <div class="section-head">⚠️ Do decyzji <span class="cnt" id="decCnt"></span>
+          <span class="spacer"></span><button class="linkbtn" id="decMore" onclick="toggleDec()"></button></div>
+        <div id="decList"><div class="loading">Ładowanie…</div></div>
+      </div>
+
+      <div class="section" id="sec-rag">
+        <div class="section-head">🚦 Regiony tydzień po tygodniu <span class="cnt" id="ragCrumb"></span>
+          <span class="spacer"></span>
+          <span class="cnt"><span class="key"><i style="background:var(--rag-g)"></i>zielony</span><span class="key"><i style="background:var(--rag-a)"></i>żółty</span><span class="key"><i style="background:var(--rag-r)"></i>czerwony</span><span class="key"><i style="background:var(--rag-s)"></i>strukturalny</span></span></div>
+        <div class="tblwrap" id="ragTable"><div class="loading">Ładowanie…</div></div>
+        <div class="legend" id="ragLegend">Region liczony jak jeden duży obiekt — te same progi, co w sekcji Region (rotacja, dożycie, NN). Liczba w kratce — ile obiektów jest czerwonych.
+          Kliknij region, żeby zobaczyć jego obiekty; kliknij obiekt, żeby otworzyć jego kartę w sekcji Region.</div>
+      </div>
+
+      <div class="grid2" id="sec-flow">
+        <div class="section">
+          <div class="section-head">📈 Przyjęci i odejścia <span class="cnt">12 tygodni</span></div>
+          <div class="lg"><span><i style="background:var(--s-hire)"></i>przyjęci</span><span><i style="background:var(--s-dep)"></i>odejścia</span></div>
+          <div class="chart" id="flowChart"></div>
+          <div class="chart" id="hcChart" style="padding-top:0"></div>
+          <div class="legend">Odejście — koniec pracy w firmie. Przejście na inny obiekt albo powrót w ciągu 14 dni to nie odejście.</div>
+        </div>
+        <div class="section">
+          <div class="section-head">⏱️ Kiedy odchodzą <span class="cnt" id="tenureCnt"></span></div>
+          <div class="chart" id="tenureChart"></div>
+          <div class="legend">Staż w dniu odejścia, w wybranym okresie. Dużo odejść w pierwszych 30 dniach — sprawdź rekrutację i pierwsze dni na obiekcie;
+            przed 80. dniem — mieszkanie, pieniądze i godziny.</div>
+        </div>
+      </div>
+
+      <div class="grid2" id="sec-coh">
+        <div class="section">
+          <div class="section-head">🧬 Kohorty — ilu z przyjętych nadal pracuje</div>
+          <div class="tblwrap" id="cohTable"><div class="loading">Ładowanie…</div></div>
+          <div class="legend">Wiersz — miesiąc przyjęcia. Kolumna — dzień pracy. Gdzie liczby spadają najmocniej, tam jest problem.
+            „·” — ten dzień jeszcze nie nadszedł.</div>
+        </div>
+        <div class="section">
+          <div class="section-head">❓ Dlaczego odchodzą <span class="cnt">90 dni</span></div>
+          <div class="tblwrap" id="reasonTable"><div class="loading">Ładowanie…</div></div>
+          <div class="legend">Każda kolumna to inne źródło, procent — udział w tym źródle. Porównaj, co mówią sami pracownicy, a co piszą koordynatorzy i regionalni.</div>
+        </div>
+      </div>
+
+      <div class="section" id="sec-voice">
+        <div class="section-head">🗣️ Głos pracownika <span class="cnt">ankiety z 90 dni</span>
+          <span class="spacer"></span><button class="linkbtn" onclick="openVoiceRegions()">Po regionach →</button></div>
+        <div id="voiceBox"><div class="loading">Ładowanie…</div></div>
+      </div>
+
+      <div class="section" id="sec-coord">
+        <div class="section-head">👥 Koordynatorzy — proces i wynik <span class="cnt" id="coordCnt"></span>
+          <span class="spacer"></span>
+          <span class="axes"><label for="selX">oś X</label><select id="selX" onchange="renderQuad()">
+              <option value="fill">Godziny wpisane w bocie</option><option value="ontime">Rozmowy zamknięte na czas</option></select>
+            <label for="selY">oś Y</label><select id="selY" onchange="renderQuad()">
+              <option value="s80">Dożycie 80 dni</option><option value="rot">Rotacja (odwrócona)</option></select></span></div>
+        <div class="grid2" style="gap:0">
+          <div>
+            <div class="chart" id="quadChart"></div>
+            <div class="lg"><span><i class="dot" style="background:var(--accent)"></i>moduł Rozmowy włączony</span><span><i class="ring"></i>wyłączony</span><span class="muted">wielkość — liczba pracowników</span></div>
+          </div>
+          <div class="cmp" id="cmpBox"></div>
+        </div>
+        <div class="tblwrap" id="coordTable" style="border-top:1px solid var(--border)"><div class="loading">Ładowanie…</div></div>
+        <div class="legend">Kliknij koordynatora, żeby zobaczyć jego obiekty. „Tylko jego dane” zawęża cały pulpit do niego.
+          „Pracownik: nie było rozmowy” — bot pyta część osób po rozmowie; odpowiedź „nie” przy zamkniętej rozmowie to sygnał do sprawdzenia.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="drawer-bg" id="drawerBg" onclick="closeDrawer()"></div>
+  <div class="drawer" id="drawer" aria-hidden="true"></div>
+  <div id="tip"></div>
+
+  <script src="js/zarzad.js"></script>
+  <div class="sidebar-hover-zone"
+     onmouseenter="document.querySelector('.sidebar').classList.add('sidebar-peek')"
+     onmouseleave="document.querySelector('.sidebar').classList.remove('sidebar-peek')"></div>
+  <script>
+  function toggleSidebar() {
+    const hidden = document.body.classList.toggle('sidebar-hidden');
+    const btn = document.querySelector('.sidebar-toggle');
+    btn.textContent = hidden ? '▶' : '◀';
+    btn.title = hidden ? 'Przypnij menu' : 'Ukryj menu';
+    try { localStorage.setItem('sas_sidebar_hidden', hidden ? '1' : '0'); } catch (e) {}
+  }
+  try {
+    if (localStorage.getItem('sas_sidebar_hidden') === '1' || window.innerWidth < 800) {
+      document.body.classList.add('sidebar-hidden');
+      const btn = document.querySelector('.sidebar-toggle');
+      if (btn) { btn.textContent = '▶'; btn.title = 'Przypnij menu'; }
+    }
+  } catch (e) {}
+  document.querySelector('.sidebar')?.addEventListener('click', (e) => {
+    if (e.target.closest('.nav-item') && document.body.classList.contains('sidebar-hidden')) {
+      document.querySelector('.sidebar').classList.remove('sidebar-peek');
+    }
+  });
+  </script>
+</body>
+</html>

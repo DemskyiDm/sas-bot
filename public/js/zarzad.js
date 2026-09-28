@@ -111,7 +111,8 @@ async function init() {
     document.getElementById("toolbar").style.display = "none";
     document.querySelectorAll(".nav-item[data-sec]").forEach((el) => (el.style.display = "none"));
     document.getElementById("content").innerHTML =
-      `<div class="noaccess">📊 <b>Pulpit kierownika</b> jest dostępny dla kierownika działu i administratorów panelu.</div>`;
+      `<div class="noaccess">📊 <b>Pulpit kierownika</b> jest dostępny dla kierownika działu, administratorów panelu
+       i koordynatorów regionalnych (przypisanych w Region → Ustawienia).</div>`;
     return;
   }
   ST.me = me;
@@ -120,9 +121,13 @@ async function init() {
   if (me.links.rozmowy) document.getElementById("navRozmowy").style.display = "";
   const selR = document.getElementById("selRegion");
   ST.leads = Object.fromEntries(me.regions.map((r) => [String(r.id), (r.leads || []).map((x) => x.name).join(", ")]));
-  selR.innerHTML = `<option value="all">Wszystkie regiony</option>` +
-    me.regions.map((r) => `<option value="${r.id}">${esc(r.name)}${ST.leads[r.id] ? " — " + esc(ST.leads[r.id]) : ""}</option>`).join("") +
-    `<option value="none">Bez regionu</option>`;
+  const regOpts = me.regions.map((r) => `<option value="${r.id}">${esc(r.name)}${ST.leads[r.id] ? " — " + esc(ST.leads[r.id]) : ""}</option>`).join("");
+  // regionalny widzi tylko swoje regiony (jak w sekcji Region)
+  ST.topLabel = me.scope_all ? "Cała firma" : "Moje regiony";
+  ST.canUp = me.scope_all || me.regions.length > 1;
+  selR.innerHTML = me.scope_all
+    ? `<option value="all">Wszystkie regiony</option>${regOpts}<option value="none">Bez regionu</option>`
+    : me.regions.length > 1 ? `<option value="all">Moje regiony</option>${regOpts}` : regOpts;
   const selC = document.getElementById("selClient");
   selC.innerHTML = `<option value="">Wszyscy klienci</option>` +
     me.clients.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
@@ -245,7 +250,9 @@ function renderPeriodLine() {
   const reg = document.getElementById("selRegion");
   const cli = document.getElementById("selClient").value;
   const parts = [`Okres: <b>${dd(s.from)}–${ddy(s.anchor)}</b> (${periodName(s)}), porównanie z poprzednim okresem tej samej długości`];
-  if (reg.value !== "all" && reg.selectedIndex >= 0) parts.push(`<span class="crumb"><a onclick="setRegion('all')">Cała firma</a> › <b>${esc(reg.options[reg.selectedIndex].text)}</b></span>`);
+  if (reg.value !== "all" && reg.selectedIndex >= 0) parts.push(ST.canUp
+    ? `<span class="crumb"><a onclick="setRegion('all')">${ST.topLabel}</a> › <b>${esc(reg.options[reg.selectedIndex].text)}</b></span>`
+    : `region: <b>${esc(reg.options[reg.selectedIndex].text)}</b>`);
   if (cli) parts.push(`klient: <b>${esc(cli)}</b>`);
   if (ST.coord) parts.push(`koordynator: <b>${esc(ST.coord.name)}</b>`);
   let html = parts.join(" · ");
@@ -329,8 +336,9 @@ const ST_LABEL = { R: "czerwony", A: "żółty", G: "zielony", S: "strukturalny"
 function renderRag(r) {
   const reg = document.getElementById("selRegion");
   document.getElementById("ragCrumb").innerHTML = reg.value === "all" || reg.selectedIndex < 0
-    ? "cała firma i regiony"
-    : `<span class="crumb"><a onclick="setRegion('all')">Cała firma</a> › ${esc(reg.options[reg.selectedIndex].text)}</span>`;
+    ? (ST.me.scope_all ? "cała firma i regiony" : "moje regiony")
+    : ST.canUp ? `<span class="crumb"><a onclick="setRegion('all')">${ST.topLabel}</a> › ${esc(reg.options[reg.selectedIndex].text)}</span>`
+    : esc(reg.options[reg.selectedIndex].text);
   if (!r.weeks.length) {
     document.getElementById("ragTable").innerHTML = `<div class="empty">Brak przeliczonych tygodni w sekcji Region.</div>`;
     return;
@@ -429,7 +437,7 @@ function renderFlow(data) {
   document.getElementById("flowChart").innerHTML = s;
 
   // Чисельність — окремий графік (своя шкала, без другої осі)
-  const H2 = 80, pT = 16, pB = 6;
+  const H2 = 92, pT = 30, pB = 6;   // górny pas na podpis, żeby nie nachodził na wartości
   const hv = data.map((d) => d.hc);
   const mn = Math.min(...hv), mx = Math.max(...hv);
   const span = Math.max(mx - mn, 10);

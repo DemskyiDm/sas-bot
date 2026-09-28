@@ -61,11 +61,16 @@ function qs(extra) {
   const p = new URLSearchParams();
   const reg = document.getElementById("selRegion").value;
   const cli = document.getElementById("selClient").value;
-  const to = document.getElementById("selTo").value;
   if (reg && reg !== "all") p.set("region", reg);
   if (cli) p.set("client", cli);
-  if (to) p.set("to", to);
-  p.set("period", ST.period);
+  if (ST.period === "custom") {
+    p.set("from", document.getElementById("perFrom").value);
+    p.set("to", document.getElementById("perTo").value);
+  } else {
+    const to = document.getElementById("selTo").value;
+    if (to) p.set("to", to);
+    p.set("period", ST.period);
+  }
   if (ST.coord) p.set("coord", ST.coord.id);
   Object.entries(extra || {}).forEach(([k, v]) => p.set(k, v));
   return "?" + p.toString();
@@ -114,8 +119,9 @@ async function init() {
   if (me.links.region) document.getElementById("navRegion").style.display = "";
   if (me.links.rozmowy) document.getElementById("navRozmowy").style.display = "";
   const selR = document.getElementById("selRegion");
+  ST.leads = Object.fromEntries(me.regions.map((r) => [String(r.id), (r.leads || []).map((x) => x.name).join(", ")]));
   selR.innerHTML = `<option value="all">Wszystkie regiony</option>` +
-    me.regions.map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join("") +
+    me.regions.map((r) => `<option value="${r.id}">${esc(r.name)}${ST.leads[r.id] ? " — " + esc(ST.leads[r.id]) : ""}</option>`).join("") +
     `<option value="none">Bez regionu</option>`;
   const selC = document.getElementById("selClient");
   selC.innerHTML = `<option value="">Wszyscy klienci</option>` +
@@ -127,8 +133,13 @@ async function init() {
   if (saved) {
     if (saved.region && [...selR.options].some((o) => o.value === saved.region)) selR.value = saved.region;
     if (saved.client && [...selC.options].some((o) => o.value === saved.client)) selC.value = saved.client;
-    if ([7, 28, 91].includes(saved.period)) ST.period = saved.period;
+    if ([7, 28, "custom"].includes(saved.period)) ST.period = saved.period;
   }
+  // Od–do: domyślnie ostatnie 4 pełne tygodnie
+  const last = me.weeks[0];
+  const d0 = new Date(Date.parse(last) - 27 * 86400000).toISOString().slice(0, 10);
+  document.getElementById("perFrom").value = (saved && saved.from) || d0;
+  document.getElementById("perTo").value = (saved && saved.to) || last;
   paintPeriod();
   loadAll();
 }
@@ -138,13 +149,28 @@ function onFilter() {
     region: document.getElementById("selRegion").value,
     client: document.getElementById("selClient").value,
     period: ST.period,
+    from: document.getElementById("perFrom").value,
+    to: document.getElementById("perTo").value,
   });
+  if (ST.period === "custom" && !rangeValid()) return;
   loadAll();
 }
 function setPeriod(p) { ST.period = p; paintPeriod(); onFilter(); }
 function paintPeriod() {
-  document.querySelectorAll("#periodChips .chip").forEach((c) => c.classList.toggle("active", Number(c.dataset.p) === ST.period));
+  document.querySelectorAll("#periodChips .chip").forEach((c) => c.classList.toggle("active", c.dataset.p === String(ST.period)));
+  document.getElementById("toBox").style.display = ST.period === "custom" ? "none" : "";
+  document.getElementById("rangeBox").style.display = ST.period === "custom" ? "" : "none";
 }
+function rangeValid() {
+  const f = document.getElementById("perFrom").value, t = document.getElementById("perTo").value;
+  let err = "";
+  if (!f || !t) err = "podaj obie daty";
+  else if (f > t) err = "„od” jest późniejsze niż „do”";
+  else if ((Date.parse(t) - Date.parse(f)) / 86400000 + 1 > 731) err = "maksymalnie 2 lata";
+  document.getElementById("rangeMsg").textContent = err;
+  return !err;
+}
+function onRange() { onFilter(); }
 function setRegion(key, label) {
   const sel = document.getElementById("selRegion");
   if (![...sel.options].some((o) => o.value === String(key))) {
@@ -188,7 +214,8 @@ async function loadAll() {
   await Promise.all([
     job("/summary", ["periodLine", "sec-kpi", "decList", "tenureChart"], (r) => { ST.summary = r; renderPeriodLine(); renderKpis(); renderDecisions(); renderTenure(); }),
     job("/rag", ["ragTable"], (r) => renderRag(r)),
-    job("/trend", ["flowChart", "hcChart"], (r) => renderFlow(r.data)),
+    job("/regions", ["regTable"], (r) => renderRegions(r)),
+    job("/trend", ["flowChart", "hcChart"], (r) => { document.getElementById("flowCnt").textContent = `${r.weeks} ${pl(r.weeks, "tydzień", "tygodnie", "tygodni")}`; renderFlow(r.data); }),
     job("/cohorts", ["cohTable"], (r) => renderCohorts(r)),
     job("/reasons", ["reasonTable"], (r) => renderReasons(r)),
     job("/voice", ["voiceBox"], (r) => { ST.voice = r; renderVoice(r); }),
@@ -211,18 +238,19 @@ function guard(r, ids, fn) {
 // ══════════════════════════════════════════════════════════════════════
 //  Період і плитки
 // ══════════════════════════════════════════════════════════════════════
-const PERIOD_NAME = { 7: "tydzień", 28: "4 tygodnie", 91: "13 tygodni" };
+const PERIOD_NAME = { 7: "tydzień", 28: "4 tygodnie" };
+const periodName = (s) => (s.custom || !PERIOD_NAME[s.period] ? `${s.period} ${pl(s.period, "dzień", "dni", "dni")}` : PERIOD_NAME[s.period]);
 function renderPeriodLine() {
   const s = ST.summary;
   const reg = document.getElementById("selRegion");
   const cli = document.getElementById("selClient").value;
-  const parts = [`Okres: <b>${dd(s.from)}–${ddy(s.anchor)}</b> (${PERIOD_NAME[s.period]}), porównanie z poprzednim takim okresem`];
+  const parts = [`Okres: <b>${dd(s.from)}–${ddy(s.anchor)}</b> (${periodName(s)}), porównanie z poprzednim okresem tej samej długości`];
   if (reg.value !== "all" && reg.selectedIndex >= 0) parts.push(`<span class="crumb"><a onclick="setRegion('all')">Cała firma</a> › <b>${esc(reg.options[reg.selectedIndex].text)}</b></span>`);
   if (cli) parts.push(`klient: <b>${esc(cli)}</b>`);
   if (ST.coord) parts.push(`koordynator: <b>${esc(ST.coord.name)}</b>`);
   let html = parts.join(" · ");
-  if (document.getElementById("selTo").value)
-    html += `<br><span class="muted">Do decyzji, przyczyny, głos pracownika, kohorty i lista ryzyka pokazują stan na dziś — nie na wybrany tydzień.</span>`;
+  if (s.custom || document.getElementById("selTo").value)
+    html += `<br><span class="muted">Do decyzji, przyczyny, głos pracownika, kohorty i lista ryzyka pokazują stan na dziś — nie na wybrany okres.</span>`;
   document.getElementById("periodLine").innerHTML = html;
 }
 
@@ -314,6 +342,7 @@ function renderRag(r) {
     if (row.type === "region" && reg.value === "all") label = `<a data-k="${esc(row.key)}" data-l="${esc(row.label)}" onclick="setRegion(this.dataset.k, this.dataset.l)">${esc(row.label)}</a>`;
     else if (row.type === "site" && ST.me.links.region) label = `<a data-site="${esc(row.key)}" onclick="siteLink(this.dataset.site)" title="Otwórz kartę obiektu">${esc(row.label)}</a>`;
     else label = esc(row.label);
+    if (row.type === "region" && row.leads) label += `<span class="leads" title="Koordynatorzy regionalni">${esc(row.leads)}</span>`;
     const cells = row.cells.map((c) => {
       if (!c.status) return `<td><div class="cell x"></div></td>`;
       const agg = row.type !== "site";
@@ -326,6 +355,44 @@ function renderRag(r) {
     return `<tr class="${row.type}"><td class="l">${label}</td><td class="hc">${fN(last.hc)}</td>${cells}</tr>`;
   }).join("");
   document.getElementById("ragTable").innerHTML = `<table class="hm"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  Регіони і регіональні координатори
+// ══════════════════════════════════════════════════════════════════════
+function renderRegions(r) {
+  const rows = r.data || [];
+  document.getElementById("regCnt").textContent = rows.length ? `${rows.length} ${pl(rows.length, "region", "regiony", "regionów")}` : "";
+  if (!rows.length) { document.getElementById("regTable").innerHTML = `<div class="empty">Brak regionów w tym zakresie.</div>`; return; }
+  const sum = (k) => rows.reduce((a, x) => a + (x[k] || 0), 0);
+  const tot = { name: "Razem", leads: [], total: true };
+  ["sites", "coords", "hc_end", "hc_start", "dep", "dep_early", "n80", "ok80", "nn", "nn_base", "red_sites", "red_hc", "rated_hc",
+    "cards_due", "cards_on_time", "cards_overdue", "tasks_due", "tasks_on_time", "mod_on"].forEach((k) => (tot[k] = sum(k)));
+  const cell = (x) => {
+    const rot = rotOf(x), s80 = ratio(x.ok80, x.n80), nn = ratio(x.nn, x.nn_base);
+    const redShare = ratio(x.red_hc, x.rated_hc), cards = ratio(x.cards_on_time, x.cards_due), ontime = x.tasks_due >= 3 ? x.tasks_on_time / x.tasks_due : null;
+    const leads = (x.leads || []).map((l) => l.name).join(", ");
+    const who = x.total ? "<b>Razem</b>"
+      : `<b>${esc(x.name)}</b>${x.active === false ? ` <span class="tag">nieaktywny</span>` : ""}` +
+        `<span class="leads">${leads ? esc(leads) : x.region_id == null ? "obiekty bez regionu" : "brak regionalnego — przypisz w Region → Ustawienia"}</span>`;
+    return `<td>${who}</td>
+      <td class="num">${fN(x.coords)}</td><td class="num">${fN(x.sites)}</td><td class="num">${fN(x.hc_end)}</td>
+      <td class="num">${fN(x.dep)}</td><td class="num">${pct1(rot)}</td><td class="num">${fN(x.dep_early)}</td>
+      <td class="num">${pct(s80)} <span class="muted">(${fN(x.n80)})</span></td><td class="num">${pct1(nn)}</td>
+      <td class="num">${fN(x.red_sites)} <span class="muted">· ${pct(redShare)} ludzi</span></td>
+      <td class="num">${x.cards_due ? `${pct(cards)} <span class="muted">(${x.cards_on_time}/${x.cards_due})</span>` : "—"}</td>
+      <td class="num">${x.cards_overdue ? `<span class="red">${x.cards_overdue}</span>` : "0"}</td>
+      <td class="num">${pct(ontime)}</td>
+      <td class="num">${x.mod_on} z ${x.coords}</td>`;
+  };
+  const key = (x) => (x.region_id == null ? "none" : String(x.region_id));
+  document.getElementById("regTable").innerHTML = `<table class="rg"><thead><tr>
+      <th>Region · regionalni</th><th class="num">Koord.</th><th class="num">Obiekty</th><th class="num">Pracuje</th>
+      <th class="num">Odejścia</th><th class="num">Rotacja</th><th class="num">Przed 30. dniem</th><th class="num">Dożycie 80</th>
+      <th class="num">NN</th><th class="num">Czerwone teraz</th><th class="num">Karty w terminie</th><th class="num">Karty po terminie</th>
+      <th class="num">Rozmowy na czas</th><th class="num">Moduł Rozmowy</th></tr></thead><tbody>
+    ${rows.map((x) => `<tr class="click" data-k="${esc(key(x))}" data-l="${esc(x.name)}" onclick="setRegion(this.dataset.k, this.dataset.l)">${cell(x)}</tr>`).join("")}
+    ${rows.length > 1 ? `<tr class="total">${cell(tot)}</tr>` : ""}</tbody></table>`;
 }
 
 // ══════════════════════════════════════════════════════════════════════

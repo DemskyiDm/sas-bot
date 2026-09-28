@@ -88,20 +88,44 @@ function filters(q) {
   const client = q.client ? String(q.client).slice(0, 200) : null;
   const coord = parseInt(q.coord, 10) || null;
   const period = [7, 28, 91].includes(Number(q.period)) ? Number(q.period) : 28;
-  return { region, client, coord, period, to: isDate(q.to) ? q.to : null };
+  // Довільний період «від–до» має пріоритет над тижнем / 4 тижнями
+  const from = isDate(q.from) && isDate(q.to) && q.from <= q.to ? q.from : null;
+  return { region, client, coord, period, from, to: isDate(q.to) ? q.to : null };
 }
 
-// Кінець періоду: остання повна неділя (або обрана, не пізніше за сьогодні)
-async function anchor(to) {
+// Кінець (A) і довжина (L, днів) періоду. Без «від–до» — остання повна неділя
+// (або обрана); з «від–до» — як вибрано, «до» не пізніше за сьогодні, максимум 2 роки.
+async function resolve(f) {
   const r = await query(
     `SELECT to_char(care.today() - EXTRACT(ISODOW FROM care.today())::int, 'YYYY-MM-DD') AS def,
             to_char(care.today(), 'YYYY-MM-DD') AS today`,
   );
   const { def, today } = r.rows[0];
-  if (to && to <= today) return to;
-  return def;
+  if (f.from) {
+    const to = f.to > today ? today : f.to;
+    const days = Math.round((Date.parse(to) - Date.parse(f.from)) / 86400000) + 1;
+    if (days >= 1 && days <= 731) return { A: to, L: days, custom: true };
+  }
+  return { A: f.to && f.to <= today ? f.to : def, L: f.period, custom: false };
 }
 const base = (f) => [f.region, f.client, f.coord];
+
+// Регіони з регіональними координаторами — з налаштувань розділу Region
+async function regionsWithLeads(activeOnly) {
+  const r = await query(
+    `SELECT rg.id, rg.name, rg.is_active,
+            COALESCE(json_agg(json_build_object('id', c.id, 'name', c.full_name) ORDER BY c.full_name)
+                     FILTER (WHERE c.id IS NOT NULL), '[]') AS leads
+       FROM reg.regions rg
+       LEFT JOIN reg.region_leads rl ON rl.region_id = rg.id
+       LEFT JOIN public.coordinators c ON c.id = rl.coordinator_id
+      WHERE $1::boolean = false OR rg.is_active
+      GROUP BY rg.id ORDER BY rg.name`,
+    [!!activeOnly],
+  );
+  return r.rows;
+}
+const leadNames = (r) => (r && r.leads ? r.leads.map((x) => x.name).join(", ") : "");
 
 // ══════════════════════════════════════════════════════════════════════
 //  Хто я + довідники фільтрів
@@ -112,7 +136,7 @@ router.get("/me", async (req, res) => {
     if (!ok) return res.json({ ok: true, has_access: false });
     const c = req.coordinator;
     const [regions, clients, weeks, mod, lead] = await Promise.all([
-      query(`SELECT id, name FROM reg.regions WHERE is_active ORDER BY name`),
+      regionsWithLeads(true).then((rows) => ({ rows })),
       query(`SELECT DISTINCT client_name AS name FROM public.facilities
                  WHERE client_name IS NOT NULL AND btrim(client_name) <> '' ORDER BY 1`),
       query(`SELECT to_char(d, 'YYYY-MM-DD') AS w
@@ -408,15 +432,15 @@ async function decisions(f) {
 router.get("/summary", async (req, res) => {
   try {
     const f = filters(req.query);
-    const A = await anchor(f.to);
-    const prevA = await query(`SELECT to_char($1::date - $2::int, 'YYYY-MM-DD') AS d, to_char($1::date - $2::int + 1, 'YYYY-MM-DD') AS from`, [A, f.period]);
+    const { A, L, custom } = await resolve(f);
+    const prevA = await query(`SELECT to_char($1::date - $2::int, 'YYYY-MM-DD') AS d, to_char($1::date - $2::int + 1, 'YYYY-MM-DD') AS from`, [A, L]);
     const [cur, prev, tenure, dec] = await Promise.all([
-      kpis(f, A, f.period),
-      kpis(f, prevA.rows[0].d, f.period),
-      tenureBuckets(f, A, f.period),
+      kpis(f, A, L),
+      kpis(f, prevA.rows[0].d, L),
+      tenureBuckets(f, A, L),
       decisions(f),
     ]);
-    res.json({ ok: true, anchor: A, from: prevA.rows[0].from, period: f.period, cur, prev, tenure, decisions: dec });
+    res.json({ ok: true, anchor: A, from: prevA.rows[0].from, period: L, custom, cur, prev, tenure, decisions: dec });
   } catch (e) { fail(res, e); }
 });
 
@@ -460,8 +484,9 @@ function aggStatus(list, s) {
 router.get("/rag", async (req, res) => {
   try {
     const f = filters(req.query);
-    const A = await anchor(f.to);
-    const nWeeks = Math.min(Math.max(parseInt(req.query.weeks, 10) || 12, 4), 26);
+    const { A, L } = await resolve(f);
+    // tygodnie: co najmniej 12, a przy dłuższym okresie — cały okres (maks. 26)
+    const nWeeks = Math.min(Math.max(parseInt(req.query.weeks, 10) || Math.ceil(L / 7), 12), 26);
     const [snap, s, names] = await Promise.all([
       query(
         `WITH ${SC},
@@ -476,10 +501,11 @@ router.get("/rag", async (req, res) => {
           ORDER BY v.week_end`,
         [...base(f), A, nWeeks]),
       regSettings(),
-      query(`SELECT id, name FROM reg.regions`),
+      regionsWithLeads(false),
     ]);
     const weeks = [...new Set(snap.rows.map((x) => x.w))];
-    const regName = Object.fromEntries(names.rows.map((x) => [x.id, x.name]));
+    const regName = Object.fromEntries(names.map((x) => [x.id, x.name]));
+    const regLeads = Object.fromEntries(names.map((x) => [x.id, leadNames(x)]));
     const byW = (rows) => weeks.map((w) => {
       const l = rows.filter((x) => x.w === w);
       return l.length ? Object.assign({ w }, aggStatus(l, s)) : { w, status: null };
@@ -492,11 +518,13 @@ router.get("/rag", async (req, res) => {
       for (const id of regs) {
         rows.push({
           type: "region", key: id == null ? "none" : String(id), label: id == null ? "Bez regionu" : regName[id],
+          leads: id == null ? "" : regLeads[id] || "",
           cells: byW(snap.rows.filter((x) => x.region_id === id)),
         });
       }
     } else {
-      rows.push({ type: "region", key: String(f.region), label: f.region === -1 ? "Bez regionu" : regName[f.region] || "Region", cells: byW(snap.rows) });
+      rows.push({ type: "region", key: String(f.region), label: f.region === -1 ? "Bez regionu" : regName[f.region] || "Region",
+        leads: f.region === -1 ? "" : regLeads[f.region] || "", cells: byW(snap.rows) });
       const last = weeks[weeks.length - 1];
       const sites = [...new Set(snap.rows.map((x) => x.site_key))];
       const hcLast = (k) => { const x = snap.rows.find((r) => r.site_key === k && r.w === last); return x ? Number(x.headcount_end) : 0; };
@@ -522,15 +550,128 @@ router.get("/rag", async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════
+//  Регіони і регіональні координатори: ті самі показники по кожному регіону
+// ══════════════════════════════════════════════════════════════════════
+router.get("/regions", async (req, res) => {
+  try {
+    const f = filters(req.query);
+    const { A, L } = await resolve(f);
+    const [r, regs] = await Promise.all([
+      query(
+        `WITH ${SC},
+         per AS (SELECT v.*, sc.region_id FROM reg.v_periods v JOIN sc ON sc.facility_id = v.facility_id),
+         st AS (SELECT region_id, COUNT(DISTINCT site_key)::int AS sites,
+                       COUNT(DISTINCT coordinator_id)::int AS coords FROM sc GROUP BY 1),
+         hc AS (
+           SELECT region_id,
+                  COUNT(DISTINCT worker_id) FILTER (WHERE bhp_date <= $4::date AND (last_work_date IS NULL OR last_work_date > $4::date))::int AS hc_end,
+                  COUNT(DISTINCT worker_id) FILTER (WHERE bhp_date <= $4::date - $5::int
+                    AND (last_work_date IS NULL OR last_work_date > $4::date - $5::int))::int AS hc_start
+             FROM per GROUP BY 1),
+         dep AS (
+           SELECT sc.region_id, COUNT(*)::int AS dep,
+                  COUNT(*) FILTER (WHERE sp.end_date - sp.start_date < 30)::int AS dep_early
+             FROM board.v_spells sp JOIN sc ON sc.facility_id = sp.end_facility
+            WHERE sp.end_status <> 'przeniesiony' AND sp.end_date > $4::date - $5::int AND sp.end_date <= $4::date
+            GROUP BY 1),
+         s80 AS (
+           SELECT sc.region_id, COUNT(*)::int AS n80,
+                  COUNT(*) FILTER (WHERE sp.end_date IS NULL OR sp.end_date >= sp.start_date + 80)::int AS ok80
+             FROM board.v_spells sp JOIN sc ON sc.facility_id = sp.start_facility
+            WHERE sp.start_date + 80 > $4::date - GREATEST($5::int, 28) AND sp.start_date + 80 <= $4::date
+              AND NOT COALESCE(sp.end_status = 'przeniesiony' AND sp.end_date < sp.start_date + 80, false)
+            GROUP BY 1),
+         nnd AS (
+           SELECT DISTINCT ON (hl.worker_id, hl.work_date) p.region_id,
+                  (hl.hours IS NOT NULL AND hl.hours > 0) AS worked, hl.absence_type::text AS abs
+             FROM public.hours_log hl
+             JOIN per p ON p.worker_id = hl.worker_id AND hl.work_date >= p.bhp_date
+                       AND (p.last_work_date IS NULL OR hl.work_date <= p.last_work_date)
+            WHERE hl.work_date > $4::date - $5::int AND hl.work_date <= $4::date
+            ORDER BY hl.worker_id, hl.work_date, p.bhp_date DESC),
+         nn AS (SELECT region_id, COUNT(*) FILTER (WHERE abs = 'NN')::int AS nn,
+                       COUNT(*) FILTER (WHERE worked OR abs IN ('NN','UN','L4','URL'))::int AS nn_base
+                  FROM nnd GROUP BY 1),
+         sk AS (SELECT DISTINCT site_key, region_id FROM sc),
+         red AS (
+           SELECT sk.region_id,
+                  COUNT(*) FILTER (WHERE v.status = 'R')::int AS red_sites,
+                  COALESCE(SUM(v.headcount_end) FILTER (WHERE v.status = 'R'), 0)::int AS red_hc,
+                  COALESCE(SUM(v.headcount_end) FILTER (WHERE v.status IN ('G','A','R')), 0)::int AS rated_hc
+             FROM reg.v_snap v JOIN sk ON sk.site_key = v.site_key
+            WHERE v.week_end = (SELECT MAX(week_end) FROM reg.rag_snapshots WHERE week_end <= $4::date)
+            GROUP BY 1),
+         cards AS (
+           SELECT sk.region_id,
+                  COUNT(*) FILTER (WHERE c.filled_at IS NOT NULL OR c.due_at < now())::int AS cards_due,
+                  COUNT(*) FILTER (WHERE c.filled_at IS NOT NULL AND c.filled_at <= c.due_at)::int AS cards_on_time
+             FROM reg.red_cards c JOIN sk ON sk.site_key = c.site_key
+            WHERE c.opened_at > $4::date - $5::int AND c.opened_at < $4::date + 1
+            GROUP BY 1),
+         late AS (
+           SELECT sk.region_id, COUNT(*)::int AS cards_overdue
+             FROM reg.red_cards c JOIN sk ON sk.site_key = c.site_key
+            WHERE c.status = 'open' AND c.due_at < now() GROUP BY 1),
+         tk AS (
+           SELECT sc.region_id,
+                  COUNT(*) FILTER (WHERE t.status IN ('done','missed') OR (t.status = 'open' AND t.escalated_at IS NOT NULL))::int AS due,
+                  COUNT(*) FILTER (WHERE t.status = 'done' AND (t.escalated_at IS NULL OR t.done_at < t.escalated_at))::int AS on_time,
+                  COUNT(*) FILTER (WHERE t.outcome = 'leaving')::int AS leaving
+             FROM care.tasks t JOIN sc ON sc.facility_id = t.facility_id
+            WHERE care.ldate(t.created_at) > $4::date - $5::int AND care.ldate(t.created_at) <= $4::date
+            GROUP BY 1),
+         md AS (
+           SELECT x.region_id, COUNT(*) FILTER (WHERE care.is_on(x.coordinator_id))::int AS mod_on
+             FROM (SELECT DISTINCT region_id, coordinator_id FROM sc WHERE coordinator_id IS NOT NULL) x
+            GROUP BY 1)
+         SELECT st.region_id, st.sites, st.coords,
+                COALESCE(hc.hc_end, 0) AS hc_end, COALESCE(hc.hc_start, 0) AS hc_start,
+                COALESCE(dep.dep, 0) AS dep, COALESCE(dep.dep_early, 0) AS dep_early,
+                COALESCE(s80.n80, 0) AS n80, COALESCE(s80.ok80, 0) AS ok80,
+                COALESCE(nn.nn, 0) AS nn, COALESCE(nn.nn_base, 0) AS nn_base,
+                COALESCE(red.red_sites, 0) AS red_sites, COALESCE(red.red_hc, 0) AS red_hc, COALESCE(red.rated_hc, 0) AS rated_hc,
+                COALESCE(cards.cards_due, 0) AS cards_due, COALESCE(cards.cards_on_time, 0) AS cards_on_time,
+                COALESCE(late.cards_overdue, 0) AS cards_overdue,
+                COALESCE(tk.due, 0) AS tasks_due, COALESCE(tk.on_time, 0) AS tasks_on_time, COALESCE(tk.leaving, 0) AS leaving,
+                COALESCE(md.mod_on, 0) AS mod_on
+           FROM st
+           LEFT JOIN hc    ON hc.region_id    IS NOT DISTINCT FROM st.region_id
+           LEFT JOIN dep   ON dep.region_id   IS NOT DISTINCT FROM st.region_id
+           LEFT JOIN s80   ON s80.region_id   IS NOT DISTINCT FROM st.region_id
+           LEFT JOIN nn    ON nn.region_id    IS NOT DISTINCT FROM st.region_id
+           LEFT JOIN red   ON red.region_id   IS NOT DISTINCT FROM st.region_id
+           LEFT JOIN cards ON cards.region_id IS NOT DISTINCT FROM st.region_id
+           LEFT JOIN late  ON late.region_id  IS NOT DISTINCT FROM st.region_id
+           LEFT JOIN tk    ON tk.region_id    IS NOT DISTINCT FROM st.region_id
+           LEFT JOIN md    ON md.region_id    IS NOT DISTINCT FROM st.region_id`,
+        [...base(f), A, L],
+      ),
+      regionsWithLeads(false),
+    ]);
+    const byId = Object.fromEntries(regs.map((x) => [x.id, x]));
+    const data = r.rows
+      .filter((x) => x.hc_end + x.hc_start + x.dep > 0 || x.region_id != null)
+      .map((x) => Object.assign(x, {
+        name: x.region_id == null ? "Bez regionu" : (byId[x.region_id] || {}).name || "Region",
+        leads: x.region_id == null ? [] : (byId[x.region_id] || {}).leads || [],
+        active: x.region_id == null ? true : (byId[x.region_id] || {}).is_active !== false,
+      }))
+      .sort((a, b) => (a.region_id == null) - (b.region_id == null) || a.name.localeCompare(b.name, "pl"));
+    res.json({ ok: true, anchor: A, period: L, data });
+  } catch (e) { fail(res, e); }
+});
+
+// ══════════════════════════════════════════════════════════════════════
 //  Рух кадрів по тижнях: прийняті, відходи, чисельність
 // ══════════════════════════════════════════════════════════════════════
 router.get("/trend", async (req, res) => {
   try {
     const f = filters(req.query);
-    const A = await anchor(f.to);
+    const { A, L } = await resolve(f);
+    const nWeeks = Math.min(Math.max(Math.ceil(L / 7), 12), 52);
     const r = await query(
       `WITH ${SC},
-       wk AS (SELECT (ws.d)::date AS w FROM generate_series($4::date - 7 * 11, $4::date, INTERVAL '7 days') ws(d)),
+       wk AS (SELECT (ws.d)::date AS w FROM generate_series($4::date - 7 * ($5::int - 1), $4::date, INTERVAL '7 days') ws(d)),
        sp AS MATERIALIZED (SELECT * FROM board.v_spells),
        per AS MATERIALIZED (SELECT v.* FROM reg.v_periods v WHERE v.facility_id IN (SELECT facility_id FROM sc)),
        hi AS (SELECT wk.w, COUNT(*)::int AS n FROM wk
@@ -546,9 +687,9 @@ router.get("/trend", async (req, res) => {
               COALESCE(de.early, 0) AS dep_early, COALESCE(hc.n, 0) AS hc
          FROM wk LEFT JOIN hi ON hi.w = wk.w LEFT JOIN de ON de.w = wk.w LEFT JOIN hc ON hc.w = wk.w
         ORDER BY wk.w`,
-      [...base(f), A],
+      [...base(f), A, nWeeks],
     );
-    res.json({ ok: true, data: r.rows });
+    res.json({ ok: true, weeks: nWeeks, data: r.rows });
   } catch (e) { fail(res, e); }
 });
 
@@ -734,8 +875,7 @@ router.get("/voice", async (req, res) => {
 router.get("/coordinators", async (req, res) => {
   try {
     const f = filters(req.query);
-    const A = await anchor(f.to);
-    const L = f.period;
+    const { A, L } = await resolve(f);
     const r = await query(
       `WITH ${SC},
        co AS (SELECT DISTINCT coordinator_id FROM sc WHERE coordinator_id IS NOT NULL),
@@ -873,8 +1013,7 @@ router.get("/coordinators", async (req, res) => {
 router.get("/detail", async (req, res) => {
   try {
     const f = filters(req.query);
-    const A = await anchor(f.to);
-    const L = f.period;
+    const { A, L } = await resolve(f);
     let kind = String(req.query.kind || "");
     // «early_now» — з «Do decyzji»: останні 28 днів до сьогодні, як у самому сигналі
     let AA = A, LL = L;

@@ -17,6 +17,11 @@
     .bd-toolbar label { font-size: 11px; color: var(--text2); }
     .bd-toolbar .grp { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
     .topbar-title { white-space: nowrap; }
+    .bd-toolbar input[type="date"] { background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+      font-size: 12px; padding: 5px 8px; border-radius: 5px; color-scheme: dark; }
+    .range-msg { font-size: 11px; color: var(--red); }
+    #regTable td.num { white-space: nowrap; }
+    .leads { display: block; font-size: 10px; color: var(--text3); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .chips { display: flex; gap: 4px; flex-wrap: wrap; }
     .chip { padding: 3px 10px; font-size: 11px; border-radius: 12px; border: 1px solid var(--border);
       background: transparent; color: var(--text2); cursor: pointer; }
@@ -175,6 +180,7 @@
       <div class="nav-item active" data-sec="sec-kpi" onclick="goSec('sec-kpi')">📊 Przegląd</div>
       <div class="nav-item" data-sec="sec-dec" onclick="goSec('sec-dec')">⚠️ Do decyzji</div>
       <div class="nav-item" data-sec="sec-rag" onclick="goSec('sec-rag')">🚦 Regiony</div>
+      <div class="nav-item" data-sec="sec-reg" onclick="goSec('sec-reg')">🧭 Regionalni</div>
       <div class="nav-item" data-sec="sec-flow" onclick="goSec('sec-flow')">📈 Ruch kadrowy</div>
       <div class="nav-item" data-sec="sec-coh" onclick="goSec('sec-coh')">🧬 Kohorty i przyczyny</div>
       <div class="nav-item" data-sec="sec-voice" onclick="goSec('sec-voice')">🗣️ Głos pracownika</div>
@@ -193,9 +199,14 @@
         <div class="chips" id="periodChips">
           <button class="chip" data-p="7" onclick="setPeriod(7)">Tydzień</button>
           <button class="chip active" data-p="28" onclick="setPeriod(28)">4 tygodnie</button>
-          <button class="chip" data-p="91" onclick="setPeriod(91)">13 tygodni</button>
+          <button class="chip" data-p="custom" onclick="setPeriod('custom')">Od–do</button>
         </div>
-        <span class="grp"><label for="selTo">do</label><select id="selTo" onchange="onFilter()"></select></span>
+        <span class="grp" id="toBox"><label for="selTo">do</label><select id="selTo" onchange="onFilter()"></select></span>
+        <span class="grp" id="rangeBox" style="display:none">
+          <label for="perFrom">od</label><input type="date" id="perFrom" onchange="onRange()" />
+          <label for="perTo">do</label><input type="date" id="perTo" onchange="onRange()" />
+          <span class="range-msg" id="rangeMsg"></span>
+        </span>
         <span class="fchip" id="coordChip"><span id="coordChipName"></span><button onclick="clearCoord()" aria-label="Usuń filtr koordynatora">✕</button></span>
       </div>
       <div class="topbar-right"><span id="userName" style="font-size: 12px; color: var(--text2)"></span></div>
@@ -221,9 +232,16 @@
           Kliknij region, żeby zobaczyć jego obiekty; kliknij obiekt, żeby otworzyć jego kartę w sekcji Region.</div>
       </div>
 
+      <div class="section" id="sec-reg">
+        <div class="section-head">🧭 Regiony i koordynatorzy regionalni <span class="cnt" id="regCnt"></span></div>
+        <div class="tblwrap" id="regTable"><div class="loading">Ładowanie…</div></div>
+        <div class="legend">Regiony i regionalni — z ustawień sekcji Region. Wskaźniki za wybrany okres; „czerwone teraz” — ostatni przeliczony tydzień.
+          Karty w terminie — karty czerwonych obiektów otwarte w okresie, wypełnione przed terminem. Kliknij wiersz, żeby zawęzić pulpit do regionu.</div>
+      </div>
+
       <div class="grid2" id="sec-flow">
         <div class="section">
-          <div class="section-head">📈 Przyjęci i odejścia <span class="cnt">12 tygodni</span></div>
+          <div class="section-head">📈 Przyjęci i odejścia <span class="cnt" id="flowCnt">12 tygodni</span></div>
           <div class="lg"><span><i style="background:var(--s-hire)"></i>przyjęci</span><span><i style="background:var(--s-dep)"></i>odejścia</span></div>
           <div class="chart" id="flowChart"></div>
           <div class="chart" id="hcChart" style="padding-top:0"></div>

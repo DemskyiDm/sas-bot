@@ -15,6 +15,11 @@ const ST = {
   coordinators: [],
   config: null,
   siteKey: null,
+  mode: "week",      // week | period (od–do)
+};
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* prywatne okno */ } },
 };
 const STATUS_LABEL = { R: "Czerwony", A: "Żółty", G: "Zielony", S: "Strukturalny", N: "Brak danych" };
 const CLOSE_LABEL = { left_red: "wyszedł z czerwonego", structural: "przypadek strukturalny" };
@@ -32,7 +37,7 @@ function dd(iso) { return iso ? iso.substring(8, 10) + "." + iso.substring(5, 7)
 // дата з роком, якщо рік інший, ніж у вибраному тижні
 function ddr(iso) {
   if (!iso) return "";
-  const wy = (document.getElementById("selWeek").value || "").substring(0, 4);
+  const wy = (ST.mode === "period" ? document.getElementById("perTo").value : document.getElementById("selWeek").value || "").substring(0, 4);
   return iso.substring(0, 4) === wy ? dd(iso) : dd(iso) + "." + iso.substring(2, 4);
 }
 function ddy(iso) { return iso ? dd(iso) + "." + iso.substring(0, 4) : ""; }
@@ -57,9 +62,14 @@ async function api(path, opts) {
 function qs(extra) {
   const p = new URLSearchParams();
   const reg = document.getElementById("selRegion").value;
-  const week = document.getElementById("selWeek").value;
   if (reg) p.set("region", reg);
-  if (week) p.set("week", week);
+  if (ST.mode === "period") {
+    p.set("from", document.getElementById("perFrom").value);
+    p.set("to", document.getElementById("perTo").value);
+  } else {
+    const week = document.getElementById("selWeek").value;
+    if (week) p.set("week", week);
+  }
   Object.entries(extra || {}).forEach(([k, v]) => p.set(k, v));
   return "?" + p.toString();
 }
@@ -106,6 +116,13 @@ async function init() {
     ? wl.map((w) => `<option value="${w}">${ddy(w)}</option>`).join("")
     : `<option value="">— brak danych —</option>`;
 
+  // okres od–do: domyślnie od początku kwartału do ostatniego przeliczonego tygodnia
+  const last = wl[0] || new Date().toISOString().slice(0, 10);
+  const qStart = last.slice(0, 5) + String(Math.floor((Number(last.slice(5, 7)) - 1) / 3) * 3 + 1).padStart(2, "0") + "-01";
+  document.getElementById("perFrom").value = store.get("sas_region_from") || qStart;
+  document.getElementById("perTo").value = store.get("sas_region_to") || last;
+  if (store.get("sas_region_mode") === "period") applyMode("period");
+
   if (!wl.length) {
     document.getElementById("kpis").innerHTML = "";
     document.getElementById("boardTable").innerHTML = me.is_admin
@@ -125,9 +142,40 @@ async function init() {
 }
 
 function onFilterChange() {
-  localStorage.setItem("sas_region_sel", document.getElementById("selRegion").value);
+  store.set("sas_region_sel", document.getElementById("selRegion").value);
   loadView();
 }
+
+// ── Tydzień / okres od–do ──
+function applyMode(m) {
+  ST.mode = m;
+  document.querySelectorAll("#modeChips .chip").forEach((c) => c.classList.toggle("active", c.dataset.m === m));
+  document.getElementById("weekBox").style.display = m === "week" ? "" : "none";
+  document.getElementById("periodBox").style.display = m === "period" ? "" : "none";
+}
+function setMode(m) {
+  applyMode(m);
+  store.set("sas_region_mode", m);
+  if (m === "period" && !periodValid()) return;
+  loadView();
+}
+function periodValid() {
+  const f = document.getElementById("perFrom").value, t = document.getElementById("perTo").value;
+  const msg = document.getElementById("perMsg");
+  let err = "";
+  if (!f || !t) err = "podaj obie daty";
+  else if (f > t) err = "„od” jest późniejsze niż „do”";
+  else if ((Date.parse(t) - Date.parse(f)) / 86400000 + 1 > 731) err = "maksymalnie 2 lata";
+  msg.textContent = err;
+  return !err;
+}
+function onPeriodChange() {
+  if (!periodValid()) return;
+  store.set("sas_region_from", document.getElementById("perFrom").value);
+  store.set("sas_region_to", document.getElementById("perTo").value);
+  loadView();
+}
+const isPeriod = () => ST.board && ST.board.mode === "period";
 
 function showView(v) {
   if (v === "settings" && !(ST.me && ST.me.is_admin)) v = "board";
@@ -176,16 +224,16 @@ function renderKpis() {
   document.getElementById("kpis").innerHTML = `
     <div class="kpi"><div class="l">Ludzie w czerwonych obiektach</div>
       <div class="v" style="color:${k.share_red > 0.3 ? "var(--rag-r)" : k.share_red > 0.1 ? "var(--rag-a)" : "var(--rag-g)"}">${pct(k.share_red)}</div>
-      <div class="s">${k.hc_red || 0} z ${k.hc || 0} osób, tydzień do ${ddy(ST.board.week)}</div></div>
-    <div class="kpi"><div class="l">Średnio w kwartale</div>
+      <div class="s">${k.hc_red || 0} z ${k.hc || 0} osób, ${isPeriod() ? `status za okres ${dd(ST.board.period.from)}–${ddy(ST.board.period.to)}` : `tydzień do ${ddy(ST.board.week)}`}</div></div>
+    <div class="kpi"><div class="l">${isPeriod() ? "Średnio w okresie" : "Średnio w kwartale"}</div>
       <div class="v">${pct(k.share_red_quarter)}</div>
-      <div class="s">od ${ddy(k.quarter_start)}, ${k.weeks_in_quarter} tyg.</div></div>
+      <div class="s">${isPeriod() ? `${k.weeks_in_quarter} tyg. w okresie (z cotygodniowych przeliczeń)` : `od ${ddy(k.quarter_start)}, ${k.weeks_in_quarter} tyg.`}</div></div>
     <div class="kpi"><div class="l">Obiekty: czerwone / żółte / zielone</div>
       <div class="v"><span class="r">${k.sites_red}</span><span class="sep">/</span><span class="a">${k.sites_amber}</span><span class="sep">/</span><span class="g">${k.sites_green}</span></div>
       <div class="s">${k.sites_other ? k.sites_other + " bez oceny (strukturalne / brak danych)" : "wszystkie ocenione"}</div></div>
-    <div class="kpi"><div class="l">Wyszły z czerwonego w kwartale</div>
+    <div class="kpi"><div class="l">Wyszły z czerwonego w ${isPeriod() ? "okresie" : "kwartale"}</div>
       <div class="v">${k.red_exited}<span class="sep">z</span>${k.red_at_start}</div>
-      <div class="s">czerwone na początku kwartału</div></div>
+      <div class="s">czerwone na początku ${isPeriod() ? "okresu" : "kwartału"}</div></div>
     <div class="kpi"><div class="l">Karty wypełnione w terminie</div>
       <div class="v">${onTime == null ? "—" : pct(onTime)}</div>
       <div class="s">${k.cards_on_time} z ${k.cards_due}${k.cards_overdue ? ` · <span style="color:var(--rag-r)">${k.cards_overdue} po terminie</span>` : ""}</div></div>`;
@@ -222,20 +270,20 @@ function renderBoard() {
     <table class="rg"><thead><tr>
       <th></th><th>Obiekt</th><th>Koordynator</th>${multi ? "<th>Region</th>" : ""}
       <th class="num">Ludzie</th><th class="num">Rotacja</th><th class="num">Dożycie</th><th class="num">NN</th>
-      <th class="num">Tyg. czerw.</th><th>Trend 8 tyg.</th><th>Karta</th>
+      <th class="num">${isPeriod() ? "Tyg. czerw. w okresie" : "Tyg. czerw."}</th><th>${isPeriod() ? "Tygodnie w okresie" : "Trend 8 tyg."}</th><th>Karta</th>
     </tr></thead><tbody>
     ${rows.map((s) => `
       <tr class="click" onclick="openSite('${encodeURIComponent(s.site_key)}')">
         <td>${pill(s.status)}</td>
-        <td><b>${esc(s.site_key)}</b>${s.window_days !== 28 ? ` <span class="muted" title="Mały obiekt — okno ${s.window_days} dni">·${s.window_days}d</span>` : ""}
+        <td><b>${esc(s.site_key)}</b>${!isPeriod() && s.window_days !== 28 ? ` <span class="muted" title="Mały obiekt — okno ${s.window_days} dni">·${s.window_days}d</span>` : ""}
             ${s.status === "R" && s.raw_status !== "R" ? ` <span class="muted" title="Wskaźniki już poniżej progu, obiekt wychodzi z czerwonego">↗</span>` : ""}</td>
         <td>${s.coordinator_name ? esc(s.coordinator_name) : `<span class="muted">— nieprzypisany —</span>`}</td>
         ${multi ? `<td>${s.region_name ? esc(s.region_name) : `<span class="muted">—</span>`}</td>` : ""}
         <td class="num">${s.headcount_end}</td>
-        <td class="num" title="${s.departures} odejść przy średnio ${String(s.headcount_avg).replace(".", ",")} osobach">${metric(s.rotation, s.st_rot)}</td>
+        <td class="num" title="${s.departures} odejść przy średnio ${String(s.headcount_avg).replace(".", ",")} osobach${isPeriod() ? " — w przeliczeniu na 28 dni" : ""}">${metric(s.rotation, s.st_rot)}</td>
         <td class="num" title="${s.ret_achieved} z ${s.ret_possible} wag">${metric(s.ret_possible ? s.retention : null, s.st_ret)}</td>
         <td class="num" title="${s.abs_nn} dni NN z ${s.abs_base}">${metric(s.abs_base ? s.absence : null, s.st_abs, 1)}</td>
-        <td class="num">${s.red_weeks || ""}</td>
+        <td class="num">${isPeriod() ? (s.weeks_n ? `${s.red_weeks} z ${s.weeks_n}` : "") : s.red_weeks || ""}</td>
         <td>${trendHtml(s.trend)}</td>
         <td>${cardTag(s)}</td>
       </tr>`).join("")}
@@ -249,7 +297,9 @@ function renderLegend() {
     `Status = najgorszy z kryteriów. Rotacja (na 28 dni): zielony ≤${pct(s.rot_green_max)}, czerwony >${pct(s.rot_amber_max)}. ` +
     `Dożycie do ${s.ret_days_1}/${s.ret_days_2} dni: zielony ≥${pct(s.ret_green_min)}, czerwony <${pct(s.ret_amber_min)}. ` +
     `NN: zielony ≤${pct(s.abs_green_max)}, czerwony >${pct(s.abs_amber_max)}${absOn ? "" : " — <b>tylko informacyjnie, nie wpływa na status</b>"}. ` +
-    `Wyjście z czerwonego: ${s.exit_red_weeks} tyg. z rzędu poniżej progu. Obiekty poniżej ${s.small_site_headcount} osób liczone w oknie ${s.small_site_window_days} dni.`;
+    (isPeriod()
+      ? `<br><b>Okres od–do:</b> status liczony za cały wybrany okres tymi samymi progami (rotacja przeliczona na 28 dni), bez reguły wyjścia z czerwonego i bez dłuższego okna dla małych obiektów. „Tygodnie w okresie” — statusy z cotygodniowych przeliczeń. Karta obiektu pokazuje ostatni tydzień okresu.`
+      : `Wyjście z czerwonego: ${s.exit_red_weeks} tyg. z rzędu poniżej progu. Obiekty poniżej ${s.small_site_headcount} osób liczone w oknie ${s.small_site_window_days} dni.`);
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -263,8 +313,7 @@ async function openSite(encKey) {
                   <div class="loading">Ładowanie…</div>`;
   dw.classList.add("open"); dw.setAttribute("aria-hidden", "false");
   document.getElementById("drawerBg").classList.add("open");
-  const week = document.getElementById("selWeek").value;
-  const r = await api(`/site?key=${encodeURIComponent(key)}&week=${week}`);
+  const r = await api(`/site?key=${encodeURIComponent(key)}&${siteWhen()}`);
   if (!r) return;
   if (!r.ok) { dw.innerHTML += `<div class="error">${esc(r.error)}</div>`; return; }
   renderSite(r);
@@ -446,10 +495,16 @@ async function addNote(id) {
   if (r && r.ok) reloadSite();
 }
 
+// Karta obiektu: tydzień z listy albo ostatni tydzień wybranego okresu
+function siteWhen() {
+  return ST.mode === "period"
+    ? "to=" + encodeURIComponent(document.getElementById("perTo").value)
+    : "week=" + encodeURIComponent(document.getElementById("selWeek").value);
+}
+
 async function reloadSite() {
   if (!ST.siteKey) return;
-  const week = document.getElementById("selWeek").value;
-  const r = await api(`/site?key=${encodeURIComponent(ST.siteKey)}&week=${week}`);
+  const r = await api(`/site?key=${encodeURIComponent(ST.siteKey)}&${siteWhen()}`);
   if (r && r.ok) renderSite(r);
 }
 
@@ -462,7 +517,9 @@ async function loadCoords() {
   const r = await api("/coordinators" + qs());
   if (!r) return;
   if (!r.ok) { box.innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
-  document.getElementById("coordsCnt").textContent = `${r.data.length} · tydzień do ${ddy(r.week)}`;
+  document.getElementById("coordsCnt").textContent = r.mode === "period"
+    ? `${r.data.length} · okres ${dd(r.period.from)}–${ddy(r.period.to)} (status za cały okres)`
+    : `${r.data.length} · tydzień do ${ddy(r.week)}`;
   if (!r.data.length) { box.innerHTML = `<div class="empty">Brak danych</div>`; return; }
   box.innerHTML = `
     <table class="rg"><thead><tr><th>Koordynator</th><th>Obiekty</th><th class="num">Ludzie</th>

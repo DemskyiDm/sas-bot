@@ -63,6 +63,19 @@ function regionClause(scope, region, col, params) {
   return `${col} = ANY($${params.length}::int[])`;
 }
 
+// Довільний період «від–до» (?from=&to=), не довший за 2 роки. Інакше — null (режим тижня).
+function periodOf(q) {
+  if (!isDate(q.from) || !isDate(q.to) || q.from > q.to) return null;
+  const days = (Date.parse(q.to) - Date.parse(q.from)) / 86400000 + 1;
+  if (!(days >= 1 && days <= 731)) return null;
+  return { from: q.from, to: q.to, days };
+}
+// Останній перерахований тиждень, не пізніший за дату
+async function weekAtOrBefore(d) {
+  const r = await db.query(`SELECT to_char(MAX(week_end), 'YYYY-MM-DD') AS w FROM reg.v_snap WHERE week_end <= $1::date`, [d]);
+  return r.rows[0].w;
+}
+
 async function latestWeek() {
   const r = await db.query(`SELECT to_char(MAX(week_end), 'YYYY-MM-DD') AS w FROM reg.v_snap`);
   return r.rows[0].w;
@@ -157,6 +170,8 @@ router.get("/coordinators-list", async (req, res) => {
 // ── Дошка: об'єкти тижня + показники регіону ─────────────────────────
 router.get("/board", async (req, res) => {
   try {
+    const per = periodOf(req.query);
+    if (per) return boardPeriod(req, res, per);
     const week = isDate(req.query.week) ? req.query.week : await latestWeek();
     if (!week) return res.json({ ok: true, week: null, sites: [], kpi: null });
     const params = [week];
@@ -254,13 +269,112 @@ router.get("/board", async (req, res) => {
   }
 });
 
+// ── Дошка за довільний період: статус за весь період (без правила виходу з червоного) ─
+async function boardPeriod(req, res, per) {
+  try {
+    const params = [per.from, per.to];
+    const where = regionClause(req.scope, req.query.region, "o.region_id", params);
+    const sites = await db.query(
+      `WITH r AS (SELECT * FROM reg.rag_period($1::date, $2::date))
+       SELECT r.site_key, o.region_id, rg.name AS region_name,
+              o.coordinator_id, c.full_name AS coordinator_name,
+              r.window_days, r.headcount_start, r.headcount_end, r.headcount_avg::float8 AS headcount_avg,
+              r.departures, r.rotation::float8 AS rotation,
+              r.ret_possible, r.ret_achieved, r.retention::float8 AS retention,
+              r.abs_nn, r.abs_base, r.absence::float8 AS absence,
+              r.st_rot, r.st_ret, r.st_abs, r.raw_status, r.raw_status AS status,
+              (SELECT COUNT(*) FROM reg.v_snap h WHERE h.site_key = r.site_key
+                  AND h.week_end BETWEEN $1::date AND $2::date AND h.status = 'R')::int AS red_weeks,
+              (SELECT COUNT(*) FROM reg.v_snap h WHERE h.site_key = r.site_key
+                  AND h.week_end BETWEEN $1::date AND $2::date)::int AS weeks_n,
+              (SELECT json_agg(json_build_object('w', x.w, 's', x.s) ORDER BY x.w)
+                 FROM (SELECT to_char(h.week_end, 'YYYY-MM-DD') AS w, h.status AS s FROM reg.v_snap h
+                        WHERE h.site_key = r.site_key AND h.week_end BETWEEN $1::date AND $2::date
+                        ORDER BY h.week_end DESC LIMIT 26) x) AS trend,
+              card.id AS card_id, card.status AS card_status,
+              to_char(card.due_at, 'YYYY-MM-DD HH24:MI') AS card_due,
+              (card.status = 'open' AND card.due_at < now()) AS card_overdue
+         FROM r
+         LEFT JOIN reg.site_owner o ON o.site_key = r.site_key AND o.valid_to IS NULL
+         LEFT JOIN reg.regions rg ON rg.id = o.region_id
+         LEFT JOIN public.coordinators c ON c.id = o.coordinator_id
+         LEFT JOIN LATERAL (
+           SELECT * FROM reg.red_cards rc
+            WHERE rc.site_key = r.site_key AND rc.status <> 'closed'
+            ORDER BY rc.opened_at DESC LIMIT 1) card ON true
+        WHERE ${where}`,
+      params,
+    );
+    const rows = sites.rows.sort(
+      (a, b) =>
+        STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
+        b.red_weeks - a.red_weeks ||
+        b.headcount_end - a.headcount_end,
+    );
+
+    // Показники за період: частка людей у червоних — із тижневих знімків усередині періоду
+    const kp = [per.from, per.to];
+    const kWhere = regionClause(req.scope, req.query.region, "s.region_id", kp);
+    const kWhereCards = kWhere.replace(/s\.region_id/g, "c.region_id");
+    const kpi = await db.query(
+      `WITH wk AS (
+         SELECT s.week_end,
+                SUM(s.headcount_end) FILTER (WHERE s.status IN ('G','A','R')) AS hc,
+                SUM(s.headcount_end) FILTER (WHERE s.status = 'R')            AS hc_red
+           FROM reg.v_snap s
+          WHERE s.week_end BETWEEN $1::date AND $2::date AND ${kWhere}
+          GROUP BY s.week_end),
+       fw AS (SELECT MIN(week_end) AS a, MAX(week_end) AS b FROM wk),
+       red_start AS (SELECT s.site_key FROM reg.v_snap s, fw WHERE s.week_end = fw.a AND s.status = 'R' AND ${kWhere}),
+       end_w AS (SELECT s.site_key, s.status FROM reg.v_snap s, fw WHERE s.week_end = fw.b AND ${kWhere}),
+       cards AS (SELECT c.* FROM reg.red_cards c
+                  WHERE c.opened_at >= $1::date AND c.opened_at < $2::date + 1 AND ${kWhereCards})
+       SELECT (SELECT AVG(hc_red::numeric / NULLIF(hc, 0)) FROM wk)::float8 AS share_red_quarter,
+              (SELECT COUNT(*) FROM wk) AS weeks_in_quarter,
+              (SELECT COUNT(*) FROM red_start) AS red_at_start,
+              (SELECT COUNT(*) FROM red_start rs JOIN end_w e USING (site_key) WHERE e.status <> 'R') AS red_exited,
+              (SELECT COUNT(*) FROM cards WHERE filled_at IS NOT NULL OR due_at < now()) AS cards_due,
+              (SELECT COUNT(*) FROM cards WHERE filled_at IS NOT NULL AND filled_at <= due_at) AS cards_on_time,
+              (SELECT COUNT(*) FROM cards WHERE status = 'open' AND due_at < now()) AS cards_overdue`,
+      kp,
+    );
+    const k = kpi.rows[0];
+    ["weeks_in_quarter", "red_at_start", "red_exited", "cards_due", "cards_on_time", "cards_overdue"].forEach(
+      (f) => (k[f] = parseInt(k[f] || 0, 10)),
+    );
+    const cnt = (st) => rows.filter((x) => x.status === st).length;
+    k.quarter_start = per.from;
+    k.sites_red = cnt("R"); k.sites_amber = cnt("A"); k.sites_green = cnt("G");
+    k.sites_other = rows.length - k.sites_red - k.sites_amber - k.sites_green;
+    k.hc = rows.filter((x) => ["G", "A", "R"].includes(x.status)).reduce((a, x) => a + x.headcount_end, 0);
+    k.hc_red = rows.filter((x) => x.status === "R").reduce((a, x) => a + x.headcount_end, 0);
+    k.share_red = k.hc ? k.hc_red / k.hc : null;
+
+    const settings = await db.query(`SELECT key, value::float8 AS value FROM reg.settings`);
+    res.json({
+      ok: true,
+      mode: "period",
+      period: per,
+      week: await weekAtOrBefore(per.to),
+      sites: rows,
+      kpi: k,
+      settings: Object.fromEntries(settings.rows.map((x) => [x.key, x.value])),
+    });
+  } catch (e) {
+    console.error("[regional/board period]", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
 // ── Картка об'єкта: показники, історія, поіменні списки, червона картка ─
 router.get("/site", async (req, res) => {
   try {
     const key = req.query.key;
     if (!key) return res.status(400).json({ ok: false, error: "key required" });
     if (!(await siteAllowed(req.scope, key))) return res.status(403).json({ ok: false, error: "Forbidden" });
-    const week = isDate(req.query.week) ? req.query.week : await latestWeek();
+    const week = isDate(req.query.week) ? req.query.week
+      : isDate(req.query.to) ? ((await weekAtOrBefore(req.query.to)) || (await latestWeek()))
+      : await latestWeek();
 
     const [snap, hist, owner, card] = await Promise.all([
       db.query(
@@ -386,6 +500,33 @@ router.get("/site", async (req, res) => {
 // ── Координатори регіону ──────────────────────────────────────────────
 router.get("/coordinators", async (req, res) => {
   try {
+    const per = periodOf(req.query);
+    if (per) {
+      const params = [per.from, per.to];
+      const where = regionClause(req.scope, req.query.region, "o.region_id", params);
+      const r = await db.query(
+        `WITH s AS (SELECT r.*, o.region_id, o.coordinator_id FROM reg.rag_period($1::date, $2::date) r
+                     LEFT JOIN reg.site_owner o ON o.site_key = r.site_key AND o.valid_to IS NULL
+                    WHERE ${where})
+         SELECT s.coordinator_id, COALESCE(c.full_name, '— bez koordynatora —') AS coordinator_name,
+                COUNT(*)::int AS sites,
+                COUNT(*) FILTER (WHERE s.raw_status = 'R')::int AS red,
+                COUNT(*) FILTER (WHERE s.raw_status = 'A')::int AS amber,
+                COUNT(*) FILTER (WHERE s.raw_status = 'G')::int AS green,
+                SUM(s.headcount_end)::int AS headcount,
+                SUM(s.headcount_end) FILTER (WHERE s.raw_status = 'R')::int AS headcount_red,
+                (SUM(s.departures * 28.0 / s.window_days) / NULLIF(SUM(s.headcount_avg), 0))::float8 AS rotation,
+                (SUM(s.ret_achieved)::numeric / NULLIF(SUM(s.ret_possible), 0))::float8 AS retention,
+                (SUM(s.abs_nn)::numeric / NULLIF(SUM(s.abs_base), 0))::float8 AS absence,
+                json_agg(json_build_object('site', s.site_key, 'status', s.raw_status) ORDER BY s.site_key) AS site_list
+           FROM s LEFT JOIN public.coordinators c ON c.id = s.coordinator_id
+          GROUP BY s.coordinator_id, c.full_name
+          ORDER BY (SUM(s.headcount_end) FILTER (WHERE s.raw_status = 'R'))::numeric
+                   / NULLIF(SUM(s.headcount_end), 0) DESC NULLS LAST, coordinator_name`,
+        params,
+      );
+      return res.json({ ok: true, mode: "period", period: per, data: r.rows });
+    }
     const week = isDate(req.query.week) ? req.query.week : await latestWeek();
     if (!week) return res.json({ ok: true, data: [] });
     const params = [week];

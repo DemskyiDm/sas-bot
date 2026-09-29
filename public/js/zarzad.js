@@ -205,8 +205,19 @@ function goSec(id) {
   if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
   document.querySelectorAll(".nav-item[data-sec]").forEach((n) => n.classList.toggle("active", n.dataset.sec === id));
 }
-function siteLink(key) {
-  window.open("region.html#site=" + encodeURIComponent(key), "_blank");
+// Karta obiektu w sekcji Region — z tym samym okresem, co na pulpicie.
+// „4 tygodnie” = tydzień w Region (okno 28 dni); tydzień i od–do = okres od–do w Region.
+// now=true (Do decyzji) — ostatni przeliczony tydzień.
+function siteLink(key, now) {
+  const p = new URLSearchParams({ site: key });
+  const s = ST.summary;
+  if (now || !s) p.set("week", "last");
+  else {
+    if (!s.custom && s.period === 28) p.set("week", s.anchor);
+    p.set("from", s.from);
+    p.set("to", s.anchor);
+  }
+  window.open("region.html#" + p.toString(), "_blank");
 }
 
 async function loadAll() {
@@ -325,7 +336,7 @@ function openDecision(i) {
   const d = ST.decisions[i];
   if (d.detail === "early_now" && d.site) return openDetail("early_now", "Odejścia przed 30. dniem — " + d.site, { site: d.site });
   if (d.detail) return openDetail(d.detail, d.text);
-  if (d.site && ST.me.links.region) return siteLink(d.site);
+  if (d.site && ST.me.links.region) return siteLink(d.site, true);
   if (d.coord) return openCoord(d.coord);
 }
 

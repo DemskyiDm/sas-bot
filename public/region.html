@@ -94,6 +94,7 @@
     .hist div i.R { background: var(--rag-r); } .hist div i.A { background: var(--rag-a); }
     .hist div i.G { background: var(--rag-g); } .hist div i.S { background: var(--rag-s); }
     .hist div.cur { color: var(--text); font-weight: 700; }
+    .hist div.out { opacity: .35; }
     .h3 { font-size: 12px; font-weight: 600; color: var(--text); margin: 18px 0 8px; display: flex; gap: 8px; align-items: baseline; }
     .h3 .c { font-weight: 400; color: var(--text3); font-size: 11px; }
 
@@ -103,6 +104,10 @@
     .redcard .top b { font-size: 13px; }
     .form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .form .full { grid-column: 1 / -1; }
+    .form .ro { font-size: 13px; line-height: 1.5; white-space: pre-wrap; padding: 7px 10px; background: var(--surface2);
+      border: 1px solid var(--border); border-radius: 6px; min-height: 32px; }
+    .redcard.mine { box-shadow: 0 0 0 1px var(--accent) inset; }
+    .card-tag.mine { color: var(--accent); font-weight: 600; }
     .form label { display: block; font-size: 11px; color: var(--text2); margin-bottom: 4px; }
     .form select, .form input, .form textarea { width: 100%; }
     textarea, input[type="date"], input[type="number"] { background: var(--surface2); border: 1px solid var(--border);

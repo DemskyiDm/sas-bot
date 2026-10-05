@@ -258,6 +258,8 @@ async function handleUpdate(bot, update) {
             T(session, "id_saved", worker.full_name),
           );
           await sendDayKeyboard(bot, chatId, session);
+          // «Poleć znajomego»: історія Telegram-ID і анкета для нових
+          await require("./referral").onLogin(bot, worker, chatId, cq.from);
         }
       } else {
         // Нет ID — просим
@@ -938,6 +940,8 @@ async function handleUpdate(bot, update) {
     await linkTelegram(worker.id, chatId);
     await sendMessage(bot, chatId, T(session, "id_saved", worker.full_name));
     await sendDayKeyboard(bot, chatId, session, settings);
+    // «Poleć znajomego»: історія Telegram-ID і анкета для нових
+    await require("./referral").onLogin(bot, worker, chatId, update.message.from);
     return;
   }
 

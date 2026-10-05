@@ -582,6 +582,7 @@ async function runSurveys(day) {
        JOIN public.workers w ON w.id = s.worker_id
        JOIN care.surveys sv ON sv.code = s.survey_code
       WHERE s.status = 'planned' AND s.planned_for <= $1::date AND care.is_on(s.coordinator_id)
+        AND s.survey_code <> 'start'                 -- «start» надсилає bot/referral.js
       ORDER BY s.id`,
     [day],
   );
@@ -610,6 +611,7 @@ async function runSurveys(day) {
   const rem = await db.query(
     `SELECT s.*, w.telegram_chat_id FROM care.survey_sends s JOIN public.workers w ON w.id = s.worker_id
       WHERE s.status = 'sent' AND s.reminded_at IS NULL AND s.sent_at < now() - make_interval(hours => $1::int)
+        AND s.survey_code <> 'start'                 -- «start» нагадує bot/referral.js
         AND w.telegram_chat_id IS NOT NULL`,
     [s.survey_remind_hours ?? 24],
   );
@@ -622,6 +624,39 @@ async function runSurveys(day) {
   return { sent, failed, reminded: rem.rows.length };
 }
 
+// Анкета «start» (реєстрація в боті): надсилає bot/referral.js одразу після
+// питання «як дізналися про компанію», нагадує теж він (раз на день, 2 дні)
+async function startSurveyNow(sendId, chatId) {
+  const s = (await db.query(
+    `SELECT s.*, sv.intro FROM care.survey_sends s JOIN care.surveys sv ON sv.code = s.survey_code WHERE s.id = $1`, [sendId])).rows[0];
+  if (!s || s.status !== "planned") return false;
+  const lang = wLang(s.lang);
+  const first = (await db.query(`SELECT MIN(sort) AS m FROM care.questions WHERE survey_code = $1`, [s.survey_code])).rows[0].m;
+  // забрати рядок атомарно — щоб анкета не пішла двічі
+  const claim = await db.query(
+    `UPDATE care.survey_sends SET status = 'sent', sent_at = now(), lang = $2, current_q = $3 WHERE id = $1 AND status = 'planned' RETURNING id`,
+    [s.id, lang, first]);
+  if (!claim.rows.length) return false;
+  let b = { ok: false };
+  try {
+    const a = await tgSend(chatId, esc(s.intro[lang] || s.intro.uk));
+    b = a.ok ? await sendQuestion({ ...s, lang }, first, chatId) : a;
+  } finally {
+    if (!b.ok) await db.query(`UPDATE care.survey_sends SET status = 'failed' WHERE id = $1`, [s.id]);
+  }
+  return !!b.ok;
+}
+async function remindSurveyNow(sendId, chatId) {
+  const s = (await db.query(`SELECT * FROM care.survey_sends WHERE id = $1`, [sendId])).rows[0];
+  if (!s || s.status !== "sent") return false;
+  const lang = wLang(s.lang);
+  const a = await tgSend(chatId, tw(lang).remind);
+  if (!a.ok) return false;
+  await sendQuestion({ ...s, lang }, s.current_q, chatId);
+  await db.query(`UPDATE care.survey_sends SET reminded_at = now() WHERE id = $1`, [s.id]);
+  return true;
+}
+
 // Тривожна відповідь → завдання координатору з найвищим пріоритетом
 async function taskFromSurvey(send) {
   const act = await db.query(
@@ -630,6 +665,10 @@ async function taskFromSurvey(send) {
       WHERE a.worker_id = $1`,
     [send.worker_id],
   );
+  // анкета на старті може прийти ще до дня BHP — тоді об'єкт і координатор з самої анкети
+  if (!act.rows.length && send.survey_code === "start" && send.site_key) {
+    act.rows.push({ facility_id: send.facility_id, site_key: send.site_key, coordinator_id: send.coordinator_id, region_id: send.region_id });
+  }
   if (!act.rows.length) return null;
   const a = act.rows[0];
   // модуль вимкнений для координатора об'єкта — завдання не ставимо (відповідь піде в бал ризику)
@@ -711,7 +750,11 @@ async function onSurveyAnswer(cq, chatId, parts) {
     return;
   }
   if (isExit) await tgSend(chatId, tw(lang).thanks_exit);
-  else await tgSend(chatId, worst === "high" && tasksOn ? tw(lang).thanks_flag : tw(lang).thanks);
+  else {
+    // «координатор зв'яжеться» — лише якщо завдання справді створено
+    const tk = (await db.query(`SELECT task_id FROM care.survey_sends WHERE id = $1`, [s.id])).rows[0];
+    await tgSend(chatId, worst === "high" && tasksOn && tk && tk.task_id > 0 ? tw(lang).thanks_flag : tw(lang).thanks);
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1259,7 +1302,7 @@ async function testSummary() {
 
 module.exports = {
   schedule, setBot, handleCallback, tick,
-  runMorning, runSurveys, runEscalation, runSpotChecks, sendUrgent,
+  runMorning, runSurveys, runEscalation, runSpotChecks, sendUrgent, startSurveyNow, remindSurveyNow,
   closeTask, reopenTask, rateAssessment, loadTask, taskText, sendTaskNow, refreshAssessmentMsg, cancelForCoordinators,
   sendTestSet, clearTests, testSummary, TEST_ITEMS,
 };

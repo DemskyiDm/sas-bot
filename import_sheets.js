@@ -3,6 +3,8 @@ const { https } = require("follow-redirects");
 const db = require("./db");
 const crypto = require("crypto");
 const csvHashCache = new Map();
+// Який аркуш останнім писав в об'єкт: якщо прив'язку змінили, «без змін» не пропускаємо.
+const facilityWriter = new Map();
 
 const { google } = require("googleapis");
 const path = require("path");
@@ -12,465 +14,77 @@ const auth = new google.auth.GoogleAuth({
   scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
 });
 const sheetsApi = google.sheets({ version: "v4", auth });
-const spreadsheetMetaCache = new Map();
 
 // ── CONFIG ────────────────────────────────────────────────────
-const SOURCES = [
-  {
-    ssId: "1UfQpf6u8lt8FXP5AXUGNwHCrvG7Y0A4wcwC3DXQg8U4",
-    gid: "1892808234",
-    facilityName: "Ceva Nowy Świat APT",
-  },
-  {
-    ssId: "1UfQpf6u8lt8FXP5AXUGNwHCrvG7Y0A4wcwC3DXQg8U4",
-    gid: "1609709378",
-    facilityName: "Ceva Nowy Świat Well",
-  },
-  {
-    ssId: "1UfQpf6u8lt8FXP5AXUGNwHCrvG7Y0A4wcwC3DXQg8U4",
-    gid: "1752399154",
-    facilityName: "CEVA ŚWIEBODZIN APT",
-  },
-  {
-    ssId: "1GlvMO24782bKn4InZiXpcIiAVejIDxCncOuDLQ-rH0c",
-    gid: "1672298586",
-    facilityName: "ID Psary APT",
-  },
-  {
-    ssId: "1GlvMO24782bKn4InZiXpcIiAVejIDxCncOuDLQ-rH0c",
-    gid: "0",
-    facilityName: "ID Psary SAS",
-  },
-  {
-    ssId: "1GlvMO24782bKn4InZiXpcIiAVejIDxCncOuDLQ-rH0c",
-    gid: "1438986598",
-    facilityName: "ID Psary WELL",
-  },
-    {
-    ssId: "1GlvMO24782bKn4InZiXpcIiAVejIDxCncOuDLQ-rH0c",
-    gid: "1238085682",
-    facilityName: "Hydro Chrzanów SAS",
-  },
-  {
-    ssId: "1ZFqUlu_C69RkY9BQDa-cutDvFEZGk8iCJjmBdaV1ZxI",
-    gid: "1158031380",
-    facilityName: "METLER Dipico",
-  },
-  
-  {
-    ssId: "1ZFqUlu_C69RkY9BQDa-cutDvFEZGk8iCJjmBdaV1ZxI",
-    gid: "1407856830",
-    facilityName: "Punto Pruszyński APT",
-  },
-  {
-    ssId: "1ZFqUlu_C69RkY9BQDa-cutDvFEZGk8iCJjmBdaV1ZxI",
-    gid: "0",
-    facilityName: "G&G APT",
-  },
-  {
-    ssId: "1ZFqUlu_C69RkY9BQDa-cutDvFEZGk8iCJjmBdaV1ZxI",
-    gid: "157070482",
-    facilityName: "G&G Well",
-  },
-  {
-    ssId: "1ZFqUlu_C69RkY9BQDa-cutDvFEZGk8iCJjmBdaV1ZxI",
-    gid: "1672298586",
-    facilityName: "Blachy Pruszyński APT",
-  },
-  {
-    ssId: "1ZFqUlu_C69RkY9BQDa-cutDvFEZGk8iCJjmBdaV1ZxI",
-    gid: "1302818157",
-    facilityName: "Gerda Sokołów APT",
-  },
-  {
-    ssId: "1ZFqUlu_C69RkY9BQDa-cutDvFEZGk8iCJjmBdaV1ZxI",
-    gid: "481903758",
-    facilityName: "Oldar Agencja Work",
-  },
-  {
-    ssId: "1ZFqUlu_C69RkY9BQDa-cutDvFEZGk8iCJjmBdaV1ZxI",
-    gid: "255214619",
-    facilityName: "Aleksandra Dębska Oldar WP",
-  },
-  {
-    ssId: "1xgOv39j82OHsGvhR53Y_IuYEN-S9KrIcLsDXvFN4fVA",
-    gid: "1892808234",
-    facilityName: "Ceva Krężoły APT",
-  },
-  {
-    ssId: "1gVEcQZY40SlnMVm3laSjuNpYk0lo8LR6Q1Ke0LQ8mKU",
-    gid: "1609709378",
-    facilityName: "Action Wypędy SAS",
-  },
-  {
-    ssId: "1gVEcQZY40SlnMVm3laSjuNpYk0lo8LR6Q1Ke0LQ8mKU",
-    gid: "2128388755",
-    facilityName: "Action Zamienie SAS",
-  },
-  {
-    ssId: "1gVEcQZY40SlnMVm3laSjuNpYk0lo8LR6Q1Ke0LQ8mKU",
-    gid: "1416932837",
-    facilityName: "Action Zamienie SAS EAST BRIDGE",
-  },
-  {
-    ssId: "1gVEcQZY40SlnMVm3laSjuNpYk0lo8LR6Q1Ke0LQ8mKU",
-    gid: "1653950425",
-    facilityName: "Action Zamienie Przejęcie SAS",
-  },
-  {
-    ssId: "1gVEcQZY40SlnMVm3laSjuNpYk0lo8LR6Q1Ke0LQ8mKU",
-    gid: "2048237816",
-    facilityName: "Action Production SAS",
-  },
-  {
-    ssId: "1gVEcQZY40SlnMVm3laSjuNpYk0lo8LR6Q1Ke0LQ8mKU",
-    gid: "852139785",
-    facilityName: "ILS UZ",
-  },
-  {
-    ssId: "1gVEcQZY40SlnMVm3laSjuNpYk0lo8LR6Q1Ke0LQ8mKU",
-    gid: "1351989642",
-    facilityName: "ILS Błonie SAS",
-  },
-  {
-    ssId: "1gVEcQZY40SlnMVm3laSjuNpYk0lo8LR6Q1Ke0LQ8mKU",
-    gid: "734840239",
-    facilityName: "Inter Cars SAS",
-  },
-  {
-    ssId: "1gVEcQZY40SlnMVm3laSjuNpYk0lo8LR6Q1Ke0LQ8mKU",
-    gid: "1407856830",
-    facilityName: "PolMlek SAS",
-  },
-  {
-    ssId: "1gVEcQZY40SlnMVm3laSjuNpYk0lo8LR6Q1Ke0LQ8mKU",
-    gid: "1657737296",
-    facilityName: "Trans-Tok APT",
-  },
-  {
-    ssId: "1UfQpf6u8lt8FXP5AXUGNwHCrvG7Y0A4wcwC3DXQg8U4",
-    gid: "1335952904",
-    facilityName: "Ligentia APT",
-  },
-  {
-    ssId: "1UfQpf6u8lt8FXP5AXUGNwHCrvG7Y0A4wcwC3DXQg8U4",
-    gid: "314279664",
-    facilityName: "Ligentia Well",
-  },
-  {
-    ssId: "193DcijqLFqxNy5tM8BFTi5Zx6HX2QrutrpOgWxwLzM4",
-    gid: "1324296168",
-    facilityName: "Anpacars Sosnowiec SAS",
-  },
-  {
-    ssId: "193DcijqLFqxNy5tM8BFTi5Zx6HX2QrutrpOgWxwLzM4",
-    gid: "738760745",
-    facilityName: "ANPACARS BĘDZIN SAS",
-  },
-  {
-    ssId: "193DcijqLFqxNy5tM8BFTi5Zx6HX2QrutrpOgWxwLzM4",
-    gid: "698091925",
-    facilityName: "MIESZKO Services SAS",
-  },
-  {
-    ssId: "193DcijqLFqxNy5tM8BFTi5Zx6HX2QrutrpOgWxwLzM4",
-    gid: "366286180",
-    facilityName: "Mieszko SAS",
-  },
-  {
-    ssId: "193DcijqLFqxNy5tM8BFTi5Zx6HX2QrutrpOgWxwLzM4",
-    gid: "1462112214",
-    facilityName: "Mieszko APT",
-  },
-  {
-    ssId: "193DcijqLFqxNy5tM8BFTi5Zx6HX2QrutrpOgWxwLzM4",
-    gid: "842318862",
-    facilityName: "MIESZKO SERVICES APT",
-  },
-  {
-    ssId: "193DcijqLFqxNy5tM8BFTi5Zx6HX2QrutrpOgWxwLzM4",
-    gid: "0",
-    facilityName: "SGB JAROSZOWIEC SAS",
-  },
-  {
-    ssId: "193DcijqLFqxNy5tM8BFTi5Zx6HX2QrutrpOgWxwLzM4",
-    gid: "527726318",
-    facilityName: "EkoOkna SAS",
-  },
-  {
-    ssId: "193DcijqLFqxNy5tM8BFTi5Zx6HX2QrutrpOgWxwLzM4",
-    gid: "377920864",
-    facilityName: "EkoOkna Well",
-  },
-  {
-    ssId: "1I3Vy5zTs0DxPcH3Hq11bWjVROAiviFWUBRYWLZGw8cw",
-    gid: "630359828",
-    facilityName: "Fiege Goleniów Well",
-  },
-  {
-    ssId: "1I3Vy5zTs0DxPcH3Hq11bWjVROAiviFWUBRYWLZGw8cw",
-    gid: "409362818",
-    facilityName: "Rhenus Gol WELL",
-  },
-  {
-    ssId: "1I3Vy5zTs0DxPcH3Hq11bWjVROAiviFWUBRYWLZGw8cw",
-    gid: "1302818157",
-    facilityName: "CEVA APT",
-  },
-  {
-    ssId: "1I3Vy5zTs0DxPcH3Hq11bWjVROAiviFWUBRYWLZGw8cw",
-    gid: "1407856830",
-    facilityName: "CEVA Dipico",
-  },
-  {
-    ssId: "1I3Vy5zTs0DxPcH3Hq11bWjVROAiviFWUBRYWLZGw8cw",
-    gid: "881937903",
-    facilityName: "HULTAFORS WELL",
-  },
-  {
-    ssId: "1I3Vy5zTs0DxPcH3Hq11bWjVROAiviFWUBRYWLZGw8cw",
-    gid: "972884639",
-    facilityName: "Lucky Union APT",
-  },
-  {
-    ssId: "1CCHYKaAuFF45MoyTZAOBACjY2Vgf6PFrP9ceqalSHKM",
-    gid: "0",
-    facilityName: "Id Log Rokitno SAS",
-  },
-  {
-    ssId: "1CCHYKaAuFF45MoyTZAOBACjY2Vgf6PFrP9ceqalSHKM",
-    gid: "1672298586",
-    facilityName: "Id Log Rokitno APT",
-  },
-  {
-    ssId: "1CCHYKaAuFF45MoyTZAOBACjY2Vgf6PFrP9ceqalSHKM",
-    gid: "1407856830",
-    facilityName: "Id Log Rokitno Well",
-  },
-  {
-    ssId: "1CCHYKaAuFF45MoyTZAOBACjY2Vgf6PFrP9ceqalSHKM",
-    gid: "1163529905",
-    facilityName: "CAINIAO APT",
-  },
-  {
-    ssId: "1CCHYKaAuFF45MoyTZAOBACjY2Vgf6PFrP9ceqalSHKM",
-    gid: "2027894673",
-    facilityName: "CAINIAO APT 2",
-  },
-  {
-    ssId: "1CCHYKaAuFF45MoyTZAOBACjY2Vgf6PFrP9ceqalSHKM",
-    gid: "1302818157",
-    facilityName: "CAINIAO Dipico",
-  },
-  {
-    ssId: "1CCHYKaAuFF45MoyTZAOBACjY2Vgf6PFrP9ceqalSHKM",
-    gid: "2005234934",
-    facilityName: "CAINIAO Dipico 2",
-  },
-  {
-    ssId: "1CCHYKaAuFF45MoyTZAOBACjY2Vgf6PFrP9ceqalSHKM",
-    gid: "618124367",
-    facilityName: "Saint-Gobain SAS",
-  },
-  {
-    ssId: "1yYaSyo96Z96H8CGHkVWvKglTFim-nC489vK2gxV-3T8",
-    gid: "1228811347",
-    facilityName: "Fiege ZG Well",
-  },
-  {
-    ssId: "13T5x8UzXSyv322qT8O2GJvwNYR7dxtpuI2-F8AG8pYw",
-    gid: "159117149",
-    facilityName: "IGP Operations PL APT",
-  },
-  {
-    ssId: "13T5x8UzXSyv322qT8O2GJvwNYR7dxtpuI2-F8AG8pYw",
-    gid: "1871902412",
-    facilityName: "IGP Operations PL SAS",
-  },
-  {
-    ssId: "13T5x8UzXSyv322qT8O2GJvwNYR7dxtpuI2-F8AG8pYw",
-    gid: "996353161",
-    facilityName: "Fiege NDM Well",
-  },
-  {
-    ssId: "13T5x8UzXSyv322qT8O2GJvwNYR7dxtpuI2-F8AG8pYw",
-    gid: "1887777352",
-    facilityName: "Gerda Starachowice APT",
-  },
-  {
-    ssId: "13T5x8UzXSyv322qT8O2GJvwNYR7dxtpuI2-F8AG8pYw",
-    gid: "1247873024",
-    facilityName: "Versal APT",
-  },
-  {
-    ssId: "13T5x8UzXSyv322qT8O2GJvwNYR7dxtpuI2-F8AG8pYw",
-    gid: "2037649012",
-    facilityName: "MAROPAK SAS",
-  },
-  {
-    ssId: "13T5x8UzXSyv322qT8O2GJvwNYR7dxtpuI2-F8AG8pYw",
-    gid: "658536579",
-    facilityName: "Wsip Dipico",
-  },
-  {
-    ssId: "13T5x8UzXSyv322qT8O2GJvwNYR7dxtpuI2-F8AG8pYw",
-    gid: "1017133597",
-    facilityName: "Domel SAS",
-  },
-  {
-    ssId: "13T5x8UzXSyv322qT8O2GJvwNYR7dxtpuI2-F8AG8pYw",
-    gid: "938923789",
-    facilityName: "ATS Display APT",
-  },
-  {
-    ssId: "13T5x8UzXSyv322qT8O2GJvwNYR7dxtpuI2-F8AG8pYw",
-    gid: "1114876791",
-    facilityName: "SGB Pruszków SAS",
-  },
-    {
-    ssId: "13T5x8UzXSyv322qT8O2GJvwNYR7dxtpuI2-F8AG8pYw",
-    gid: "606490412",
-    facilityName: "Cerrad Sas",
-  },
-    {
-    ssId: "13T5x8UzXSyv322qT8O2GJvwNYR7dxtpuI2-F8AG8pYw",
-    gid: "856011641",
-    facilityName: "Marc Sas",
-  },
-  {
-    ssId: "1WF6mDo07x53SKYOgF0hvwQLDccueNKctZNYRFoXrlWs",
-    gid: "0",
-    facilityName: "Id Logistics Wro SAS",
-  },
-  {
-    ssId: "1WF6mDo07x53SKYOgF0hvwQLDccueNKctZNYRFoXrlWs",
-    gid: "710429418",
-    facilityName: "ID Krajków SAS",
-  },
-  {
-    ssId: "1WF6mDo07x53SKYOgF0hvwQLDccueNKctZNYRFoXrlWs",
-    gid: "1672298586",
-    facilityName: "Id Logistics Wro APT",
-  },
-  {
-    ssId: "1WF6mDo07x53SKYOgF0hvwQLDccueNKctZNYRFoXrlWs",
-    gid: "1407856830",
-    facilityName: "Id Logistics Wro Well",
-  },
-  {
-    ssId: "1WF6mDo07x53SKYOgF0hvwQLDccueNKctZNYRFoXrlWs",
-    gid: "1692725338",
-    facilityName: "Id Logistics Tyniec APT",
-  },
-   {
-    ssId: "1WF6mDo07x53SKYOgF0hvwQLDccueNKctZNYRFoXrlWs",
-    gid: "749697850",
-    facilityName: "Id Logistics Tyniec WELL",
-  },
-  {
-    ssId: "1WF6mDo07x53SKYOgF0hvwQLDccueNKctZNYRFoXrlWs",
-    gid: "1609709378",
-    facilityName: "DSV Dipico",
-  },
-  {
-    ssId: "1WF6mDo07x53SKYOgF0hvwQLDccueNKctZNYRFoXrlWs",
-    gid: "2077894048",
-    facilityName: "Fiege Logistics Stanowice Well",
-  },
-  {
-    ssId: "1bgWR1bYJUXk5zoTXKPRjfV050oYJ9ha9cTNQvchHoIQ",
-    gid: "0",
-    facilityName: "Hydro Łódź",
-  },
-  {
-    ssId: "1bgWR1bYJUXk5zoTXKPRjfV050oYJ9ha9cTNQvchHoIQ",
-    gid: "1672298586",
-    facilityName: "Hydro Łódź Well",
-  },
-  {
-    ssId: "1bgWR1bYJUXk5zoTXKPRjfV050oYJ9ha9cTNQvchHoIQ",
-    gid: "138437422",
-    facilityName: "Klimor APT",
-  },
-  {
-    ssId: "1bgWR1bYJUXk5zoTXKPRjfV050oYJ9ha9cTNQvchHoIQ",
-    gid: "1407856830",
-    facilityName: "Hydro Trzcianka",
-  },
-  {
-    ssId: "1bgWR1bYJUXk5zoTXKPRjfV050oYJ9ha9cTNQvchHoIQ",
-    gid: "1302818157",
-    facilityName: "Hydro Trzcianka Well",
-  },
-  {
-    ssId: "1bgWR1bYJUXk5zoTXKPRjfV050oYJ9ha9cTNQvchHoIQ",
-    gid: "1609709378",
-    facilityName: "DPD Lućmierz SAS",
-  },
-  {
-    ssId: "1bgWR1bYJUXk5zoTXKPRjfV050oYJ9ha9cTNQvchHoIQ",
-    gid: "1477908858",
-    facilityName: "Notino Well",
-  },
-   {
-    ssId: "1bgWR1bYJUXk5zoTXKPRjfV050oYJ9ha9cTNQvchHoIQ",
-    gid: "1883894702",
-    facilityName: "Partners Lowicz SAS ",
-  },
-  {
-    ssId: "1bgWR1bYJUXk5zoTXKPRjfV050oYJ9ha9cTNQvchHoIQ",
-    gid: "1622778445",
-    facilityName: "CEVA Piotrków Trybunalski well",
-  },
-  {
-    ssId: "1UHwrLJyb6P2Zc4j1ibC8Vif7uLR2_0tiYGHXpApsp_A",
-    gid: "1228811347",
-    facilityName: "ID Konin Żagański Well",
-  },
-  {
-    ssId: "1UHwrLJyb6P2Zc4j1ibC8Vif7uLR2_0tiYGHXpApsp_A",
-    gid: "224713029",
-    facilityName: "ID Konin Żagański SAS",
-  },
-  
+// Таблиці, з яких імпортуються ВСІ видимі аркуші.
+// Новий аркуш у цих таблицях підхоплюється сам. Нову таблицю — дописати сюди
+// (сервісному акаунту з google-key.json потрібен доступ на читання).
+//
+// Який аркуш у який об'єкт іде — таблиця import_sheet_map у БД
+// (db/migration_import_sheets.sql). Прив'язка за gid аркуша, тому
+// перейменування аркуша НЕ змінює ні об'єкт, ні його назву в панелі.
+const SPREADSHEETS = [
+  "1UfQpf6u8lt8FXP5AXUGNwHCrvG7Y0A4wcwC3DXQg8U4", // Ceva Nowy Świat, Świebodzin, Ligentia
+  "1GlvMO24782bKn4InZiXpcIiAVejIDxCncOuDLQ-rH0c", // ID Psary, Hydro Chrzanów
+  "1ZFqUlu_C69RkY9BQDa-cutDvFEZGk8iCJjmBdaV1ZxI", // Metler, Punto, G&G, Blachy, Gerda Sokołów, Oldar
+  "1xgOv39j82OHsGvhR53Y_IuYEN-S9KrIcLsDXvFN4fVA", // Ceva Krężoły
+  "1gVEcQZY40SlnMVm3laSjuNpYk0lo8LR6Q1Ke0LQ8mKU", // Action, ILS, Inter Cars, PolMlek, Trans-Tok
+  "193DcijqLFqxNy5tM8BFTi5Zx6HX2QrutrpOgWxwLzM4", // Anpacars, Mieszko, SGB Jaroszowiec, EkoOkna
+  "1I3Vy5zTs0DxPcH3Hq11bWjVROAiviFWUBRYWLZGw8cw", // Fiege Goleniów, Rhenus, CEVA, Hultafors, Lucky Union
+  "1CCHYKaAuFF45MoyTZAOBACjY2Vgf6PFrP9ceqalSHKM", // Id Log Rokitno, Cainiao, Saint-Gobain
+  "1yYaSyo96Z96H8CGHkVWvKglTFim-nC489vK2gxV-3T8", // Fiege ZG
+  "13T5x8UzXSyv322qT8O2GJvwNYR7dxtpuI2-F8AG8pYw", // IGP, Fiege NDM, Gerda Starachowice, Versal, Maropak…
+  "1WF6mDo07x53SKYOgF0hvwQLDccueNKctZNYRFoXrlWs", // Id Logistics Wro/Tyniec, ID Krajków, DSV, Fiege Stanowice
+  "1bgWR1bYJUXk5zoTXKPRjfV050oYJ9ha9cTNQvchHoIQ", // Hydro Łódź/Trzcianka, Klimor, DPD, Notino, Partners, CEVA Piotrków
+  "1UHwrLJyb6P2Zc4j1ibC8Vif7uLR2_0tiYGHXpApsp_A", // ID Konin Żagański
 ];
 
-// ── FETCH CSV ─────────────────────────────────────────────────
-async function fetchRows(ssId, gid) {
-  let sheets;
+// Аркуші, у назві яких є ці слова, не імпортуються (регістр не важливий).
+// /zwolni/ ловить «zwolnienie», «Zwolnienia», «ZWOLNIENI».
+const EXCLUDE_TITLES = [/zwolni/i];
 
-  if (spreadsheetMetaCache.has(ssId)) {
-    sheets = spreadsheetMetaCache.get(ssId);
-  } else {
-    const meta = await sheetsApi.spreadsheets.get({
-      spreadsheetId: ssId,
-      fields: "sheets(properties(sheetId,title))",
-    });
+// Свіжа копія аркуша («Kopia arkusza …», «Copy of …», «Копия …») —
+// не імпортується, поки її не перейменують.
+const COPY_TITLE = /^\s*(kopia|copy of|копия|копія)(\s|$)/i;
 
-    sheets = meta.data.sheets || [];
+// Новий аркуш вважається копією іншого об'єкта (і не імпортується), якщо
+// щонайменше COPY_SHARE його людей з тією ж датою BHP уже є на одному
+// іншому об'єкті (мінімум COPY_MIN людей). Так дубль аркуша з чужими людьми
+// не створить об'єкт-двійник.
+const COPY_SHARE = 0.6;
+const COPY_MIN = 3;
 
-    spreadsheetMetaCache.set(ssId, sheets);
-  }
+// Запобіжник: більше нових об'єктів за один імпорт не створюється
+// (решта — наступного разу). Захист від масового створення через помилку.
+const MAX_NEW_FACILITIES = Number(process.env.IMPORT_MAX_NEW_FACILITIES || 10);
 
-  const sh = sheets.find(
-    (s) => String(s.properties.sheetId) === String(gid || "0"),
-  );
+// Пауза між аркушами (ліміт Google Sheets API).
+const SHEET_PAUSE_MS = Number(process.env.IMPORT_SHEET_PAUSE_MS || 2500);
 
-  if (!sh) {
-    throw new Error(`gid ${gid} not found in ${ssId}`);
-  }
-
-  const resp = await sheetsApi.spreadsheets.values.get({
+// ── GOOGLE SHEETS ─────────────────────────────────────────────
+// Список аркушів таблиці читається заново на кожному імпорті —
+// інакше новий аркуш не було б видно до перезапуску сервера.
+async function fetchSheetList(ssId) {
+  const meta = await sheetsApi.spreadsheets.get({
     spreadsheetId: ssId,
-    range: `'${sh.properties.title}'`,
-    valueRenderOption: "FORMATTED_VALUE",
+    fields:
+      "properties(title),sheets(properties(sheetId,title,index,hidden,sheetType))",
   });
-
-  return resp.data.values || [];
+  const props = meta.data.properties || {};
+  const sheets = (meta.data.sheets || [])
+    .map((s) => s.properties || {})
+    .sort((a, b) => (a.index || 0) - (b.index || 0));
+  return { title: props.title || ssId, sheets };
 }
 
-
-
+async function fetchRows(ssId, title) {
+  const resp = await sheetsApi.spreadsheets.values.get({
+    spreadsheetId: ssId,
+    range: `'${String(title).replace(/'/g, "''")}'`,
+    valueRenderOption: "FORMATTED_VALUE",
+  });
+  return resp.data.values || [];
+}
 
 // ── PARSE DATE ────────────────────────────────────────────────
 function parseDate(str) {
@@ -530,36 +144,16 @@ function parseStatus(raw) {
   return "unknown";
 }
 
-// ── IMPORT ONE SOURCE ─────────────────────────────────────────
-async function importSource(source, facilityId, cache) {
-  console.log(`\nImporting: ${source.facilityName}`);
-  let rows;
-
-  try {
-    rows = await fetchRows(source.ssId, source.gid);
-  } catch (e) {
-    console.error(`  ERROR fetching sheet: ${e.message}`);
-    return;
-  }
-
-  // Проверяем хеш
-  const hash = crypto
-    .createHash("md5")
-    .update(JSON.stringify(rows))
-    .digest("hex");
-
-  const cacheKey = `${source.ssId}_${source.gid}`;
-
-  if (csvHashCache.get(cacheKey) === hash) {
-    console.log(`  No changes — skipping`);
-    return;
-  }
-
-  csvHashCache.set(cacheKey, hash);
+// ── PARSE SHEET ───────────────────────────────────────────────
+// strict = true (нові аркуші): без рядка заголовків з Paszport/Nazwisko
+// аркуш не вважається списком людей. Для вже прив'язаних аркушів —
+// як і раніше, стандартні позиції колонок.
+function parseSheet(rows, strict = false) {
+  const res = { ok: false, reason: null, workerMap: {}, skipped: 0 };
 
   if (rows.length < 2) {
-    console.log("  No data rows found");
-    return;
+    res.reason = "no_data";
+    return res;
   }
 
   // Find header row
@@ -568,8 +162,8 @@ async function importSource(source, facilityId, cache) {
     if (
       rows[i].some(
         (c) =>
-          c.toLowerCase().includes("paszport") ||
-          c.toLowerCase().includes("nazwisko"),
+          String(c || "").toLowerCase().includes("paszport") ||
+          String(c || "").toLowerCase().includes("nazwisko"),
       )
     ) {
       headerIdx = i;
@@ -577,7 +171,7 @@ async function importSource(source, facilityId, cache) {
     }
   }
 
-  const headers = rows[headerIdx].map((h) => h.toLowerCase().trim());
+  const headers = rows[headerIdx].map((h) => String(h || "").toLowerCase().trim());
   let iPassport = headers.findIndex(
     (h) => h.includes("paszport") || h.includes("passport"),
   );
@@ -595,6 +189,10 @@ async function importSource(source, facilityId, cache) {
   );
 
   if (iPassport === -1 && iNazwisko === -1) {
+    if (strict) {
+      res.reason = "no_header";
+      return res;
+    }
     console.warn("  Headers not found — using default column positions");
     iPassport = 1;
     iNazwisko = 3;
@@ -606,24 +204,22 @@ async function importSource(source, facilityId, cache) {
   }
 
   if (iPassport === -1 || iNazwisko === -1) {
-    console.error("  ERROR: Cannot find required columns");
-    return;
+    res.reason = "no_columns";
+    return res;
   }
 
-  console.log(
-    `  Header row: ${headerIdx}, passport=${iPassport} nazwisko=${iNazwisko} status=${iStatus} bhp=${iBhp}`,
-  );
-
+  res.headerIdx = headerIdx;
+  res.cols = { iPassport, iNazwisko, iStatus, iBhp };
 
   const MAX_COL = 26;
 
   // Збираємо унікальні записи з CSV (ключ: паспорт + bhp)
-  const workerMap = {};
+  const workerMap = res.workerMap;
   let skipped = 0;
 
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i].slice(0, MAX_COL);
-    if (row.every((c) => !c || !c.trim())) continue;
+    if (row.every((c) => !c || !String(c).trim())) continue;
 
     const passport = cleanPassport(row[iPassport]);
     const pesel = cleanPesel(row[2]);
@@ -668,6 +264,68 @@ async function importSource(source, facilityId, cache) {
       workerMap[mapKey] = data;
     }
   }
+
+  res.skipped = skipped;
+  res.ok = true;
+  return res;
+}
+
+// ── IMPORT ONE SOURCE ─────────────────────────────────────────
+// source: { ssId, gid, title, facilityName (→ source_sheet), strict, rows?, parsed? }
+async function importSource(source, facilityId, cache) {
+  const shown =
+    source.title && source.title.trim() !== source.facilityName.trim()
+      ? ` (аркуш «${source.title}»)`
+      : "";
+  console.log(`\nImporting: ${source.facilityName}${shown}`);
+  let rows = source.rows;
+
+  if (!rows) {
+    try {
+      rows = await fetchRows(source.ssId, source.title);
+    } catch (e) {
+      console.error(`  ERROR fetching sheet: ${e.message}`);
+      return;
+    }
+  }
+
+  // Проверяем хеш
+  const hash = crypto
+    .createHash("md5")
+    .update(JSON.stringify(rows))
+    .digest("hex");
+
+  const cacheKey = `${source.ssId}_${source.gid}`;
+
+  if (csvHashCache.get(cacheKey) === hash && facilityWriter.get(facilityId) === cacheKey) {
+    console.log(`  No changes — skipping`);
+    return;
+  }
+
+  csvHashCache.set(cacheKey, hash);
+  facilityWriter.set(facilityId, cacheKey);
+
+  if (rows.length < 2) {
+    console.log("  No data rows found");
+    return;
+  }
+
+  const parsed = source.parsed || parseSheet(rows, source.strict);
+  if (!parsed.ok) {
+    console.error(
+      parsed.reason === "no_header"
+        ? "  ERROR: Header row not found"
+        : "  ERROR: Cannot find required columns",
+    );
+    return;
+  }
+
+  console.log(
+    `  Header row: ${parsed.headerIdx}, passport=${parsed.cols.iPassport} nazwisko=${parsed.cols.iNazwisko} status=${parsed.cols.iStatus} bhp=${parsed.cols.iBhp}`,
+  );
+
+  const workerMap = parsed.workerMap;
+  let skipped = parsed.skipped;
 
   let added = 0,
     updated = 0,
@@ -908,16 +566,13 @@ async function importSource(source, facilityId, cache) {
   );
 }
 
-// ── RUN IMPORT ────────────────────────────────────────────────
-async function runImport(allowedFacilities = null) {
-  console.log(`\n === IMPORT STARTED === `);
-
-  // ── Завантажуємо все з БД одним разом ──
+// ── CACHE ─────────────────────────────────────────────────────
+async function loadCache() {
   console.log("  Loading cache from DB...");
   const [workersRes, historyRes, facilitiesRes] = await Promise.all([
     db.query(`SELECT id, login, pesel, full_name FROM workers`),
     db.query(`SELECT worker_id, facility_id, status::text, last_work_date, bhp_date FROM worker_facility_history`),
-    db.query(`SELECT id, name FROM facilities`),
+    db.query(`SELECT id, name FROM facilities ORDER BY id`),
   ]);
 
   // Будуємо індекси
@@ -925,7 +580,9 @@ async function runImport(allowedFacilities = null) {
     byLogin: new Map(),
     byPesel: new Map(),
     historySet: new Set(),
-    facilityByName: new Map(),
+    facilityByName: new Map(), // lower(name) — як шукав старий імпорт
+    facilityByTrim: new Map(), // lower(trim(name)) — для нових аркушів
+    facilityName: new Map(), // id → name
   };
 
   workersRes.rows.forEach((w) => {
@@ -941,48 +598,537 @@ async function runImport(allowedFacilities = null) {
 
   facilitiesRes.rows.forEach((f) => {
     cache.facilityByName.set(f.name.toLowerCase(), f.id);
+    const t = f.name.trim().toLowerCase();
+    if (!cache.facilityByTrim.has(t)) cache.facilityByTrim.set(t, f.id);
+    cache.facilityName.set(f.id, f.name);
   });
 
   console.log(
     `  Cache: ${workersRes.rows.length} workers, ${historyRes.rows.length} history, ${facilitiesRes.rows.length} facilities`,
   );
+  return cache;
+}
 
-  // Фільтруємо джерела
-  let sources = SOURCES;
-  if (allowedFacilities !== null && allowedFacilities.length > 0) {
-    const facNames = await db.query(
-      `SELECT LOWER(name) AS name FROM facilities WHERE id = ANY($1)`,
-      [allowedFacilities],
+// ── SHEET → FACILITY MAP ──────────────────────────────────────
+const mapKey = (ssId, sheetId) => `${ssId}_${String(sheetId)}`;
+
+async function loadSheetMap() {
+  let res;
+  try {
+    res = await db.query(`SELECT * FROM import_sheet_map`);
+  } catch (e) {
+    // Без таблиці прив'язок усі аркуші виглядали б новими, і імпорт створив
+    // би об'єкти з назвами аркушів. Тому — стоп.
+    throw new Error(
+      `import_sheet_map недоступна (${e.message}). Спершу запустіть db/migration_import_sheets.sql`,
     );
-    const allowedNames = new Set(facNames.rows.map((r) => r.name));
-    sources = SOURCES.filter((s) =>
-      allowedNames.has(s.facilityName.toLowerCase()),
-    );
-    console.log(`Importing ${sources.length} of ${SOURCES.length} sources`);
+  }
+  if (res.rows.length === 0) {
+    throw new Error("import_sheet_map порожня. Спершу запустіть db/migration_import_sheets.sql");
+  }
+  const map = new Map();
+  for (const r of res.rows) {
+    r.facility_id = r.facility_id === null ? null : Number(r.facility_id);
+    map.set(mapKey(r.ss_id, r.sheet_id), r);
+  }
+  return map;
+}
+
+async function updateMapRow(ssId, sheetId, { title, state, note, seen }) {
+  await db.query(
+    `UPDATE import_sheet_map
+        SET sheet_title  = COALESCE($3, sheet_title),
+            state        = $4,
+            note         = $5,
+            last_seen_at = CASE WHEN $6 THEN now() ELSE last_seen_at END
+      WHERE ss_id = $1 AND sheet_id = $2`,
+    [ssId, String(sheetId), title || null, state, note || null, !!seen],
+  );
+}
+
+async function upsertMapRow(ssId, sheetId, f) {
+  await db.query(
+    `INSERT INTO import_sheet_map
+       (ss_id, sheet_id, facility_id, source_name, sheet_title, origin, state, note,
+        last_seen_at, facility_created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), CASE WHEN $9 THEN now() END)
+     ON CONFLICT (ss_id, sheet_id) DO UPDATE SET
+       facility_id  = EXCLUDED.facility_id,
+       source_name  = EXCLUDED.source_name,
+       sheet_title  = EXCLUDED.sheet_title,
+       state        = EXCLUDED.state,
+       note         = EXCLUDED.note,
+       last_seen_at = now(),
+       facility_created_at = COALESCE(import_sheet_map.facility_created_at, EXCLUDED.facility_created_at)`,
+    [
+      ssId,
+      String(sheetId),
+      f.facilityId || null,
+      f.sourceName,
+      f.title,
+      f.origin || "auto",
+      f.state,
+      f.note || null,
+      !!f.created,
+    ],
+  );
+}
+
+// ── SCAN: які аркуші є і що з кожним робити ───────────────────
+// action: import (прив'язаний), new (новий або без об'єкта), skip (reason)
+// Пріоритет, якщо два видимі аркуші прив'язані до одного об'єкта:
+// прив'язаний вручну, далі зі старого списку, далі — раніше знайдений.
+const ORIGIN_RANK = { manual: 0, legacy: 1, auto: 2 };
+function mapPriority(m) {
+  const rank = m.origin in ORIGIN_RANK ? ORIGIN_RANK[m.origin] : 2;
+  return [rank, new Date(m.first_seen_at || 0).getTime()];
+}
+function betterMap(a, b) {
+  const pa = mapPriority(a);
+  const pb = mapPriority(b);
+  return pa[0] !== pb[0] ? pa[0] < pb[0] : pa[1] < pb[1];
+}
+
+async function scanSheets(sheetMap, allowed) {
+  const entries = [];
+  const errors = [];
+  const claimed = new Map(); // facility_id → аркуш, що його імпортує
+  const missingKeys = new Set(); // прив'язані аркуші, яких у таблиці більше немає
+  const failedSs = new Set();
+
+  let ssList = SPREADSHEETS;
+  if (allowed) {
+    const ids = new Set();
+    for (const m of sheetMap.values())
+      if (m.facility_id && allowed.has(m.facility_id)) ids.add(m.ss_id);
+    ssList = SPREADSHEETS.filter((id) => ids.has(id));
   }
 
-  for (const source of sources) {
+  for (const ssId of ssList) {
+    let meta;
     try {
-      // Знаходимо або створюємо facility
-      let facilityId = cache.facilityByName.get(
-        source.facilityName.toLowerCase(),
-      );
-      if (!facilityId) {
-        const ins = await db.query(
-          `INSERT INTO facilities(name, group_name) VALUES($1, $1) RETURNING id`,
-          [source.facilityName],
-        );
-        facilityId = ins.rows[0].id;
-        cache.facilityByName.set(source.facilityName.toLowerCase(), facilityId);
-        console.log(
-          `  Facility created: ${source.facilityName} id = ${facilityId}`,
+      meta = await fetchSheetList(ssId);
+    } catch (e) {
+      console.error(`  ERROR reading spreadsheet ${ssId}: ${e.message}`);
+      errors.push({ ssId, error: e.message });
+      failedSs.add(ssId);
+      continue;
+    }
+
+    const seen = new Set();
+    for (const sh of meta.sheets) {
+      const sheetId = String(sh.sheetId);
+      const key = mapKey(ssId, sheetId);
+      seen.add(key);
+      const m = sheetMap.get(key) || null;
+      const title = String(sh.title || "");
+      const e = { ssId, ssTitle: meta.title, sheetId, title, map: m };
+
+      if (allowed && !(m && m.facility_id && allowed.has(m.facility_id))) {
+        // Ручний імпорт координатора: тільки його об'єкти, нові аркуші —
+        // лише при повному імпорті, стани інших аркушів не чіпаємо.
+        e.action = "skip";
+        e.reason = "filtered";
+      } else if (m && m.disabled) {
+        e.action = "skip";
+        e.reason = "disabled";
+      } else if (sh.hidden) {
+        e.action = "skip";
+        e.reason = "hidden";
+      } else if (EXCLUDE_TITLES.some((re) => re.test(title))) {
+        e.action = "skip";
+        e.reason = "excluded";
+      } else if (sh.sheetType && sh.sheetType !== "GRID") {
+        e.action = "skip";
+        e.reason = "not_grid";
+      } else if (m && m.facility_id) {
+        const prev = claimed.get(m.facility_id);
+        if (!prev) {
+          e.action = "import";
+          claimed.set(m.facility_id, e);
+        } else if (betterMap(m, prev.map)) {
+          prev.action = "skip";
+          prev.reason = "conflict";
+          prev.other = e;
+          e.action = "import";
+          claimed.set(m.facility_id, e);
+        } else {
+          e.action = "skip";
+          e.reason = "conflict";
+          e.other = prev;
+        }
+      } else {
+        e.action = "new";
+      }
+      entries.push(e);
+    }
+
+    if (!allowed) {
+      for (const m of sheetMap.values()) {
+        const key = mapKey(m.ss_id, m.sheet_id);
+        if (m.ss_id !== ssId || seen.has(key)) continue;
+        missingKeys.add(key);
+        entries.push({
+          ssId,
+          ssTitle: meta.title,
+          sheetId: String(m.sheet_id),
+          title: m.sheet_title || m.source_name,
+          map: m,
+          action: "skip",
+          reason: "missing",
+        });
+      }
+    }
+  }
+
+  // Таблиця не відкрилася (помилка Google) — її об'єкти все одно зайняті,
+  // щоб новий аркуш з такою ж назвою в іншій таблиці їх не перехопив.
+  for (const m of sheetMap.values()) {
+    if (failedSs.has(m.ss_id) && m.facility_id && !m.disabled && !claimed.has(m.facility_id)) {
+      claimed.set(m.facility_id, { title: m.sheet_title || m.source_name, ssTitle: m.ss_id, map: m, unavailable: true });
+    }
+  }
+
+  // Об'єкт вільний: його не імпортує жоден аркуш у цьому запуску і всі
+  // прив'язані до нього аркуші видалені з таблиць.
+  const rowsByFacility = new Map();
+  for (const m of sheetMap.values()) {
+    if (!m.facility_id) continue;
+    if (!rowsByFacility.has(m.facility_id)) rowsByFacility.set(m.facility_id, []);
+    rowsByFacility.get(m.facility_id).push(m);
+  }
+  const isFree = (fid) =>
+    !claimed.has(fid) &&
+    (rowsByFacility.get(fid) || []).every((m) => missingKeys.has(mapKey(m.ss_id, m.sheet_id)));
+  const entryByKey = new Map(entries.map((e) => [mapKey(e.ssId, e.sheetId), e]));
+  const STATE_LABEL = {
+    hidden: "прихований",
+    excluded: "zwolnienie",
+    not_grid: "не таблиця",
+    disabled: "вимкнений",
+    conflict: "конфлікт",
+    filtered: "не перевірявся",
+  };
+  const boundTo = (fid) => {
+    const c = claimed.get(fid);
+    if (c) return `«${c.title}»`;
+    const r = (rowsByFacility.get(fid) || []).find((m) => !missingKeys.has(mapKey(m.ss_id, m.sheet_id)));
+    if (!r) return "інший аркуш";
+    const se = entryByKey.get(mapKey(r.ss_id, r.sheet_id));
+    const st = se ? (se.action === "skip" ? se.reason : "active") : r.disabled ? "disabled" : r.state;
+    return `«${r.sheet_title || r.source_name}» (${STATE_LABEL[st] || st})`;
+  };
+
+  // Нові аркуші — в кінці, і спершу ті, що зі старого списку:
+  // назва зі списку має перевагу над випадковим аркушем з такою ж назвою.
+  const isAutoNew = (e) => e.action === "new" && !(e.map && e.map.origin === "legacy");
+  const ordered = entries.filter((e) => !isAutoNew(e)).concat(entries.filter(isAutoNew));
+
+  return { entries: ordered, errors, claimed, isFree, boundTo };
+}
+
+// Чи новий аркуш — копія іншого об'єкта: ті самі люди з тими самими BHP.
+async function findCopySource(parsed, cache) {
+  const wids = [];
+  const bhps = [];
+  let total = 0;
+  for (const d of Object.values(parsed.workerMap)) {
+    if (!d.safeBhp) continue;
+    total++;
+    let w = d.pesel ? cache.byPesel.get(d.pesel) : null;
+    if (!w) w = cache.byLogin.get(d.passport);
+    if (w) {
+      wids.push(w.id);
+      bhps.push(d.safeBhp);
+    }
+  }
+  if (wids.length < COPY_MIN) return null;
+  const r = await db.query(
+    `SELECT h.facility_id, f.name, count(DISTINCT (h.worker_id, h.bhp_date))::int AS n
+       FROM unnest($1::int[], $2::date[]) AS p(wid, bhp)
+       JOIN worker_facility_history h ON h.worker_id = p.wid AND h.bhp_date = p.bhp
+       JOIN facilities f ON f.id = h.facility_id
+      GROUP BY h.facility_id, f.name
+      ORDER BY n DESC, h.facility_id
+      LIMIT 1`,
+    [wids, bhps],
+  );
+  const top = r.rows[0];
+  if (top && top.n >= COPY_MIN && top.n >= total * COPY_SHARE) {
+    return { facilityId: Number(top.facility_id), name: top.name, n: top.n, total };
+  }
+  return null;
+}
+
+// Новий аркуш: чи імпортувати, у який об'єкт, чи створювати об'єкт.
+// ctx: { cache, claimed, isFree, boundTo, canAdd }. dry = true — нічого не записує (--plan).
+async function evaluateNew(e, ctx, dry) {
+  const { cache, claimed, isFree, boundTo } = ctx;
+  const m = e.map;
+  const legacy = !!(m && m.origin === "legacy");
+  const hold = (code, note) => ({ hold: true, code, note });
+
+  if (!legacy && COPY_TITLE.test(e.title)) {
+    return hold("copy_title", "свіжа копія аркуша — чекаю, поки перейменують");
+  }
+
+  let rows;
+  try {
+    rows = await fetchRows(e.ssId, e.title);
+  } catch (err) {
+    return hold("fetch_error", `не вдалося прочитати: ${err.message}`);
+  }
+
+  const parsed = parseSheet(rows, !legacy);
+  const people = parsed.ok ? Object.keys(parsed.workerMap).length : 0;
+
+  let facilityId = null;
+  let name;
+  let replaced = null;
+
+  if (legacy) {
+    // Аркуш зі старого списку, об'єкта ще не було — назва зі списку (як раніше).
+    name = m.source_name;
+    facilityId =
+      cache.facilityByName.get(name.toLowerCase()) ||
+      cache.facilityByTrim.get(name.trim().toLowerCase()) ||
+      null;
+    if (facilityId && !isFree(facilityId)) {
+      return hold("name_taken", `об'єкт «${cache.facilityName.get(facilityId)}» уже прив'язаний до аркуша ${boundTo(facilityId)}`);
+    }
+  } else {
+    if (!parsed.ok) {
+      return hold("no_header", "немає заголовків Paszport / Nazwisko — не список людей");
+    }
+    if (people === 0) {
+      return hold("empty", "ще немає жодної людини — об'єкт з'явиться з першою");
+    }
+
+    name = e.title.trim();
+    const ex = cache.facilityByTrim.get(name.toLowerCase()) || null;
+    const copy = await findCopySource(parsed, cache);
+
+    if (copy && copy.facilityId !== ex) {
+      if (isFree(copy.facilityId)) {
+        // Аркуш об'єкта видалили, а копію перейменували — той самий об'єкт.
+        facilityId = copy.facilityId;
+        replaced = copy.name;
+      } else {
+        return hold(
+          "copy",
+          `${copy.n} з ${copy.total} людей (з тими ж BHP) уже є на «${copy.name}» — схоже на копію` +
+            (claimed.has(copy.facilityId)
+              ? ""
+              : `; якщо це заміна аркуша ${boundTo(copy.facilityId)} — прив'яжіть вручну`),
         );
       }
+    } else if (ex) {
+      if (!isFree(ex)) {
+        return hold("name_taken", `об'єкт «${cache.facilityName.get(ex)}» уже прив'язаний до аркуша ${boundTo(ex)}`);
+      }
+      facilityId = ex;
+    } else if (claimed.has(`new:${name.toLowerCase()}`)) {
+      const o = claimed.get(`new:${name.toLowerCase()}`);
+      return hold("name_taken", `аркуш «${o.title}» з такою ж назвою вже стає новим об'єктом`);
+    }
 
-      await importSource(source, facilityId, cache);
-      await sleep(2500);
-    } catch (e) {
-      console.error(`ERROR in ${source.facilityName}: `, e.message);
+    if (!ctx.canAdd()) {
+      return hold("limit", `за один імпорт додається не більше ${MAX_NEW_FACILITIES} нових аркушів — решта наступного разу`);
+    }
+  }
+
+  const sourceName = facilityId && !legacy ? cache.facilityName.get(facilityId) : name;
+  let created = false;
+  if (!facilityId) {
+    created = true;
+    if (!dry) {
+      const ins = await db.query(
+        `INSERT INTO facilities(name, group_name) VALUES($1, $1) RETURNING id`,
+        [name],
+      );
+      facilityId = ins.rows[0].id;
+      cache.facilityByName.set(name.toLowerCase(), facilityId);
+      cache.facilityByTrim.set(name.trim().toLowerCase(), facilityId);
+      cache.facilityName.set(facilityId, name);
+      console.log(`  Facility created: ${name} id = ${facilityId} (аркуш «${e.title}»)`);
+    }
+  }
+
+  return { hold: false, legacy, facilityId, created, replaced, name, sourceName, rows, parsed, people };
+}
+
+const SKIP_STATE = {
+  hidden: "hidden",
+  excluded: "excluded",
+  missing: "missing",
+  conflict: "conflict",
+  not_grid: "excluded",
+};
+
+// ── RUN IMPORT ────────────────────────────────────────────────
+// Одночасно йде лише один імпорт (advisory lock у БД): другий запуск,
+// наприклад з консолі під час роботи сервера, пропускається.
+const IMPORT_LOCK = "hashtext('sas_import_sheets')";
+
+async function runImport(allowedFacilities = null) {
+  if (!db.pool || typeof db.pool.connect !== "function") {
+    return runImportUnlocked(allowedFacilities);
+  }
+  const client = await db.pool.connect();
+  let locked = false;
+  try {
+    const r = await client.query(`SELECT pg_try_advisory_lock(${IMPORT_LOCK}) AS ok`);
+    locked = !!r.rows[0].ok;
+    if (!locked) {
+      console.warn(`\n === IMPORT SKIPPED: інший імпорт ще працює === `);
+      return { skipped: "locked" };
+    }
+    return await runImportUnlocked(allowedFacilities);
+  } finally {
+    if (locked) await client.query(`SELECT pg_advisory_unlock(${IMPORT_LOCK})`).catch(() => {});
+    client.release();
+  }
+}
+
+async function runImportUnlocked(allowedFacilities) {
+  console.log(`\n === IMPORT STARTED === `);
+
+  const sheetMap = await loadSheetMap();
+  const cache = await loadCache();
+
+  // Фільтр за об'єктами (ручний імпорт координатора)
+  let allowed = null;
+  if (allowedFacilities !== null && allowedFacilities.length > 0) {
+    allowed = new Set(allowedFacilities.map(Number));
+  }
+
+  const scan = await scanSheets(sheetMap, allowed);
+  const { entries, errors, claimed } = scan;
+  if (allowed) {
+    const n = entries.filter((e) => e.action === "import").length;
+    console.log(`Importing ${n} sheets for ${allowed.size} facilities`);
+  }
+
+  const stats = { imported: 0, created: [], linked: [], held: [], renamed: [], skipped: {} };
+  let added = 0;
+  const ctx = { ...scan, cache, canAdd: () => added < MAX_NEW_FACILITIES };
+  let fetched = false;
+
+  // Назви аркушів перечитуються перед обробкою кожної таблиці: значення
+  // читаються за назвою, і між скануванням і читанням минають хвилини.
+  let freshSs = null;
+  let fresh = null;
+  async function currentTitle(e) {
+    if (freshSs !== e.ssId) {
+      freshSs = e.ssId;
+      try {
+        const meta = await fetchSheetList(e.ssId);
+        fresh = new Map(meta.sheets.map((s) => [String(s.sheetId), s]));
+      } catch (err) {
+        fresh = null;
+      }
+    }
+    if (!fresh) return e.title;
+    const s = fresh.get(e.sheetId);
+    if (!s || s.hidden) return null;
+    return String(s.title || "");
+  }
+
+  for (const e of entries) {
+    try {
+      if (e.action === "skip") {
+        stats.skipped[e.reason] = (stats.skipped[e.reason] || 0) + 1;
+        if (e.map && SKIP_STATE[e.reason]) {
+          await updateMapRow(e.ssId, e.sheetId, {
+            title: e.reason === "missing" ? null : e.title,
+            state: SKIP_STATE[e.reason],
+            note: e.reason === "conflict" ? `об'єкт імпортується з аркуша «${e.other.title}»` : null,
+            seen: e.reason !== "missing",
+          });
+        }
+        if (e.reason === "conflict") {
+          console.warn(`  ⚠ Аркуш «${e.title}» прив'язаний до об'єкта, який імпортується з «${e.other.title}» — пропущено`);
+        }
+        continue;
+      }
+
+      const title = await currentTitle(e);
+      if (title === null) {
+        console.warn(`  Аркуш «${e.title}» зник або прихований під час імпорту — пропущено`);
+        continue;
+      }
+      if (title !== e.title) {
+        if (EXCLUDE_TITLES.some((re) => re.test(title))) continue;
+        e.title = title;
+      }
+
+      if (fetched) await sleep(SHEET_PAUSE_MS);
+      fetched = true;
+
+      if (e.action === "import") {
+        const m = e.map;
+        if (m.sheet_title && m.sheet_title !== e.title) {
+          stats.renamed.push(`${m.sheet_title} → ${e.title}`);
+          console.log(`  Аркуш перейменовано: «${m.sheet_title}» → «${e.title}», об'єкт «${m.source_name}» без змін`);
+        }
+        await importSource(
+          { ssId: e.ssId, gid: e.sheetId, title: e.title, facilityName: m.source_name },
+          m.facility_id,
+          cache,
+        );
+        await updateMapRow(e.ssId, e.sheetId, { title: e.title, state: "active", seen: true });
+        stats.imported++;
+        continue;
+      }
+
+      // new
+      const r = await evaluateNew(e, ctx, false);
+      if (r.hold) {
+        stats.held.push(`«${e.title}»: ${r.note}`);
+        console.log(`\n  Новий аркуш «${e.title}» (${e.ssTitle}) — не імпортується: ${r.note}`);
+        const legacy = !!(e.map && e.map.origin === "legacy");
+        await upsertMapRow(e.ssId, e.sheetId, {
+          facilityId: null,
+          sourceName: legacy ? e.map.source_name : e.title,
+          title: e.title,
+          origin: e.map ? e.map.origin : "auto",
+          state: "held",
+          note: r.note,
+        });
+        continue;
+      }
+
+      claimed.set(r.facilityId, e);
+      claimed.set(`new:${r.name.trim().toLowerCase()}`, e);
+      if (!r.legacy) added++;
+      if (r.created) stats.created.push(`${r.name} (аркуш «${e.title}», ${e.ssTitle})`);
+      else if (r.replaced) stats.linked.push(`«${e.title}» → ${r.replaced} (заміна видаленого аркуша)`);
+      else stats.linked.push(`«${e.title}» → ${cache.facilityName.get(r.facilityId)}`);
+
+      await upsertMapRow(e.ssId, e.sheetId, {
+        facilityId: r.facilityId,
+        sourceName: r.sourceName,
+        title: e.title,
+        origin: e.map ? e.map.origin : "auto",
+        state: "active",
+        created: r.created,
+      });
+      await importSource(
+        {
+          ssId: e.ssId,
+          gid: e.sheetId,
+          title: e.title,
+          facilityName: r.sourceName,
+          strict: !r.legacy,
+          rows: r.rows,
+          parsed: r.parsed,
+        },
+        r.facilityId,
+        cache,
+      );
+      stats.imported++;
+    } catch (err) {
+      console.error(`ERROR in «${e.title}» (${e.ssTitle}): `, err.message);
     }
   }
 
@@ -992,11 +1138,97 @@ async function runImport(allowedFacilities = null) {
   // Синхронізуємо workers.status з актуальним періодом історії
   await syncWorkerStatus();
 
+  const sk = Object.entries(stats.skipped).map(([k, v]) => `${k} ${v}`).join(", ");
+  console.log(`\n  Аркушів імпортовано: ${stats.imported}${sk ? `; пропущено: ${sk}` : ""}`);
+  if (stats.created.length) console.log(`  Нові об'єкти: ${stats.created.join("; ")}`);
+  if (stats.linked.length) console.log(`  Нові аркуші до існуючих об'єктів: ${stats.linked.join("; ")}`);
+  if (stats.held.length) console.log(`  Очікують: ${stats.held.join("; ")}`);
+  if (errors.length) console.log(`  Таблиці з помилкою: ${errors.map((x) => x.ssId).join(", ")}`);
+
   console.log(`\n === IMPORT DONE === `);
+  return { ...stats, errors };
+}
+
+// ── PLAN (node import_sheets.js --plan) ───────────────────────
+// Показує, що зробить імпорт: які аркуші в які об'єкти, які об'єкти
+// будуть створені, що пропущено. Нічого не записує.
+async function planImport() {
+  const sheetMap = await loadSheetMap();
+  const cache = await loadCache();
+  const scan = await scanSheets(sheetMap, null);
+  const { entries, errors, claimed } = scan;
+  let added = 0;
+  const ctx = { ...scan, cache, canAdd: () => added < MAX_NEW_FACILITIES };
+
+  const REASON = {
+    hidden: "прихований",
+    excluded: "zwolnienie — не імпортується",
+    not_grid: "не таблиця (діаграма)",
+    disabled: "вимкнено вручну (disabled)",
+    missing: "аркуша в таблиці більше немає",
+    conflict: "об'єкт уже імпортується з іншого аркуша",
+  };
+
+  let fetched = false;
+  for (const e of entries) {
+    const m = e.map;
+    const fac = m && m.facility_id ? `${cache.facilityName.get(m.facility_id)} [id ${m.facility_id}]` : null;
+
+    if (e.action === "import") {
+      const ren = m.sheet_title && m.sheet_title !== e.title ? `  (раніше «${m.sheet_title}»)` : "";
+      e.line = `  ✓ «${e.title}» → ${fac}${ren}`;
+    } else if (e.action === "skip") {
+      const warn = fac && ["hidden", "excluded", "missing", "conflict", "not_grid"].includes(e.reason);
+      const tail =
+        e.reason === "conflict"
+          ? `: ${fac} імпортується з «${e.other.title}», цей аркуш пропущено`
+          : fac
+            ? `; об'єкт ${fac} НЕ оновлюватиметься`
+            : "";
+      e.line = `  ${warn ? "⚠" : "–"} «${e.title}» [gid ${e.sheetId}] — ${REASON[e.reason] || e.reason}${tail}`;
+    } else {
+      if (fetched) await sleep(SHEET_PAUSE_MS);
+      fetched = true;
+      const r = await evaluateNew(e, ctx, true);
+      e.result = r;
+      if (r.hold) {
+        e.line = `  … «${e.title}» [gid ${e.sheetId}] — новий, НЕ імпортується: ${r.note}`;
+      } else {
+        if (!r.legacy) added++;
+        if (r.facilityId) claimed.set(r.facilityId, e);
+        claimed.set(`new:${r.name.trim().toLowerCase()}`, e);
+        e.line = r.created
+          ? `  + «${e.title}» [gid ${e.sheetId}] — НОВИЙ об'єкт «${r.name}»${r.legacy ? " (назва зі старого списку)" : ""} (${r.people} людей)`
+          : `  + «${e.title}» [gid ${e.sheetId}] → існуючий об'єкт ${cache.facilityName.get(r.facilityId)} [id ${r.facilityId}]${r.replaced ? " — заміна видаленого аркуша" : ""} (${r.people} людей)`;
+      }
+    }
+  }
+
+  // Друк у порядку таблиць
+  const out = [];
+  for (const ssId of SPREADSHEETS) {
+    const list = entries.filter((e) => e.ssId === ssId);
+    if (!list.length) continue;
+    out.push(`\n■ ${list[0].ssTitle}  (${ssId})`);
+    for (const e of list) out.push(e.line);
+  }
+  for (const er of errors) out.push(`\n✗ ${er.ssId}: ${er.error}`);
+
+  const cnt = (f) => entries.filter(f).length;
+  out.push(
+    `\nРазом: імпорт ${cnt((e) => e.action === "import")}, ` +
+      `нових об'єктів ${cnt((e) => e.result && !e.result.hold && e.result.created)}, ` +
+      `нових аркушів до існуючих об'єктів ${cnt((e) => e.result && !e.result.hold && !e.result.created)}, ` +
+      `очікують ${cnt((e) => e.result && e.result.hold)}, ` +
+      `пропущено ${cnt((e) => e.action === "skip")}`,
+  );
+  console.log(out.join("\n"));
+  return entries;
 }
 
 if (require.main === module) {
-  runImport()
+  const job = process.argv.includes("--plan") ? planImport() : runImport();
+  job
     .then(() => process.exit(0))
     .catch((e) => {
       console.error(e);
@@ -1058,4 +1290,4 @@ async function syncWorkerStatus() {
   }
 }
 
-module.exports = { runImport };
+module.exports = { runImport, planImport };

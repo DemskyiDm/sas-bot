@@ -342,17 +342,42 @@ router.get("/risk", async (req, res) => {
 });
 
 // ── Анкети: зведення ──────────────────────────────────────────────────
+// Питання «про координатора» (visibility = manager): бачать адмін і регіональні,
+// але регіональний — не про самого себе. Координатор — ніколи.
+const mgrOk = (sc, coordId) => sc.isAdmin || (sc.isManager && coordId !== sc.me);
+const optLabel = (q, c) => { const o = (q.options || []).find((x) => x.c === c); return o ? (o.t.pl || o.t.uk) : c; };
+const isScale = (q) => (q.options || []).filter((o) => /^[1-5]$/.test(o.c)).length === 5;
+async function surveyCode(code) {
+  const r = await db.query(`SELECT code FROM care.surveys ORDER BY sort`);
+  const all = r.rows.map((x) => x.code);
+  return all.includes(code) ? code : (all.includes("d3") ? "d3" : all[0]);
+}
+// Дані «Poleć znajomego» (хто привів, канал) — як у самому розділі: регіональні й керівник завжди,
+// координатор — лише якщо там увімкнено «видно координаторам»
+async function seesRef(sc) {
+  if (sc.isManager) return true;
+  try {
+    const r = await db.query(`SELECT value FROM ref.settings WHERE key = 'visible_coords'`);
+    return !!(r.rows[0] && r.rows[0].value === "1");
+  } catch (e) { return false; }
+}
+// Канал «як дізналися» (Poleć znajomego, пілот анкети на старті)
+const REF_SRC = { friend: "znajomy", coord: "koordynator", recruit: "rekruter", facebook: "Facebook", instagram: "Instagram",
+  tiktok: "TikTok", telegram: "Telegram", jobsite: "portal z ofertami", other: "inne" };
+
 router.get("/surveys", async (req, res) => {
   try {
     const sc = req.scope;
     const days = Math.min(parseInt(req.query.days, 10) || 90, 365);
     const s = await settingsMap();
     const minN = s.coord_min_answers || 5;
+    const code = await surveyCode(String(req.query.survey || ""));
 
+    // відсоток відповідей — по всіх анкетах (вкладки)
     const p1 = [days];
     const w1 = siteScope(sc, req.query, "s.site_key", p1);
     const rates = await db.query(
-      `SELECT sv.code, sv.name, sv.day_offset, sv.sort,
+      `SELECT sv.code, sv.name, sv.day_offset, sv.sort, sv.is_active,
               COUNT(s.id) FILTER (WHERE s.status IN ('sent','done','expired'))::int AS sent,
               COUNT(s.id) FILTER (WHERE s.status = 'done')::int AS done,
               COUNT(s.id) FILTER (WHERE s.status = 'no_telegram')::int AS no_tg,
@@ -366,33 +391,35 @@ router.get("/surveys", async (req, res) => {
       p1,
     );
 
-    const p2 = [days];
+    // питання вибраної анкети
+    const qs = (await db.query(
+      `SELECT id, sort, code, text->>'pl' AS text, visibility, options FROM care.questions WHERE survey_code = $1 ORDER BY sort`, [code])).rows;
+
+    // розподіл відповідей: питання для координатора — за період
+    const p2 = [days, code];
     const w2 = siteScope(sc, req.query, "s.site_key", p2);
-    // Питання для координатора — за вибраний період
     const ans = await db.query(
-      `SELECT q.id, q.survey_code, q.sort, q.code, q.text->>'pl' AS text, q.visibility, q.options,
-              a.option_code, NULL::int AS coord, COUNT(*)::int AS n
+      `SELECT q.id, a.option_code, COUNT(*)::int AS n
          FROM care.answers a
-         JOIN care.survey_sends s ON s.id = a.send_id
+         JOIN care.survey_sends s ON s.id = a.send_id AND s.survey_code = $2
          JOIN care.questions q ON q.id = a.question_id AND q.visibility = 'coordinator'
         WHERE a.answered_at > now() - make_interval(days => $1::int) AND ${w2}
-        GROUP BY q.id, a.option_code
-        ORDER BY q.survey_code, q.sort`,
+        GROUP BY q.id, a.option_code`,
       p2,
     );
-    const rows = ans.rows;
-    // Питання про координатора — тільки регіональним/адміну, завжди за 90 днів (щоб не віднімати періоди),
-    // по кожному координатору окремо від coord_min_answers відповідей; про себе самого — не показуємо
+    const counts = new Map();          // question id → {option → n}
+    const add = (id, c, n) => { const m = counts.get(id) || counts.set(id, {}).get(id); m[c] = (m[c] || 0) + n; };
+    ans.rows.forEach((x) => add(x.id, x.option_code, x.n));
+    // про координатора — тільки регіональним/адміну, за 90 днів, по кожному координатору від coord_min_answers
     if (sc.isManager) {
-      const pm = [];
+      const pm = [code];
       const wm = [scopeWhere(sc, req.query, "o", pm)];
-      if (!sc.isAdmin) { pm.push(sc.me); wm.push(`o.coordinator_id <> $${pm.length}`); }
+      if (!sc.isAdmin) { pm.push(sc.me); wm.push(`o.coordinator_id <> $${pm.length} AND s.coordinator_id IS DISTINCT FROM $${pm.length}`); }
       if (req.query.site) { pm.push(String(req.query.site)); wm.push(`s.site_key = $${pm.length}`); }
       const man = await db.query(
-        `SELECT q.id, q.survey_code, q.sort, q.code, q.text->>'pl' AS text, q.visibility, q.options,
-                a.option_code, o.coordinator_id AS coord, COUNT(*)::int AS n
+        `SELECT q.id, a.option_code, o.coordinator_id AS coord, COUNT(*)::int AS n
            FROM care.answers a
-           JOIN care.survey_sends s ON s.id = a.send_id
+           JOIN care.survey_sends s ON s.id = a.send_id AND s.survey_code = $1
            JOIN care.questions q ON q.id = a.question_id AND q.visibility = 'manager'
            JOIN reg.site_owner o ON o.site_key = s.site_key AND o.valid_to IS NULL
           WHERE a.answered_at > now() - INTERVAL '90 days' AND ${wm.join(" AND ")}
@@ -401,79 +428,216 @@ router.get("/surveys", async (req, res) => {
       );
       const tot = new Map();
       for (const x of man.rows) tot.set(`${x.id}_${x.coord}`, (tot.get(`${x.id}_${x.coord}`) || 0) + x.n);
-      const seen = new Set();
-      for (const x of man.rows) {
-        seen.add(x.id);
-        if (tot.get(`${x.id}_${x.coord}`) >= minN) rows.push(x);
-      }
-      for (const id of seen) if (!rows.some((x) => x.id === id)) {
-        const x = man.rows.find((y) => y.id === id);
-        rows.push({ ...x, option_code: null, n: 0 });
-      }
+      for (const x of man.rows) if (tot.get(`${x.id}_${x.coord}`) >= minN) add(x.id, x.option_code, x.n);
     }
-    const qmap = new Map();
-    for (const x of rows) {
-      if (!qmap.has(x.id)) {
-        qmap.set(x.id, {
-          id: x.id, survey: x.survey_code, sort: x.sort, code: x.code, text: x.text, visibility: x.visibility,
-          options: x.options.map((o) => ({ c: o.c, t: o.t.pl || o.t.uk, f: o.f || null, n: 0 })), n: 0,
-        });
-      }
-      const qq = qmap.get(x.id);
-      const o = qq.options.find((y) => y.c === x.option_code);
-      if (o) o.n += x.n;
-      qq.n += x.n;
-    }
-    const questions = [...qmap.values()]
-      .sort((a, b) => (a.survey + a.sort).localeCompare(b.survey + b.sort))
-      .map((qq) => (qq.visibility === "manager" && qq.n < minN ? { ...qq, hidden: true, n: null, options: [] } : qq));
+    const questions = qs
+      .filter((q) => q.visibility === "coordinator" || sc.isManager)
+      .map((q) => {
+        const m = counts.get(q.id) || {};
+        const n = Object.values(m).reduce((a, b) => a + b, 0);
+        const out = { id: q.id, survey: code, sort: q.sort, code: q.code, text: q.text, visibility: q.visibility, n,
+          options: q.options.map((o) => ({ c: o.c, t: o.t.pl || o.t.uk, f: o.f || null, n: m[o.c] || 0 })) };
+        return q.visibility === "manager" && n < minN ? { ...out, hidden: true, n: null, options: [] } : out;
+      });
 
-    // по об'єктах
-    const p3 = [days];
+    // по об'єктах — колонки = питання вибраної анкети
+    const p3 = [days, code];
     const w3 = siteScope(sc, req.query, "s.site_key", p3);
-    const sites = await db.query(
-      `SELECT s.site_key,
-              COUNT(DISTINCT s.id) FILTER (WHERE s.status IN ('sent','done','expired'))::int AS sent,
-              COUNT(DISTINCT s.id) FILTER (WHERE s.status = 'done')::int AS done,
-              COUNT(DISTINCT s.id) FILTER (WHERE s.flag = 'high')::int AS high,
-              ROUND(AVG(a.option_code::numeric) FILTER (WHERE q.code = 'work5' AND a.option_code ~ '^[1-5]$'), 1) AS work5,
-              ROUND(AVG(a.option_code::numeric) FILTER (WHERE q.code = 'housing5' AND a.option_code ~ '^[1-5]$'), 1) AS housing5,
-              COUNT(*) FILTER (WHERE q.code = 'stay')::int AS stay_n,
-              COUNT(*) FILTER (WHERE q.code = 'stay' AND a.option_code = 'no')::int AS stay_no,
-              COUNT(*) FILTER (WHERE q.code = 'stay' AND a.option_code = 'unsure')::int AS stay_unsure,
-              (SELECT a2.option_code FROM care.answers a2 JOIN care.survey_sends s2 ON s2.id = a2.send_id
-                 JOIN care.questions q2 ON q2.id = a2.question_id
-                WHERE s2.site_key = s.site_key AND q2.code = 'problem' AND a2.option_code <> 'nothing'
-                  AND a2.answered_at > now() - make_interval(days => $1::int)
-                GROUP BY a2.option_code ORDER BY COUNT(*) DESC LIMIT 1) AS top_problem
+    const sitesR = await db.query(
+      `SELECT s.site_key, MAX(c.full_name) AS coord_name, MAX(o.coordinator_id) AS coord_id,
+              COUNT(*) FILTER (WHERE s.status IN ('sent','done','expired'))::int AS sent,
+              COUNT(*) FILTER (WHERE s.status = 'done')::int AS done,
+              COUNT(*) FILTER (WHERE s.flag = 'high')::int AS high
          FROM care.survey_sends s
-         LEFT JOIN care.answers a ON a.send_id = s.id
-         LEFT JOIN care.questions q ON q.id = a.question_id
-        WHERE s.planned_for > care.today() - $1::int AND s.status <> 'planned' AND s.site_key IS NOT NULL AND ${w3}
-        GROUP BY s.site_key
-        ORDER BY COUNT(DISTINCT s.id) FILTER (WHERE s.flag = 'high') DESC, s.site_key`,
+         LEFT JOIN reg.site_owner o ON o.site_key = s.site_key AND o.valid_to IS NULL
+         LEFT JOIN public.coordinators c ON c.id = o.coordinator_id
+        WHERE s.survey_code = $2 AND s.planned_for > care.today() - $1::int AND s.status <> 'planned'
+          AND s.site_key IS NOT NULL AND ${w3}
+        GROUP BY s.site_key`,
       p3,
     );
-
-    // останні тривожні відповіді (тільки видимі координатору)
-    const p4 = [days];
+    const p4 = [days, code];
     const w4 = siteScope(sc, req.query, "s.site_key", p4);
+    let mgrCond = "q.visibility <> 'manager'";                    // координатору — без питань про координатора
+    if (sc.isAdmin) mgrCond = "true";
+    else if (sc.isManager) { p4.push(sc.me); mgrCond = `(q.visibility <> 'manager' OR s.coordinator_id IS DISTINCT FROM $${p4.length})`; }
+    const sa = await db.query(
+      `SELECT s.site_key, q.code, a.option_code, COUNT(*)::int AS n
+         FROM care.answers a
+         JOIN care.survey_sends s ON s.id = a.send_id AND s.survey_code = $2
+         JOIN care.questions q ON q.id = a.question_id
+        WHERE a.answered_at > now() - make_interval(days => $1::int) AND s.site_key IS NOT NULL AND ${w4} AND ${mgrCond}
+        GROUP BY 1, 2, 3`,
+      p4,
+    );
+    const qByCode = new Map(qs.map((q) => [q.code, q]));
+    const siteMap = new Map(sitesR.rows.map((x) => [x.site_key, { ...x, q: {} }]));
+    for (const x of sa.rows) {
+      const site = siteMap.get(x.site_key);
+      if (!site) continue;
+      const cell = site.q[x.code] || (site.q[x.code] = { n: 0, opts: {} });
+      cell.n += x.n; cell.opts[x.option_code] = (cell.opts[x.option_code] || 0) + x.n;
+    }
+    const sites = [...siteMap.values()].map((x) => {
+      for (const [qc, cell] of Object.entries(x.q)) {
+        const q = qByCode.get(qc);
+        if (!q) { delete x.q[qc]; continue; }
+        if (q.visibility === "manager" && (!mgrOk(sc, x.coord_id) || cell.n < minN)) { x.q[qc] = { hidden: true }; continue; }
+        if (isScale(q)) {
+          let sum = 0, k = 0;
+          for (const [c, n] of Object.entries(cell.opts)) if (/^[1-5]$/.test(c)) { sum += Number(c) * n; k += n; }
+          cell.avg = k ? Math.round((sum / k) * 10) / 10 : null;
+        }
+      }
+      delete x.coord_id;
+      return x;
+    }).sort((a, b) => b.high - a.high || b.sent - a.sent || a.site_key.localeCompare(b.site_key));
+    const cols = qs.filter((q) => q.visibility === "coordinator" || sc.isManager)
+      .map((q) => ({ code: q.code, text: q.text, visibility: q.visibility, scale: isScale(q),
+        options: q.options.map((o) => ({ c: o.c, t: o.t.pl || o.t.uk, f: o.f || null })) }));
+
+    // тривожні відповіді вибраної анкети (тільки видимі координатору)
+    const p5 = [days, code];
+    const w5 = siteScope(sc, req.query, "s.site_key", p5);
     const recent = await db.query(
-      `SELECT a.answered_at, w.full_name, w.login, s.site_key, s.survey_code, q.text->>'pl' AS q,
+      `SELECT a.answered_at, s.worker_id, w.full_name, w.login, s.site_key, s.survey_code, q.text->>'pl' AS q,
               (SELECT o->'t'->>'pl' FROM jsonb_array_elements(q.options) o WHERE o->>'c' = a.option_code) AS a, a.flag,
               (SELECT t.status || COALESCE(':' || t.outcome, '') FROM care.tasks t
                 WHERE t.worker_id = s.worker_id AND t.created_at >= a.answered_at - INTERVAL '1 hour'
                 ORDER BY t.created_at LIMIT 1) AS task
          FROM care.answers a
-         JOIN care.survey_sends s ON s.id = a.send_id
+         JOIN care.survey_sends s ON s.id = a.send_id AND s.survey_code = $2
          JOIN care.questions q ON q.id = a.question_id
          JOIN public.workers w ON w.id = s.worker_id
         WHERE a.flag IS NOT NULL AND q.visibility = 'coordinator'
-          AND a.answered_at > now() - make_interval(days => $1::int) AND ${w4}
+          AND a.answered_at > now() - make_interval(days => $1::int) AND ${w5}
         ORDER BY (a.flag = 'high') DESC, a.answered_at DESC LIMIT 60`,
-      p4,
+      p5,
     );
-    res.json({ ok: true, rates: rates.rows, questions, sites: sites.rows, recent: recent.rows, min_answers: minN, is_manager: sc.isManager });
+
+    // анкета на старті: канал «як дізналися» (Poleć znajomego)
+    let channels = null;
+    if (code === "start" && (await seesRef(sc))) {
+      try {
+        const p6 = [days];
+        const w6 = siteScope(sc, req.query, "h.site_key", p6);
+        const ch = await db.query(
+          `SELECT a.source, COUNT(*)::int AS n
+             FROM ref.answers a JOIN ref.v_hires h ON h.worker_id = a.worker_id AND h.bhp_date = a.bhp_date
+            WHERE a.ext AND a.status = 'answered' AND a.answered_at > now() - make_interval(days => $1::int) AND ${w6}
+            GROUP BY 1 ORDER BY 2 DESC`, p6);
+        channels = ch.rows.map((x) => ({ source: x.source, label: REF_SRC[x.source] || x.source, n: x.n }));
+      } catch (e) { channels = null; }                 // розділу Poleć znajomego немає
+    }
+    res.json({ ok: true, survey: code, rates: rates.rows, questions, cols, sites, recent: recent.rows, channels,
+      min_answers: minN, is_manager: sc.isManager });
+  } catch (e) { fail(res, e); }
+});
+
+// ── Хто як відповів: анкета → працівники ──────────────────────────────
+router.get("/surveys/answers", async (req, res) => {
+  try {
+    const sc = req.scope;
+    const days = Math.min(parseInt(req.query.days, 10) || 90, 365);
+    const code = await surveyCode(String(req.query.survey || ""));
+    const qs = (await db.query(
+      `SELECT id, sort, code, text->>'pl' AS text, visibility, options FROM care.questions WHERE survey_code = $1 ORDER BY sort`, [code])).rows;
+    const p = [days, code];
+    const w = siteScope(sc, req.query, "s.site_key", p);
+    const r = await db.query(
+      `SELECT s.id, s.worker_id, w.full_name, w.login, s.site_key, s.status, s.flag, s.coordinator_id, c.full_name AS coord_name,
+              to_char(s.bhp_date, 'YYYY-MM-DD') AS bhp, s.sent_at, s.completed_at,
+              COALESCE(json_object_agg(q.code, json_build_object('o', a.option_code, 'f', a.flag, 'at', a.answered_at))
+                       FILTER (WHERE q.code IS NOT NULL), '{}') AS ans
+         FROM care.survey_sends s
+         JOIN public.workers w ON w.id = s.worker_id
+         LEFT JOIN public.coordinators c ON c.id = s.coordinator_id
+         LEFT JOIN care.answers a ON a.send_id = s.id
+         LEFT JOIN care.questions q ON q.id = a.question_id
+        WHERE s.survey_code = $2 AND s.planned_for > care.today() - $1::int AND s.status IN ('sent','done','expired') AND ${w}
+        GROUP BY s.id, w.id, c.full_name
+        ORDER BY COALESCE(s.completed_at, s.sent_at) DESC NULLS LAST, s.id DESC
+        LIMIT 3000`,
+      p,
+    );
+    const mgrQ = new Set(qs.filter((q) => q.visibility === "manager").map((q) => q.code));
+    const rows = r.rows.map((x) => {
+      const ans = {};
+      let last = null;
+      for (const [qc, v] of Object.entries(x.ans || {})) {
+        if (mgrQ.has(qc) && !mgrOk(sc, x.coordinator_id)) continue;
+        const q = qs.find((y) => y.code === qc);
+        ans[qc] = { o: v.o, t: q ? optLabel(q, v.o) : v.o, f: v.f };
+        if (!last || v.at > last) last = v.at;
+      }
+      return { id: x.id, worker_id: x.worker_id, full_name: x.full_name, login: x.login, site_key: x.site_key,
+        coord_name: x.coord_name, status: x.status, flag: x.flag, bhp: x.bhp, sent_at: x.sent_at,
+        answered_at: last, answered: Object.keys(x.ans || {}).length, ans };
+    });
+    // анкета на старті: + «як дізналися» / хто привів
+    if (code === "start" && rows.length && (await seesRef(sc))) {
+      try {
+        const ra = await db.query(
+          `SELECT worker_id, to_char(bhp_date, 'YYYY-MM-DD') AS bhp, source, referrer_text, status
+             FROM ref.answers WHERE worker_id = ANY($1::int[])`, [rows.map((x) => x.worker_id)]);
+        const m = new Map(ra.rows.map((x) => [`${x.worker_id}_${x.bhp}`, x]));
+        rows.forEach((x) => {
+          const a = m.get(`${x.worker_id}_${x.bhp}`);
+          if (a && a.status === "answered") x.ref = { source: a.source, label: REF_SRC[a.source] || a.source, text: a.referrer_text };
+        });
+      } catch (e) { /* немає розділу Poleć znajomego */ }
+    }
+    const cols = qs.filter((q) => q.visibility === "coordinator" || sc.isManager)
+      .map((q) => ({ code: q.code, text: q.text, visibility: q.visibility, scale: isScale(q),
+        options: q.options.map((o) => ({ c: o.c, t: o.t.pl || o.t.uk, f: o.f || null })) }));
+    res.json({ ok: true, survey: code, cols, rows, is_manager: sc.isManager, is_admin: sc.isAdmin });
+  } catch (e) { fail(res, e); }
+});
+
+// ── Усі анкети одного працівника ─────────────────────────────────────
+router.get("/surveys/worker", async (req, res) => {
+  try {
+    const sc = req.scope;
+    const wid = parseInt(req.query.worker_id, 10);
+    if (!wid) return fail(res, new Error("worker_id"), 400);
+    const p = [wid];
+    const w = siteScope(sc, {}, "s.site_key", p);
+    const sends = await db.query(
+      `SELECT s.id, s.survey_code, sv.name, sv.sort, s.site_key, s.status, s.flag, s.coordinator_id, c.full_name AS coord_name,
+              to_char(s.bhp_date, 'YYYY-MM-DD') AS bhp, s.planned_for, s.sent_at, s.reminded_at, s.completed_at
+         FROM care.survey_sends s
+         JOIN care.surveys sv ON sv.code = s.survey_code
+         LEFT JOIN public.coordinators c ON c.id = s.coordinator_id
+        WHERE s.worker_id = $1 AND s.status <> 'planned' AND ${w}
+        ORDER BY COALESCE(s.sent_at, s.planned_for::timestamptz) DESC, s.id DESC`,
+      p,
+    );
+    const wk = (await db.query(`SELECT id, full_name, login FROM public.workers WHERE id = $1`, [wid])).rows[0];
+    if (!wk) return fail(res, new Error("Nie ma takiego pracownika"), 404);
+    let refs = [];
+    if (await seesRef(sc)) try {
+      const p2 = [wid];
+      const w2 = siteScope(sc, {}, "h.site_key", p2);
+      refs = (await db.query(
+        `SELECT to_char(a.bhp_date, 'YYYY-MM-DD') AS bhp, a.source, a.referrer_text, a.status, a.answered_at, a.ext, h.site_key
+           FROM ref.answers a JOIN ref.v_hires h ON h.worker_id = a.worker_id AND h.bhp_date = a.bhp_date
+          WHERE a.worker_id = $1 AND ${w2} ORDER BY a.bhp_date DESC`, p2)).rows
+        .map((x) => ({ ...x, label: REF_SRC[x.source] || x.source }));
+    } catch (e) { refs = []; }
+    if (!sends.rows.length && !refs.length) return fail(res, new Error("Brak ankiet tego pracownika w Twoim zakresie"), 404);
+    const ids = sends.rows.map((x) => x.id);
+    const ans = ids.length ? (await db.query(
+      `SELECT a.send_id, q.sort, q.code, q.text->>'pl' AS q, q.visibility, q.options, a.option_code, a.flag, a.answered_at
+         FROM care.answers a JOIN care.questions q ON q.id = a.question_id
+        WHERE a.send_id = ANY($1::int[]) ORDER BY a.send_id, q.sort`, [ids])).rows : [];
+    const out = sends.rows.map((s) => ({
+      ...s,
+      answers: ans.filter((a) => a.send_id === s.id)
+        .filter((a) => a.visibility !== "manager" || mgrOk(sc, s.coordinator_id))
+        .map((a) => ({ q: a.q, code: a.code, a: optLabel(a, a.option_code), o: a.option_code, f: a.flag, at: a.answered_at, mgr: a.visibility === "manager" })),
+      hidden: ans.some((a) => a.send_id === s.id && a.visibility === "manager" && !mgrOk(sc, s.coordinator_id)),
+    }));
+    res.json({ ok: true, worker: wk, sends: out, refs });
   } catch (e) { fail(res, e); }
 });
 

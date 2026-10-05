@@ -25,7 +25,8 @@ const OUT = {
 };
 const TITLES = { tasks: "Do rozmowy", risk: "Ryzyko odejścia", surveys: "Ankiety", control: "Kontrola koordynacji",
   coords: "Koordynatorzy", test: "Test wiadomości", settings: "Ustawienia" };
-const SURVEY_NAME = { d3: "3. dzień", d14: "14 dni", d30: "30 dni", d60: "60 dni", exit: "Po odejściu" };
+const SURVEY_NAME = { start: "Start (rejestracja)", d3: "3. dzień", d14: "14 dni", d30: "30 dni", d60: "60 dni", exit: "Po odejściu" };
+const SURVEY_WHEN = { start: "przy rejestracji w bocie (pilotaż)", exit: "po odejściu z pracy" };
 
 // ── Утиліти ───────────────────────────────────────────────────────────
 function esc(s) {
@@ -438,65 +439,264 @@ function assignFromRisk(i) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-//  Ankiety
+//  Ankiety — każda ankieta osobno (zakładki), kto jak odpowiedział
 // ══════════════════════════════════════════════════════════════════════
+// Krótkie nagłówki kolumn (pełne pytanie — w podpowiedzi)
+const Q_SHORT = {
+  housing3: "Mieszkanie OK", transport3: "Dojazd OK", onboard3: "Wyjaśniono pracę", coord3: "Koord. dostępny",
+  work5: "Praca 1–5", housing5: "Mieszk. 1–5", stay: "Zostanie", problem: "Co przeszkadza", coord5: "Koord. 1–5",
+  reason: "Powód odejścia", coordx: "Koord. pomagał", back: "Wróciłby",
+  clarity5: "Warunki jasne 1–5", recruit5: "Rekruter szybko 1–5", housing_promise: "Mieszk. jak obiecano", coord_start5: "Koord. 1–5",
+};
+const qShort = (c) => Q_SHORT[c.code] || String(c.text || c.code).replace(/^\W+/u, "").split(/[?.]/)[0].slice(0, 28);
+const emo = (t) => { const m = String(t || "").match(/^(\p{Extended_Pictographic}️?)/u); return m ? m[1] : null; };
+const optShort = (t) => emo(t) || String(t || "").split(" ")[0];
+const SV_STATUS = { done: ["✓ wypełniona", "green"], sent: ["w trakcie", "amber"], expired: ["bez odpowiedzi", "muted"] };
+
+function surveyLabel(code, name) { return SURVEY_NAME[code] || name || code; }
+
 async function loadSurveys() {
-  document.getElementById("recentTable").innerHTML = `<div class="loading">Ładowanie…</div>`;
-  const r = await api("/surveys" + qs({ days: days() }));
-  if (!r) return;
-  if (!r.ok) { document.getElementById("recentTable").innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
-
-  document.getElementById("surveyKpis").innerHTML = r.rates.map((x) => {
+  const box = document.getElementById("recentTable");
+  box.innerHTML = `<div class="loading">Ładowanie…</div>`;
+  if (!ST.survey) { try { ST.survey = localStorage.getItem("sas_rz_survey") || ""; } catch (e) { ST.survey = ""; } }
+  const my = (ST.svSeq = (ST.svSeq || 0) + 1);
+  const r = await api("/surveys" + qs({ days: days(), survey: ST.survey || "" }));
+  if (!r || my !== ST.svSeq) return;
+  if (!r.ok) { box.innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
+  ST.survey = r.survey;
+  ST.sv = r;
+  renderSurveyTabs();
+  renderSurvey();
+  loadWho();
+}
+function pickSurvey(code) {
+  ST.survey = code;
+  try { localStorage.setItem("sas_rz_survey", code); } catch (e) { /* prywatne okno */ }
+  loadSurveys();
+}
+function renderSurveyTabs() {
+  const r = ST.sv;
+  document.getElementById("surveyTabs").innerHTML = r.rates.map((x) => {
     const rate = x.sent ? x.done / x.sent : null;
-    return `<div class="kpi ${rate == null ? "" : rate < 0.4 ? "bad" : rate < 0.6 ? "warn" : "good"}">
-      <div class="l">Ankieta: ${esc(SURVEY_NAME[x.code] || x.name)}</div>
+    const cls = rate == null ? "" : rate < 0.4 ? "bad" : rate < 0.6 ? "warn" : "good";
+    return `<div class="kpi ${cls} ${x.code === r.survey ? "on" : ""}" onclick="pickSurvey('${esc(x.code)}')" title="Pokaż tylko tę ankietę">
+      ${x.code === "start" ? `<span class="pilot">pilotaż</span>` : ""}
+      <div class="l">${esc(surveyLabel(x.code, x.name))}</div>
       <div class="v">${rate == null ? "—" : Math.round(rate * 100) + "%"}</div>
-      <div class="s">odpowiedziało ${x.done} z ${x.sent}${x.no_tg ? ` · bez bota ${x.no_tg}` : ""}${x.high ? ` · <span class="red">⚠️ ${x.high}</span>` : ""}</div></div>`;
+      <div class="s">odp. ${x.done} z ${x.sent}${x.no_tg ? ` · bez bota ${x.no_tg}` : ""}${x.high ? ` · <span class="red">⚠️ ${x.high}</span>` : ""}</div></div>`;
   }).join("");
+}
+function renderSurvey() {
+  const r = ST.sv;
+  const code = r.survey;
+  const rate = r.rates.find((x) => x.code === code) || {};
+  const when = SURVEY_WHEN[code] || (rate.day_offset != null ? `${rate.day_offset}. dzień pracy` : "");
+  document.getElementById("surveyTitle").innerHTML = `<h2>📝 Ankieta: ${esc(surveyLabel(code, rate.name))}</h2>
+    <span class="s">wysyłana: ${esc(when)} · pytań: ${r.cols.length}${rate.is_active === false ? ` · <span class="amber">wyłączona</span>` : ""}
+    · poniżej tylko odpowiedzi z tej ankiety</span>`;
 
+  // kanały (start)
+  const chBox = document.getElementById("channelsBox");
+  if (code === "start" && r.channels) {
+    chBox.style.display = "";
+    const tot = r.channels.reduce((a, x) => a + x.n, 0);
+    const max = Math.max(1, ...r.channels.map((x) => x.n));
+    document.getElementById("channelsCnt").textContent = tot ? `${tot} odpowiedzi` : "";
+    document.getElementById("channelsBody").innerHTML = tot ? r.channels.map((x) => `<div class="chbar"><span>${esc(x.label)}</span>
+      <span><span class="bar" style="width:${Math.max(2, Math.round(100 * x.n / max))}%"></span></span>
+      <span class="val">${x.n} · ${pct(x.n, tot)}</span></div>`).join("") : `<div class="empty">Brak odpowiedzi w tym okresie</div>`;
+  } else chBox.style.display = "none";
+
+  // niepokojące
   document.getElementById("recentCnt").textContent = r.recent.length ? `${r.recent.length}` : "";
   document.getElementById("recentTable").innerHTML = r.recent.length ? `<table class="rg"><thead><tr><th>Kiedy</th><th>Pracownik</th><th>Obiekt</th>
-    <th>Ankieta</th><th>Pytanie → odpowiedź</th><th>Rozmowa</th></tr></thead><tbody>
+    <th>Pytanie → odpowiedź</th><th>Rozmowa</th></tr></thead><tbody>
     ${r.recent.map((x) => {
       const [st, out] = String(x.task || "").split(":");
       const task = !x.task ? `<span class="muted">—</span>` : st === "open" ? `<span class="amber">otwarta</span>`
         : st === "done" ? `<span class="${(OUT[out] || {}).c || ""}">${(OUT[out] || {}).l || out}</span>` : `<span class="muted">${esc(st)}</span>`;
-      return `<tr><td class="muted">${ddt(x.answered_at)}</td><td><b>${esc(x.full_name)}</b> <span class="muted">${esc(x.login || "")}</span></td>
-        <td class="muted">${esc(x.site_key || "")}</td><td class="muted">${esc(SURVEY_NAME[x.survey_code] || x.survey_code)}</td>
+      return `<tr><td class="muted nw">${ddt(x.answered_at)}</td>
+        <td><a class="wk" onclick="openWorker(${Number(x.worker_id)})"><b>${esc(x.full_name)}</b></a> <span class="muted">${esc(x.login || "")}</span></td>
+        <td class="muted">${esc(x.site_key || "")}</td>
         <td>${esc(x.q)} → <b class="${x.flag === "high" ? "red" : "amber"}">${esc(x.a)}</b></td><td>${task}</td></tr>`;
-    }).join("")}</tbody></table>` : `<div class="empty">Brak niepokojących odpowiedzi w tym okresie</div>`;
+    }).join("")}</tbody></table>` : `<div class="empty">Brak niepokojących odpowiedzi w tej ankiecie w tym okresie</div>`;
 
-  const probL = ST.me.problems;
-  const PR = { housing: "Mieszkanie", money: "Wypłata", schedule: "Grafik", team: "Zespół", transport: "Dojazd", other: "Inne" };
-  document.getElementById("siteSurveyTable").innerHTML = r.sites.length ? `<table class="rg"><thead><tr><th>Obiekt</th>
-    <th class="num">Wysłane</th><th class="num">Odpowiedzi</th><th class="num">⚠️</th><th class="num">Praca 1–5</th>
-    <th class="num">Mieszk. 1–5</th><th class="num">Nie zostanie</th><th>Najczęstszy problem</th></tr></thead><tbody>
-    ${r.sites.map((x) => `<tr><td><b>${esc(x.site_key)}</b></td><td class="num">${x.sent}</td>
-      <td class="num">${pct(x.done, x.sent)}</td><td class="num ${x.high ? "red" : ""}">${x.high || ""}</td>
-      <td class="num ${x.work5 != null && x.work5 < 3 ? "red" : ""}">${x.work5 ?? "—"}</td>
-      <td class="num ${x.housing5 != null && x.housing5 < 3 ? "red" : ""}">${x.housing5 ?? "—"}</td>
-      <td class="num">${x.stay_n ? `${pct(x.stay_no, x.stay_n)}${x.stay_unsure ? ` <span class="muted">(+${pct(x.stay_unsure, x.stay_n)} ?)</span>` : ""}` : "—"}</td>
-      <td class="muted">${esc(PR[x.top_problem] || probL[x.top_problem] || x.top_problem || "—")}</td></tr>`).join("")}
-    </tbody></table>` : `<div class="empty">Brak odpowiedzi w tym okresie</div>`;
-
-  const bySurvey = {};
-  for (const q of r.questions) (bySurvey[q.survey] = bySurvey[q.survey] || []).push(q);
-  const order = ["d3", "d14", "d30", "d60", "exit"];
-  const html = order.filter((k) => bySurvey[k]).map((k) => `<div class="qgroup">${esc(SURVEY_NAME[k] || k)}</div>` +
-    bySurvey[k].map((q) => {
-      const lock = q.visibility === "manager" ? `<span class="lock">🔒 tylko regionalni · zbiorczo</span>` : "";
-      if (q.hidden) return `<div class="qcard"><div class="qt">${esc(q.text)} ${lock}<span class="n">za mało odpowiedzi — pokazujemy od ${r.min_answers} na koordynatora</span></div></div>`;
-      const max = Math.max(...q.options.map((o) => o.n), 1);
-      return `<div class="qcard"><div class="qt">${esc(q.text)} ${lock}<span class="n">${q.n} odp.</span></div>
-        ${q.options.map((o) => `<div class="qopt"><span class="lab" title="${esc(o.t)}">${esc(o.t)}</span>
-          <span><span class="bar ${o.f === "high" ? "hot" : o.f === "low" ? "warm" : ""}" style="width:${Math.max(2, Math.round(100 * o.n / max))}%"></span></span>
-          <span class="val">${o.n} · ${pct(o.n, q.n)}</span></div>`).join("")}</div>`;
-    }).join("")).join("");
-  document.getElementById("questionsBox").innerHTML = html || `<div class="empty">Brak odpowiedzi w tym okresie</div>`;
+  // pytania
+  const qhtml = r.questions.map((q) => {
+    const lock = q.visibility === "manager" ? `<span class="lock">🔒 tylko regionalni · zbiorczo</span>` : "";
+    if (q.hidden) return `<div class="qcard"><div class="qt">${esc(q.text)} ${lock}<span class="n">za mało odpowiedzi — pokazujemy od ${r.min_answers} na koordynatora</span></div></div>`;
+    const max = Math.max(...q.options.map((o) => o.n), 1);
+    return `<div class="qcard"><div class="qt">${esc(q.text)} ${lock}<span class="n">${q.n} odp.</span></div>
+      ${q.options.map((o) => `<div class="qopt"><span class="lab" title="${esc(o.t)}">${esc(o.t)}</span>
+        <span><span class="bar ${o.f === "high" ? "hot" : o.f === "low" ? "warm" : ""}" style="width:${Math.max(2, Math.round(100 * o.n / max))}%"></span></span>
+        <span class="val">${o.n} · ${pct(o.n, q.n)}</span></div>`).join("")}</div>`;
+  }).join("");
+  document.getElementById("questionsBox").innerHTML = qhtml || `<div class="empty">Brak odpowiedzi w tym okresie</div>`;
   document.getElementById("questionsLegend").innerHTML =
     `Czerwony — odpowiedź tworzy pilną rozmowę tego samego dnia. Pomarańczowy — podnosi bal ryzyka.
-     ${r.is_manager ? `Pytania o koordynatora (🔒) widzą tylko regionalni i kierownik, zawsze zbiorczo i dopiero od ${r.min_answers} odpowiedzi.` : ""}`;
+     ${r.is_manager ? `Pytania o koordynatora (🔒) w podsumowaniu — zbiorczo, od ${r.min_answers} odpowiedzi; koordynator nie widzi ich nigdy.` : ""}`;
+
+  // obiekty — kolumny = pytania tej ankiety
+  const cell = (c, v) => {
+    if (!v) return `<td class="num muted">—</td>`;
+    if (v.hidden) return `<td class="num muted" title="Za mało odpowiedzi albo pytanie o Ciebie">🔒</td>`;
+    if (c.scale) return `<td class="num ${v.avg != null && v.avg < 3 ? "red" : v.avg != null && v.avg < 3.5 ? "amber" : ""}">${v.avg ?? "—"} <span class="sub">(${v.n})</span></td>`;
+    const opts = c.options.filter((o) => v.opts[o.c]);
+    if (c.options.length > 4) {
+      const top = opts.filter((o) => o.c !== "nothing").sort((a, b) => v.opts[b.c] - v.opts[a.c])[0];
+      return `<td>${top ? `${esc(top.t)} <span class="sub">${pct(v.opts[top.c], v.n)}</span>` : `<span class="muted">—</span>`}</td>`;
+    }
+    return `<td class="nw">${opts.map((o) => `<span class="${o.f === "high" ? "red" : o.f === "low" ? "amber" : ""}" title="${esc(o.t)}">${esc(optShort(o.t))} ${pct(v.opts[o.c], v.n)}</span>`).join(" · ")}</td>`;
+  };
+  document.getElementById("siteSurveyTable").innerHTML = r.sites.length ? `<table class="rg"><thead><tr><th>Obiekt</th>
+    <th class="num">Wysłane</th><th class="num">Odpowiedzi</th><th class="num">⚠️</th>
+    ${r.cols.map((c) => `<th class="q" title="${esc(c.text)}">${esc(qShort(c))}${c.visibility === "manager" ? " 🔒" : ""}</th>`).join("")}</tr></thead><tbody>
+    ${r.sites.map((x) => `<tr><td><b>${esc(x.site_key)}</b><div class="sub">${esc(x.coord_name || "— bez koordynatora —")}</div></td>
+      <td class="num">${x.sent}</td><td class="num">${pct(x.done, x.sent)}</td><td class="num ${x.high ? "red" : ""}">${x.high || ""}</td>
+      ${r.cols.map((c) => cell(c, x.q[c.code])).join("")}</tr>`).join("")}
+    </tbody></table>` : `<div class="empty">Brak odpowiedzi w tym okresie</div>`;
+  document.getElementById("siteLegend").innerHTML = `Skale 1–5 — średnia (w nawiasie liczba odpowiedzi). Pozostałe — udział odpowiedzi
+    (najedź, żeby zobaczyć pełną treść). Każda ankieta liczona osobno — przełącz zakładkę u góry.`;
 }
+
+// ── Kto jak odpowiedział ──────────────────────────────────────────────
+async function loadWho() {
+  const box = document.getElementById("whoTable");
+  box.innerHTML = `<div class="loading">Ładowanie…</div>`;
+  const code = ST.survey;
+  const my = (ST.whoSeq = (ST.whoSeq || 0) + 1);
+  const r = await api("/surveys/answers" + qs({ days: days(), survey: code }));
+  if (!r || my !== ST.whoSeq) return;
+  if (!r.ok) { box.innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
+  ST.who = r;
+  ST.whoAll = false;
+  renderWho();
+}
+function whoRows() {
+  const r = ST.who;
+  if (!r) return [];
+  const q = document.getElementById("whoSearch").value.trim().toLowerCase();
+  const onlyAns = document.getElementById("whoAnswered").checked;
+  const onlyFlag = document.getElementById("whoFlag").checked;
+  return r.rows.filter((x) => (!onlyAns || x.answered > 0)
+    && (!onlyFlag || Object.values(x.ans).some((a) => a.f))
+    && (!q || [x.full_name, x.login, x.site_key, x.coord_name, x.ref && x.ref.label, x.ref && x.ref.text]
+      .some((v) => String(v || "").toLowerCase().includes(q))));
+}
+function renderWho() {
+  const r = ST.who;
+  if (!r) return;
+  const rows = whoRows();
+  const isStart = r.survey === "start";
+  document.getElementById("whoCnt").textContent = `${rows.length} z ${r.rows.length}`;
+  const LIMIT = 300;
+  const shown = ST.whoAll ? rows : rows.slice(0, LIMIT);
+  const ans = (c, a) => {
+    if (!a) return `<td class="a muted">—</td>`;
+    const t = c.scale && /^[1-5]$/.test(a.o) ? a.o : a.t;
+    return `<td class="a ${a.f === "high" ? "hi" : a.f === "low" ? "lo" : ""}" title="${esc(a.t)}">${esc(t)}</td>`;
+  };
+  document.getElementById("whoTable").innerHTML = rows.length ? `<table class="rg"><thead><tr><th>Data</th><th>Pracownik</th><th>Obiekt</th>
+      ${isStart ? `<th>Skąd wie o nas</th>` : ""}
+      ${r.cols.map((c) => `<th class="q" title="${esc(c.text)}">${esc(qShort(c))}${c.visibility === "manager" ? " 🔒" : ""}</th>`).join("")}
+      <th>Stan</th></tr></thead><tbody>
+    ${shown.map((x) => {
+      const [sl, sc] = SV_STATUS[x.status] || [x.status, ""];
+      return `<tr><td class="muted nw">${dd(x.answered_at || x.sent_at)}</td>
+        <td class="nw"><a class="wk" onclick="openWorker(${Number(x.worker_id)})"><b>${esc(x.full_name)}</b></a><div class="sub">${esc(x.login || "")} · BHP ${dd(x.bhp)}</div></td>
+        <td>${esc(x.site_key || "")}<div class="sub">${esc(x.coord_name || "")}</div></td>
+        ${isStart ? `<td>${x.ref ? `${esc(x.ref.label)}${x.ref.text ? `<div class="sub">„${esc(x.ref.text)}”</div>` : ""}` : `<span class="muted">—</span>`}</td>` : ""}
+        ${r.cols.map((c) => ans(c, x.ans[c.code])).join("")}
+        <td class="nw"><span class="${sc}">${sl}</span>${x.status !== "done" && x.answered ? ` <span class="sub">${x.answered}/${r.cols.length}</span>` : ""}</td></tr>`;
+    }).join("")}</tbody></table>
+    ${rows.length > shown.length ? `<div class="empty"><button class="btn btn-ghost btn-sm" onclick="ST.whoAll = true; renderWho()">Pokaż wszystkie (${rows.length})</button></div>` : ""}`
+    : `<div class="empty">Nikt nie pasuje do filtrów</div>`;
+  document.getElementById("whoLegend").innerHTML = `Kliknij pracownika — zobaczysz wszystkie jego ankiety (wcześniejsze i nowe).
+    ${r.is_manager ? `Pytania o koordynatora (🔒) widzą tu tylko regionalni i kierownik${r.is_admin ? "" : " — bez odpowiedzi o Tobie samym"}; koordynator ich nie widzi.`
+      : "Pytań o koordynatora nie widać — widzą je tylko regionalni i kierownik."}`;
+}
+function exportWho() {
+  if (typeof XLSX === "undefined") { alert("Biblioteka Excel nie załadowała się — odśwież stronę."); return; }
+  const r = ST.who;
+  if (!r) return;
+  const rows = whoRows();
+  const isStart = r.survey === "start";
+  const head = ["Data odpowiedzi", "Login", "Pracownik", "BHP", "Obiekt", "Koordynator", ...(isStart ? ["Skąd wie o nas", "Kto polecił (wpisane)"] : []),
+    ...r.cols.map((c) => c.text), "Stan"];
+  const aoa = [[`Ankieta: ${surveyLabel(r.survey)} — kto jak odpowiedział`], [`Okres: ${days()} dni`], head];
+  const xd = (v) => { if (!v) return ""; const d = new Date(v); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); };
+  const xi = (iso) => (iso ? new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10))) : "");
+  const flags = [];
+  rows.forEach((x) => {
+    aoa.push([xd(x.answered_at || x.sent_at), x.login || "", x.full_name, xi(x.bhp), x.site_key || "", x.coord_name || "",
+      ...(isStart ? [x.ref ? x.ref.label : "", x.ref && x.ref.text ? x.ref.text : ""] : []),
+      ...r.cols.map((c) => { const a = x.ans[c.code]; if (!a) return ""; return c.scale && /^[1-5]$/.test(a.o) ? Number(a.o) : a.t; }),
+      (SV_STATUS[x.status] || [x.status])[0]]);
+    flags.push(r.cols.map((c) => (x.ans[c.code] || {}).f || null));
+  });
+  const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true });
+  const qStart = 6 + (isStart ? 2 : 0);
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  for (let R = 0; R <= range.e.r; R++) {
+    for (let C = 0; C <= range.e.c; C++) {
+      const c = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+      if (!c) continue;
+      let st = { alignment: { vertical: "top", wrapText: R === 2 } };
+      if (R === 0) st.font = { bold: true, sz: 13 };
+      if (R === 2) { st.font = { bold: true, color: { rgb: "FFFFFF" } }; st.fill = { patternType: "solid", fgColor: { rgb: "2F5597" } }; }
+      if (R > 2 && C >= qStart && C < qStart + r.cols.length) {
+        const f = flags[R - 3][C - qStart];
+        if (f === "high") st.fill = { patternType: "solid", fgColor: { rgb: "F8CBAD" } };
+        if (f === "low") st.fill = { patternType: "solid", fgColor: { rgb: "FFF2CC" } };
+      }
+      if (R > 2 && (C === 0 || C === 3) && c.t === "d") c.z = "dd.mm.yyyy";
+      c.s = st;
+    }
+  }
+  ws["!cols"] = [{ wch: 11 }, { wch: 11 }, { wch: 26 }, { wch: 11 }, { wch: 22 }, { wch: 20 }, ...(isStart ? [{ wch: 16 }, { wch: 22 }] : []),
+    ...r.cols.map(() => ({ wch: 18 })), { wch: 14 }];
+  ws["!rows"] = []; ws["!rows"][2] = { hpt: 60 };
+  ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 2, c: 0 }, e: { r: range.e.r, c: range.e.c } }) };
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Odpowiedzi");
+  XLSX.writeFile(wb, `ankieta_${r.survey}_${days()}dni.xlsx`);
+}
+
+// ── Karta pracownika: wszystkie ankiety ──────────────────────────────
+async function openWorker(wid) {
+  const dw = document.getElementById("drawer");
+  dw.innerHTML = `<div class="dw-head"><div><h2>Ładowanie…</h2></div><button class="dw-close" onclick="closeWorker()">✕</button></div>`;
+  dw.classList.add("open"); dw.setAttribute("aria-hidden", "false");
+  document.getElementById("drawerBg").classList.add("open");
+  const my = (ST.wSeq = (ST.wSeq || 0) + 1);
+  const r = await api(`/surveys/worker?worker_id=${wid}`);
+  if (!r || my !== ST.wSeq) return;
+  if (!r.ok) { dw.querySelector(".dw-head h2").textContent = r.error || "Błąd"; return; }
+  const ST_L = { done: "wypełniona", sent: "w trakcie", expired: "bez odpowiedzi", no_telegram: "bez Telegrama", failed: "nie doszła" };
+  let h = `<div class="dw-head"><div><h2>${esc(r.worker.full_name)}</h2><div class="sub">${esc(r.worker.login || "")} · wszystkie ankiety</div></div>
+    <button class="dw-close" onclick="closeWorker()">✕</button></div><div class="dw-body">`;
+  if (r.refs.length) {
+    h += `<div class="section"><div class="section-head">🧭 Skąd wie o firmie</div>${r.refs.map((x) => `<div class="qa">
+      <span class="q">BHP ${dd(x.bhp)} · ${esc(x.site_key || "")}</span>
+      <span class="a">${x.status === "answered" ? `${esc(x.label)}${x.referrer_text ? ` „${esc(x.referrer_text)}”` : ""}` : `<span class="muted">brak odpowiedzi</span>`}</span></div>`).join("")}</div>`;
+  }
+  h += r.sends.length ? r.sends.map((s) => `<div class="section">
+      <div class="section-head">📝 ${esc(surveyLabel(s.survey_code, s.name))}
+        <span class="cnt">${s.sent_at ? "wysłana " + dd(s.sent_at) : ""} · ${esc(ST_L[s.status] || s.status)} · ${esc(s.site_key || "")}${s.coord_name ? " · " + esc(s.coord_name) : ""}</span></div>
+      ${s.answers.length ? s.answers.map((a) => `<div class="qa"><span class="q">${esc(a.q)}${a.mgr ? " 🔒" : ""}</span>
+        <span class="a ${a.f === "high" ? "hi" : a.f === "low" ? "lo" : ""}">${esc(a.a)}</span></div>`).join("")
+        : `<div class="qa"><span class="q muted">Brak odpowiedzi</span><span></span></div>`}
+      ${s.hidden ? `<div class="legend">🔒 Odpowiedź o koordynatorze ukryta — widzą ją tylko regionalni i kierownik.</div>` : ""}
+    </div>`).join("") : `<div class="empty">Brak ankiet</div>`;
+  h += `</div>`;
+  dw.innerHTML = h;
+}
+function closeWorker() {
+  document.getElementById("drawer").classList.remove("open");
+  document.getElementById("drawer").setAttribute("aria-hidden", "true");
+  document.getElementById("drawerBg").classList.remove("open");
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeWorker(); });
 
 // ══════════════════════════════════════════════════════════════════════
 //  Kontrola
@@ -582,7 +782,7 @@ async function loadSettings() {
   html += `<div class="section"><div class="section-head">Ankiety — włączone</div>
     ${r.surveys.map((s) => `<div class="cfg-row"><span class="k">${esc(s.code)}</span>
       <label style="display:flex; gap:6px; align-items:center"><input type="checkbox" data-sv="${esc(s.code)}" ${s.is_active ? "checked" : ""}/> aktywna</label>
-      <span class="note">${esc(s.name)} · ${s.day_offset == null ? "po odejściu" : s.day_offset + ". dzień"} · pytań: ${s.questions}</span></div>`).join("")}
+      <span class="note">${esc(s.name)} · ${s.code === "start" ? "przy rejestracji w bocie — obiekty pilotażu: Poleć znajomego → Ustawienia" : s.day_offset == null ? "po odejściu" : s.day_offset + ". dzień"} · pytań: ${s.questions}</span></div>`).join("")}
     <div class="legend">Treść pytań (4 języki) jest w tabeli care.questions — zmiany przez administratora bazy.</div></div>`;
   html += `<div class="section"><div class="section-head">Uruchomienia</div>
     <div class="cfg-row" style="grid-template-columns:1fr"><span class="note">Ostatnio: ${r.jobs.map((j) => `${esc(j.job)} ${esc(j.last)}`).join(" · ") || "—"}</span></div>

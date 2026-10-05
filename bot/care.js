@@ -1042,7 +1042,7 @@ async function refreshAssessmentMsg(id) {
 // ══════════════════════════════════════════════════════════════════════
 const TEST_ITEMS = {
   coordinator: ["morning", "urgent", "manual", "assess", "esc_coord", "lead_leaving", "lead_esc"],
-  worker: ["d3", "d14", "d30", "d60", "exit", "remind", "spot"],
+  worker: ["start", "d3", "d14", "d30", "d60", "exit", "remind", "spot"],
 };
 const TT = {
   uk: { mark: "🧪 ТЕСТ — нічого не записується", coordPart: "🧪 <b>Тест Rozmowy.</b> Далі — повідомлення, які отримує координатор. Кнопки працюють, але нічого не записується.",
@@ -1184,7 +1184,7 @@ async function sendTestSet({ coordinatorIds, items, coordLang = "profile", worke
         await tSend(ctx, "info", lang, `<i>(${tt(lang).leadNote})</i>\n${t.esc_head(2)}\n• <b>${esc(c.full_name)}</b>: 2 — TEST OKSANA, TEST PETRO`);
 
       if (workerItems.length) await tSend(ctx, "part", lang, tt(lang).workerPart(LANG_NAME[wl]));
-      for (const code of ["d3", "d14", "d30", "d60", "exit"]) if (want.has(code)) await testSurvey(ctx, code, wl);
+      for (const code of ["start", "d3", "d14", "d30", "d60", "exit"]) if (want.has(code)) await testSurvey(ctx, code, wl);
       if (want.has("remind")) await testSurvey(ctx, "d14", wl, true);
       if (want.has("spot")) {
         const w = tw(wl);
@@ -1305,4 +1305,6 @@ module.exports = {
   runMorning, runSurveys, runEscalation, runSpotChecks, sendUrgent, startSurveyNow, remindSurveyNow,
   closeTask, reopenTask, rateAssessment, loadTask, taskText, sendTaskNow, refreshAssessmentMsg, cancelForCoordinators,
   sendTestSet, clearTests, testSummary, TEST_ITEMS,
+  // для тесту «Poleć znajomego» (bot/referral.js): ті самі тестові повідомлення і анкета «start»
+  _testApi: { tSend, testSurvey, ensureTestTable, LANG_NAME },
 };

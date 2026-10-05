@@ -479,6 +479,123 @@ async function onText(update) {
   return true;
 }
 
+// ══════════════════════════════════════════════════════════════════════
+//  Тест (панель → 🧪 Test): анкета собі в Telegram — так, як її бачить новий
+//  працівник. Кнопки й ім'я працюють, але нічого не записується (care.test_msgs,
+//  кнопки RF_X_…, анкета «start» — тестові SV_X_… з bot/care.js).
+// ══════════════════════════════════════════════════════════════════════
+const TEST_ITEMS = ["ask", "ask_x", "remind", "blocked"];
+const TTX = {
+  uk: { part: (l) => `🧪 <b>Тест «Poleć znajomego»</b> — так це бачить новий працівник (мова: ${l}). Кнопки працюють, ім'я можна вписати — нічого не записується.`,
+        block: "так це бачить координатор, якщо спробує відповісти за працівника", toast: "🧪 Тест: нічого не записано" },
+  ru: { part: (l) => `🧪 <b>Тест «Poleć znajomego»</b> — так это видит новый работник (язык: ${l}). Кнопки работают, имя можно вписать — ничего не записывается.`,
+        block: "так это видит координатор, если попробует ответить за работника", toast: "🧪 Тест: ничего не записано" },
+  pl: { part: (l) => `🧪 <b>Test „Poleć znajomego”</b> — tak to widzi nowy pracownik (język: ${l}). Przyciski działają, można wpisać imię — nic nie jest zapisywane.`,
+        block: "tak to widzi koordynator, gdy próbuje odpowiedzieć za pracownika", toast: "🧪 Test: nic nie zapisano" },
+  en: { part: (l) => `🧪 <b>"Refer a friend" test</b> — this is what a new worker sees (${l}). Buttons work, you can type a name — nothing is saved.`,
+        block: "what a coordinator sees when trying to answer for a worker", toast: "🧪 Test: nothing saved" },
+};
+const ttx = (l) => TTX[l] || TTX.uk;
+function testKeyboard(t, id, ext) {
+  return askKeyboard(t, id, ext).map((row) => row.map((b) => ({ text: b.text, callback_data: b.callback_data.replace(/^RF_S_\d+_/, `RF_X_${id}_S_`) })));
+}
+function careTest() {
+  const care = require("./care");
+  if (BOT) care.setBot(BOT);
+  return care._testApi;
+}
+async function testDeadline() {
+  const st = await settings();
+  return ddmm(addDaysISO((await today()).d, Number(st.window_days) || 5));
+}
+async function sendTest({ coordinatorIds, items, workerLang = "uk", by = null }) {
+  const api = careTest();
+  await api.ensureTestTable();
+  const coords = (await db.query(
+    `SELECT id, full_name, telegram_chat_id FROM public.coordinators WHERE id = ANY($1::int[])`, [coordinatorIds])).rows;
+  const want = new Set(items);
+  const wl = TX[workerLang] ? workerLang : "uk";
+  const t = TX[wl];
+  const dl = await testDeadline();
+  const result = [];
+  for (const c of coords) {
+    if (!c.telegram_chat_id) { result.push({ id: c.id, name: c.full_name, sent: 0, error: "no_telegram" }); continue; }
+    const ctx = { chat: c.telegram_chat_id, coordId: c.id, by, sent: 0 };
+    try {
+      await api.tSend(ctx, "part", wl, ttx(wl).part(api.LANG_NAME[wl] || wl));
+      if (want.has("ask")) await api.tSend(ctx, "ref_ask", wl, t.ask, (id) => testKeyboard(t, id, false), { ext: false });
+      if (want.has("ask_x")) await api.tSend(ctx, "ref_ask", wl, t.ask_x, (id) => testKeyboard(t, id, true), { ext: true });
+      if (want.has("remind")) await api.tSend(ctx, "ref_ask", wl, fmt(t.remind, { dl }), (id) => testKeyboard(t, id, false), { ext: false });
+      if (want.has("blocked")) await api.tSend(ctx, "info", wl, `<i>(${ttx(wl).block})</i>\n${t.blocked}`);
+      result.push({ id: c.id, name: c.full_name, sent: ctx.sent });
+    } catch (e) {
+      console.error("[ref] test", c.id, e.message);
+      result.push({ id: c.id, name: c.full_name, sent: ctx.sent, error: e.message });
+    }
+  }
+  return result;
+}
+async function testThanks(api, ctx, lang, askId, ext, label) {
+  const t = TX[langOf(lang)];
+  await api.tSend(ctx, "info", lang, fmt(t.thanks, { v: esc(label), dl: await testDeadline() }),
+    () => [[{ text: t.edit, callback_data: `RF_X_${askId}_E` }]]);
+  if (ext) await api.testSurvey(ctx, "start", lang);          // далі питання 2–5 (тестові SV_X_…)
+}
+async function onTestCallback(cq) {
+  const chatId = cq.message && cq.message.chat && cq.message.chat.id;
+  const ack = (txt) => BOT && BOT.telegram.answerCbQuery(cq.id, txt || "").catch(() => {});
+  const m = String(cq.data || "").match(/^RF_X_(\d+)_([SE])(?:_(\w+))?$/);
+  if (!m || !chatId) return ack();
+  const api = careTest();
+  await api.ensureTestTable();
+  const row = (await db.query(`SELECT * FROM care.test_msgs WHERE id = $1`, [Number(m[1])])).rows[0];
+  if (!row || String(row.chat_id) !== String(chatId)) return ack();
+  const lang = langOf(row.lang);
+  const t = TX[lang];
+  const ext = !!(row.payload && row.payload.ext);
+  const ctx = { chat: chatId, coordId: row.coordinator_id, by: row.sent_by, sent: 0 };
+  if (m[2] === "E") {
+    await ack();
+    return api.tSend(ctx, "ref_ask", lang, ext ? t.ask_x : t.ask, (id) => testKeyboard(t, id, ext), { ext });
+  }
+  const src = m[3];
+  if (!(ext ? SOURCES_X : SOURCES).includes(src)) return ack();
+  await ack(ttx(lang).toast);
+  if (cq.message.message_id) BOT.telegram.editMessageReplyMarkup(chatId, cq.message.message_id, undefined, { inline_keyboard: [] }).catch(() => {});
+  if (src === "friend" || src === "coord") {
+    await db.query(`UPDATE care.test_msgs SET payload = payload || '{"await": false}'::jsonb WHERE chat_id = $1 AND kind = 'ref_name'`, [chatId]);
+    return api.tSend(ctx, "ref_name", lang, src === "friend" ? t.name_friend : t.name_coord, null, { await: true, src, ext, ask: row.id });
+  }
+  return testThanks(api, ctx, lang, row.id, ext, srcLabel(t, src, ext));
+}
+// Тестове ім'я: true — оброблено
+const TEST_RETRIED = new Set();
+async function onTestText(chatId, text) {
+  let row;
+  try {
+    row = (await db.query(
+      `SELECT * FROM care.test_msgs WHERE chat_id = $1 AND kind = 'ref_name' AND payload->>'await' = 'true'
+          AND sent_at > now() - interval '2 hours' ORDER BY id DESC LIMIT 1`, [chatId])).rows[0];
+  } catch (e) { return false; }                       // немає таблиці тестів
+  if (!row || !looksLikeName(text)) return false;
+  const api = careTest();
+  const lang = langOf(row.lang);
+  const t = TX[lang];
+  const p = row.payload;
+  const ctx = { chat: chatId, coordId: row.coordinator_id, by: row.sent_by, sent: 0 };
+  const name = cleanName(text);
+  const words = name.split(" ").filter((w) => (w.match(/\p{L}/gu) || []).length >= 2);
+  if (words.length < 2 && !TEST_RETRIED.has(row.id)) {
+    TEST_RETRIED.add(row.id);
+    await api.tSend(ctx, "info", lang, t.two_words);
+    return true;
+  }
+  TEST_RETRIED.delete(row.id);
+  await db.query(`UPDATE care.test_msgs SET payload = payload || '{"await": false}'::jsonb WHERE id = $1`, [row.id]);
+  await testThanks(api, ctx, lang, p.ask, !!p.ext, `${srcLabel(t, p.src, p.ext)}: ${name}`);
+  return true;
+}
+
 async function guardStartSurvey(cq) {
   const sendId = Number(String(cq.data).split("_")[1]);
   const chatId = cq.message && cq.message.chat && cq.message.chat.id;
@@ -502,6 +619,10 @@ async function guardStartSurvey(cq) {
 async function onUpdate(bot, update) {
   if (bot) BOT = bot;
   try {
+    if (update.callback_query && /^RF_X_/.test(String(update.callback_query.data || ""))) {
+      await onTestCallback(update.callback_query);          // тест з панелі — нічого не записується
+      return true;
+    }
     if (update.callback_query && /^RF_/.test(String(update.callback_query.data || ""))) {
       await onCallback(update.callback_query);
       return true;
@@ -511,6 +632,7 @@ async function onUpdate(bot, update) {
       return await guardStartSurvey(update.callback_query);
     }
     if (update.message && update.message.chat && update.message.chat.type === "private" && typeof update.message.text === "string") {
+      if (await onTestText(update.message.chat.id, String(update.message.text).trim())) return true;
       return await onText(update);
     }
   } catch (e) {
@@ -625,4 +747,5 @@ function schedule(bot) {
 function setBot(bot) { BOT = bot; }
 
 module.exports = { onUpdate, onLogin, schedule, setBot, tick, settings, resetSettingsCache, startOn, sitePicked, TX, SOURCES_X,
+  sendTest, TEST_ITEMS,
   _test: { looksLikeName, cleanName } };

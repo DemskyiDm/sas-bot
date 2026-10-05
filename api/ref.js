@@ -624,6 +624,43 @@ router.get("/security", async (req, res) => {
   } catch (e) { fail(res, e); }
 });
 
+// ── Тест: анкета собі в Telegram (адмін) ─────────────────────────────
+const careBotOrNull = () => { try { return require("../bot/care"); } catch (e) { return null; } };
+router.get("/test", async (req, res) => {
+  try {
+    if (!req.rs.admin) return fail(res, new Error("Tylko administrator"), 403);
+    const care = careBotOrNull();
+    const c = await db.query(
+      `SELECT c.id, c.full_name, (c.telegram_chat_id IS NOT NULL) AS has_tg
+         FROM public.coordinators c WHERE COALESCE(c.is_active, true) ORDER BY (c.id = $1) DESC, c.full_name`, [req.rs.me]);
+    let sent = [];
+    try { if (care) sent = await care.testSummary(); } catch (e) { sent = []; }
+    res.json({ ok: true, me: req.rs.me, coordinators: c.rows, items: refBot.TEST_ITEMS, start_on: await refBot.startOn(), sent });
+  } catch (e) { fail(res, e); }
+});
+router.post("/test/send", async (req, res) => {
+  try {
+    if (!req.rs.admin) return fail(res, new Error("Tylko administrator"), 403);
+    if (!careBotOrNull()) return fail(res, new Error("Brak modułu Rozmowy (bot/care.js) — test korzysta z jego tabeli"), 400);
+    const ids = (req.body?.coordinators || []).map((x) => parseInt(x, 10)).filter(Boolean);
+    const items = (req.body?.items || []).filter((x) => refBot.TEST_ITEMS.includes(x));
+    if (!ids.length) return fail(res, new Error("Wybierz odbiorcę"), 400);
+    if (!items.length) return fail(res, new Error("Wybierz, co wysłać"), 400);
+    if (ids.length > 10) return fail(res, new Error("Maksymalnie 10 odbiorców naraz"), 400);
+    const result = await refBot.sendTest({ coordinatorIds: ids, items, workerLang: String(req.body?.worker_lang || "uk"), by: req.rs.me });
+    res.json({ ok: true, result });
+  } catch (e) { fail(res, e); }
+});
+router.post("/test/clear", async (req, res) => {
+  try {
+    if (!req.rs.admin) return fail(res, new Error("Tylko administrator"), 403);
+    const care = careBotOrNull();
+    if (!care) return fail(res, new Error("Brak modułu Rozmowy"), 400);
+    const ids = (req.body?.coordinators || []).map((x) => parseInt(x, 10)).filter(Boolean);
+    res.json({ ok: true, result: await care.clearTests(ids.length ? ids : null), sent: await care.testSummary() });
+  } catch (e) { fail(res, e); }
+});
+
 // ── Налаштування (адмін) ─────────────────────────────────────────────
 const VALID = {
   enabled: (v) => v === "0" || v === "1",

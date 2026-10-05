@@ -139,6 +139,7 @@
       <div class="nav-item" data-view="ranking" onclick="showView('ranking')">🏆 Polecający <span class="nav-badge g" id="badgeDue" title="Premia należy się"></span></div>
       <div class="nav-item" data-view="sources" onclick="showView('sources')">🧭 Źródła</div>
       <div class="nav-item" data-view="security" id="navSecurity" onclick="showView('security')" style="display:none">🛡️ Bezpieczeństwo</div>
+      <div class="nav-item" data-view="test" id="navTest" onclick="showView('test')" style="display:none">🧪 Test</div>
       <div class="nav-item" data-view="settings" id="navSettings" onclick="showView('settings')" style="display:none">⚙️ Ustawienia</div>
     </div>
   </div>
@@ -224,6 +225,38 @@
 
       <!-- BEZPIECZEŃSTWO -->
       <div class="fl-view" id="view-security"><div id="secBody"><div class="loading">Ładowanie…</div></div></div>
+
+      <!-- TEST -->
+      <div class="fl-view" id="view-test">
+        <div class="banner">🧪 Wysyła ankietę na Telegram wybranym osobom — tak, jak widzi ją nowy pracownik.
+          Przyciski działają, można wpisać imię i przejść pytania 2–5, ale <b>nic nie trafia do odpowiedzi, premii ani statystyk</b>.
+          Każda wiadomość ma oznaczenie „🧪 TEST”. Po obejrzeniu — „Usuń” zdejmuje je z czatu.</div>
+        <div class="grid2">
+          <div class="section">
+            <div class="section-head">1. Komu wysłać <span class="cnt" id="tWhoCnt"></span>
+              <span class="spacer"></span><input type="text" class="inp" id="tSearch" placeholder="Szukaj…" oninput="renderTestWho()" style="width:130px" /></div>
+            <div class="sites-pick" id="tWho" style="border-top:none"><div class="loading">Ładowanie…</div></div>
+          </div>
+          <div class="section">
+            <div class="section-head">2. Co wysłać</div>
+            <div class="sites-pick" id="tWhat" style="border-top:none;max-height:none"></div>
+            <div class="cfg">
+              <span class="k">Język (jak widzi pracownik)</span>
+              <span><select class="inp" id="tLang"><option value="uk">українська</option><option value="ru">русский</option>
+                <option value="pl">polski</option><option value="en">English</option></select></span>
+            </div>
+            <div class="actions"><button class="btn btn-primary btn-sm" id="tSend" onclick="sendTest()">🧪 Wyślij test</button>
+              <span class="msg" id="tMsg"></span></div>
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-head">3. Wysłane testy <span class="cnt" id="tSentCnt"></span>
+            <span class="spacer"></span><span class="msg" id="tClearMsg"></span>
+            <button class="btn btn-ghost btn-sm" id="tClearAll" onclick="clearTest(null)">Usuń wszystkie testowe wiadomości</button></div>
+          <div class="tblwrap" id="tSent"></div>
+          <div class="note">Wspólne z testami w Rozmowy. Telegram pozwala botowi usunąć wiadomość do 48 godzin — starsze zostaną zamienione na „🧪 test usunięty”.</div>
+        </div>
+      </div>
 
       <!-- USTAWIENIA -->
       <div class="fl-view" id="view-settings"><div id="settingsBody"><div class="loading">Ładowanie…</div></div></div>

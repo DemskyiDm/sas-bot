@@ -928,7 +928,7 @@ const TEST_LABEL = {
   manual: ["Zlecenie od regionalnego", 1], assess: ["Ocena nowego 🌱 (👍 😐 👎)", 1],
   esc_coord: ["Przypomnienie: rozmowy po terminie", 1], lead_leaving: ["Dla regionalnego: „chce odejść”", 1],
   lead_esc: ["Dla regionalnego: lista po terminie", 1],
-  d3: ["Ankieta — 3. dzień", 2], d14: ["Ankieta — 14 dni", 2], d30: ["Ankieta — 30 dni", 2], d60: ["Ankieta — 60 dni", 2],
+  start: ["Ankieta na starcie, pyt. 2–5 (pilotaż)", 2], d3: ["Ankieta — 3. dzień", 2], d14: ["Ankieta — 14 dni", 2], d30: ["Ankieta — 30 dni", 2], d60: ["Ankieta — 60 dni", 2],
   exit: ["Ankieta po odejściu", 2], remind: ["Przypomnienie o ankiecie", 2], spot: ["Pytanie kontrolne: czy była rozmowa", 1],
 };
 ST.test = null;

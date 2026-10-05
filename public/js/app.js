@@ -162,19 +162,9 @@ function showPage(page) {
     );
     if (el) el.style.display = p === page ? "" : "none";
   });
-  document.querySelectorAll(".nav-item").forEach((el, i) => {
-    el.classList.toggle(
-      "active",
-      [
-        "hours",
-        "advances",
-        "workers",
-        "dayoff",
-        "tabele",
-        "history",
-        "settings",
-      ][i] === page,
-    );
+  // активний пункт — за data-page (меню згруповане, порядок пунктів не важливий)
+  document.querySelectorAll(".sidebar .nav-item").forEach((el) => {
+    el.classList.toggle("active", el.dataset.page === page);
   });
   const titles = {
     hours: "Przeglad godzin",

@@ -131,11 +131,11 @@ async function init() {
     if (sv && [...selR.options].some((o) => o.value === sv)) selR.value = sv;
   }
   if (me.sees_tg) { document.getElementById("navSecurity").style.display = ""; document.getElementById("fFlagBox").style.display = ""; }
-  if (me.is_admin) document.getElementById("navSettings").style.display = "";
+  if (me.is_admin) { document.getElementById("navSettings").style.display = ""; document.getElementById("navTest").style.display = ""; }
   setPreset(store.get("sas_ref_preset") || "60", true);
   renderBanner();
   const h = location.hash.replace("#", "");
-  showView(["list", "ranking", "sources", "security", "settings"].includes(h) ? h : "list");
+  showView(["list", "ranking", "sources", "security", "test", "settings"].includes(h) ? h : "list");
 }
 
 function renderBanner() {
@@ -178,7 +178,7 @@ function onFilter() {
 }
 
 function showView(v) {
-  if (v === "settings" && !(ST.me && ST.me.is_admin)) v = "list";
+  if ((v === "settings" || v === "test") && !(ST.me && ST.me.is_admin)) v = "list";
   if (v === "security" && !(ST.me && ST.me.sees_tg)) v = "list";
   ST.view = v;
   location.hash = v;
@@ -186,8 +186,8 @@ function showView(v) {
   document.querySelectorAll(".nav-item[data-view]").forEach((el) => el.classList.toggle("active", el.dataset.view === v));
   document.getElementById("topTitle").textContent =
     { list: "Poleć znajomego — odpowiedzi", ranking: "Poleć znajomego — polecający", sources: "Poleć znajomego — źródła",
-      security: "Poleć znajomego — bezpieczeństwo", settings: "Poleć znajomego — ustawienia" }[v];
-  const noFilters = v === "settings" || v === "security";
+      security: "Poleć znajomego — bezpieczeństwo", test: "Poleć znajomego — test ankiety", settings: "Poleć znajomego — ustawienia" }[v];
+  const noFilters = v === "settings" || v === "security" || v === "test";
   document.getElementById("toolbar").style.visibility = noFilters ? "hidden" : "";
   document.getElementById("periodBar").style.display = noFilters ? "none" : "";
   loadView();
@@ -198,6 +198,7 @@ function loadView() {
   if (ST.view === "sources") loadSources();
   if (ST.view === "security") loadSecurity();
   if (ST.view === "settings") loadSettings();
+  if (ST.view === "test") loadTest();
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -650,6 +651,75 @@ async function loadSecurity() {
     ${r.coords_no_tg && r.coords_no_tg.length ? sec("📵 Koordynatorzy bez Telegrama w karcie", r.coords_no_tg.length,
       `<div class="note" style="border-top:none">${r.coords_no_tg.map((c) => esc(c.full_name)).join(", ")}</div>`,
       "Bot rozpoznaje koordynatora po Telegramie z jego karty. Bez niego blokada nie działa — uzupełnij Telegram w karcie koordynatora (Admin panel).") : ""}`;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  Test ankiety (admin) — jak w Rozmowy → Test
+// ══════════════════════════════════════════════════════════════════════
+const TEST_LABEL = {
+  ask: ["Pytanie „Kto Cię polecił?” — zwykłe, 4 przyciski", "+ imię znajomego / koordynatora"],
+  ask_x: ["Ankieta na starcie (pilotaż): „Skąd wiesz o firmie?” + pytania 2–5", "pełna ankieta, jak na obiektach pilotażu"],
+  remind: ["Przypomnienie o pytaniu", "tak przychodzi kolejnego dnia"],
+  blocked: ["Co widzi koordynator, gdy próbuje odpowiedzieć za pracownika", "komunikat blokady"],
+};
+ST.test = null; ST.tWho = new Set(); ST.tWhat = new Set(["ask_x"]);
+async function loadTest() {
+  const r = await api("/test");
+  if (!r) return;
+  if (!r.ok) { document.getElementById("tWho").innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
+  ST.test = r;
+  if (!ST.tWho.size && r.me) ST.tWho.add(r.me);
+  renderTestWho();
+  document.getElementById("tWhat").innerHTML = r.items.map((k) => `<label>
+    <input type="checkbox" ${ST.tWhat.has(k) ? "checked" : ""} onchange="toggleTestWhat('${k}', this.checked)"/>
+    <span>${esc(TEST_LABEL[k][0])}${k === "ask_x" && !r.start_on ? ` <span class="bad">— pytania 2–5 wyłączone w Rozmowy</span>` : ""}
+      <div class="sub" style="font-size:11px;color:var(--text3)">${esc(TEST_LABEL[k][1])}</div></span></label>`).join("");
+  updateTestBtn();
+  renderTestSent();
+}
+function renderTestWho() {
+  const q = (document.getElementById("tSearch").value || "").toLowerCase();
+  const rows = ST.test.coordinators.filter((c) => !q || c.full_name.toLowerCase().includes(q));
+  document.getElementById("tWhoCnt").textContent = ST.tWho.size ? `wybrano ${ST.tWho.size}` : "";
+  document.getElementById("tWho").innerHTML = rows.map((c) => `<label title="${c.has_tg ? "" : "Brak Telegrama w karcie — nie da się wysłać"}" style="${c.has_tg ? "" : "opacity:.45"}">
+      <input type="checkbox" ${ST.tWho.has(c.id) ? "checked" : ""} ${c.has_tg ? "" : "disabled"} onchange="toggleTestWho(${c.id}, this.checked)"/>
+      ${esc(c.full_name)}${c.id === ST.test.me ? ` <span class="tag acc">Ty</span>` : ""}
+      <span class="c">${c.has_tg ? "" : "bez Telegrama"}</span></label>`).join("") || `<div class="empty">Brak</div>`;
+}
+function toggleTestWho(id, on) { if (on) ST.tWho.add(id); else ST.tWho.delete(id); renderTestWho(); updateTestBtn(); }
+function toggleTestWhat(k, on) { if (on) ST.tWhat.add(k); else ST.tWhat.delete(k); updateTestBtn(); }
+function updateTestBtn() { document.getElementById("tSend").disabled = !ST.tWho.size || !ST.tWhat.size; }
+async function sendTest() {
+  const btn = document.getElementById("tSend"), msg = document.getElementById("tMsg");
+  btn.disabled = true; msg.className = "msg"; msg.textContent = "Wysyłam…";
+  const r = await api("/test/send", { method: "POST", body: { coordinators: [...ST.tWho], items: [...ST.tWhat], worker_lang: document.getElementById("tLang").value } });
+  updateTestBtn();
+  if (!r || !r.ok) { msg.className = "msg err"; msg.textContent = (r && r.error) || "Błąd"; return; }
+  const errs = r.result.filter((x) => x.error);
+  msg.className = "msg " + (errs.length ? "err" : "ok");
+  msg.textContent = r.result.map((x) => `${x.name}: ${x.error === "no_telegram" ? "brak Telegrama" : x.error ? "błąd" : x.sent + " wiad."}`).join(" · ")
+    + (errs.length ? "" : " — sprawdź Telegram");
+  const s = await api("/test");
+  if (s && s.ok) { ST.test.sent = s.sent; renderTestSent(); }
+}
+function renderTestSent() {
+  const rows = (ST.test && ST.test.sent) || [];
+  document.getElementById("tSentCnt").textContent = rows.length ? `${rows.reduce((a, x) => a + x.n, 0)} wiad.` : "";
+  document.getElementById("tClearAll").style.display = rows.length ? "" : "none";
+  document.getElementById("tSent").innerHTML = rows.length ? `<table class="fl"><thead><tr><th class="l">Odbiorca</th><th>Wiadomości</th>
+    <th class="l">Pierwsza</th><th class="l">Ostatnia</th><th></th></tr></thead><tbody>
+    ${rows.map((x) => `<tr><td class="l">${esc(x.full_name || "—")}</td><td>${x.n}</td><td class="l">${ts(x.first_at)}</td><td class="l">${ts(x.last_at)}</td>
+      <td><button class="btn btn-ghost btn-sm" onclick="clearTest([${Number(x.coordinator_id)}])">Usuń</button></td></tr>`).join("")}
+    </tbody></table>` : `<div class="empty">Brak testowych wiadomości w czatach</div>`;
+}
+async function clearTest(ids) {
+  const msg = document.getElementById("tClearMsg");
+  msg.className = "msg"; msg.textContent = "Usuwam…";
+  const r = await api("/test/clear", { method: "POST", body: { coordinators: ids || [] } });
+  if (!r || !r.ok) { msg.className = "msg err"; msg.textContent = (r && r.error) || "Błąd"; return; }
+  msg.className = "msg ok";
+  msg.textContent = `Usunięto ${r.result.deleted}${r.result.edited ? ` · oznaczono ${r.result.edited} (starsze niż 48 h)` : ""}`;
+  ST.test.sent = r.sent; renderTestSent();
 }
 
 // ══════════════════════════════════════════════════════════════════════

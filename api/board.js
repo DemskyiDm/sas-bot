@@ -336,7 +336,7 @@ async function decisions(f) {
                 WHERE t.problem_code IS NOT NULL AND t.done_at > now() - INTERVAL '14 days'
                UNION ALL
                SELECT s.site_key, s.worker_id,
-                      CASE WHEN q.code IN ('housing3','housing5') THEN 'housing'
+                      CASE WHEN q.code IN ('housing3','housing5','housing_promise') THEN 'housing'
                            WHEN q.code = 'transport3' THEN 'transport'
                            WHEN a.option_code = 'money' THEN 'pay'
                            ELSE a.option_code END
@@ -345,6 +345,7 @@ async function decisions(f) {
                  JOIN care.questions q ON q.id = a.question_id
                 WHERE a.answered_at > now() - INTERVAL '14 days'
                   AND ((q.code IN ('housing3','transport3') AND a.option_code IN ('no','partly'))
+                    OR (q.code = 'housing_promise' AND a.option_code IN ('no','mostly'))
                     OR (q.code = 'housing5' AND a.option_code IN ('1','2','3'))
                     OR (q.code IN ('problem','reason') AND a.option_code IN ('housing','money','pay','transport','team','schedule')))) x
         WHERE x.site_key IN (SELECT site_key FROM sc) AND x.cat IN ('housing','pay','transport','team','schedule')

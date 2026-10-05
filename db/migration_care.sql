@@ -459,7 +459,7 @@ BEGIN
          CASE WHEN w.telegram_chat_id IS NULL THEN 'no_telegram' ELSE 'planned' END, w.lang::text
   FROM care.active_on(p_day) a
   JOIN public.workers w ON w.id = a.worker_id
-  JOIN care.surveys sv ON sv.is_active AND sv.day_offset IS NOT NULL
+  JOIN care.surveys sv ON sv.is_active AND sv.day_offset IS NOT NULL AND sv.code <> 'start'   -- «start» надсилає бот при реєстрації
   LEFT JOIN reg.site_owner o ON o.site_key = a.site_key AND o.valid_to IS NULL
   WHERE (p_day - a.bhp_date) BETWEEN sv.day_offset AND sv.day_offset + care.setting('survey_catchup_days')::int
     AND care.is_on(o.coordinator_id)

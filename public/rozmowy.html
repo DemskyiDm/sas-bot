@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SAS Logistic — Rozmowy</title>
   <link rel="stylesheet" href="css/style.css" />
+  <!-- xlsx-js-style: eksport do Excela (jak w raporty.html) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
   <style>
     /* ── тільки для розділу Rozmowy ── */
     .rz-toolbar { display: flex; gap: 8px; align-items: center; }
@@ -141,6 +143,47 @@
     @media (max-width: 900px) { .test-grid { grid-template-columns: 1fr; } .test-what { grid-template-columns: 1fr; } }
     .noaccess { max-width: 520px; margin: 60px auto; text-align: center; color: var(--text2); font-size: 13px; line-height: 1.6; }
 
+    /* ── Ankiety: zakładki, „kto jak odpowiedział”, karta pracownika ── */
+    .sv-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
+    .sv-tabs .kpi { cursor: pointer; position: relative; }
+    .sv-tabs .kpi:hover { border-color: var(--accent); }
+    .sv-tabs .kpi.on { border-color: var(--accent); background: var(--surface2); box-shadow: inset 0 -3px 0 var(--accent); }
+    .sv-tabs .kpi .v { font-size: 22px; }
+    .sv-tabs .kpi .pilot { position: absolute; top: 8px; right: 10px; font-size: 9px; color: var(--purple);
+      border: 1px solid rgba(167,139,250,.4); border-radius: 8px; padding: 0 5px; }
+    .sv-title { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin: 4px 0 14px; }
+    .sv-title h2 { font-size: 17px; font-weight: 700; }
+    .sv-title .s { font-size: 12px; color: var(--text2); }
+    .sv-filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 14px; border-bottom: 1px solid var(--border);
+      font-size: 11px; color: var(--text2); }
+    .sv-filters input[type="text"] { width: 220px; }
+    .sv-filters label { display: flex; gap: 5px; align-items: center; cursor: pointer; }
+    table.rg th.q { white-space: normal; min-width: 84px; max-width: 130px; line-height: 1.3; letter-spacing: .3px; }
+    table.rg td.a { white-space: nowrap; font-size: 11px; }
+    table.rg td.a.hi { color: var(--red); font-weight: 600; } table.rg td.a.lo { color: var(--accent2); font-weight: 600; }
+    table.rg td .sub { font-size: 10px; color: var(--text3); }
+    a.wk { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--text3); cursor: pointer; }
+    a.wk:hover { color: var(--accent); border-color: var(--accent); }
+    .chbar { display: grid; grid-template-columns: 160px 1fr 80px; gap: 8px; align-items: center; font-size: 12px; padding: 4px 14px; }
+    .chbar:first-child { padding-top: 10px; } .chbar:last-child { padding-bottom: 10px; }
+    .chbar .val { text-align: right; font-family: var(--mono); color: var(--text2); font-size: 11px; }
+    .drawer-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 50; display: none; }
+    .drawer-bg.open { display: block; }
+    .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(640px, 100vw); background: var(--bg);
+      border-left: 1px solid var(--border); z-index: 51; overflow-y: auto; transform: translateX(100%); transition: transform .2s; }
+    .drawer.open { transform: translateX(0); }
+    .dw-head { position: sticky; top: 0; background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 14px 18px; display: flex; gap: 12px; align-items: flex-start; z-index: 2; }
+    .dw-head h2 { font-size: 16px; font-weight: 700; }
+    .dw-head .sub { font-size: 12px; color: var(--text2); margin-top: 3px; }
+    .dw-close { margin-left: auto; background: transparent; border: 1px solid var(--border); color: var(--text2);
+      border-radius: 5px; width: 28px; height: 28px; cursor: pointer; font-size: 14px; }
+    .dw-body { padding: 14px 18px; }
+    .qa { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 7px 14px; border-top: 1px solid var(--border); font-size: 12px; }
+    .qa .q { color: var(--text2); }
+    .qa .a { font-weight: 600; text-align: right; }
+    .qa .a.hi { color: var(--red); } .qa .a.lo { color: var(--accent2); }
+
     .main { min-width: 0; }
     @media (max-width: 800px) {
       .topbar { height: auto; flex-wrap: wrap; padding: 10px 16px; gap: 8px; }
@@ -242,21 +285,39 @@
         </div>
       </div>
 
-      <!-- АНКЕТИ -->
+      <!-- АНКЕТИ: кожна анкета окремо (вкладки) -->
       <div class="rz-view" id="view-surveys">
-        <div class="kpis" id="surveyKpis"></div>
+        <div class="sv-tabs" id="surveyTabs"></div>
+        <div class="sv-title" id="surveyTitle"></div>
+        <div class="section" id="channelsBox" style="display:none">
+          <div class="section-head">🧭 Skąd dowiedzieli się o firmie <span class="cnt" id="channelsCnt"></span></div>
+          <div id="channelsBody"></div>
+        </div>
         <div class="section">
           <div class="section-head">⚠️ Niepokojące odpowiedzi <span class="cnt" id="recentCnt"></span></div>
           <div class="tblwrap" id="recentTable"><div class="loading">Ładowanie…</div></div>
         </div>
         <div class="section">
-          <div class="section-head">🏭 Obiekty <span class="cnt">średnie z odpowiedzi</span></div>
-          <div class="tblwrap" id="siteSurveyTable"></div>
-        </div>
-        <div class="section">
           <div class="section-head">📊 Odpowiedzi na pytania</div>
           <div id="questionsBox"></div>
           <div class="legend" id="questionsLegend"></div>
+        </div>
+        <div class="section">
+          <div class="section-head">🏭 Obiekty <span class="cnt">tylko ta ankieta</span></div>
+          <div class="tblwrap" id="siteSurveyTable"></div>
+          <div class="legend" id="siteLegend"></div>
+        </div>
+        <div class="section">
+          <div class="section-head">👤 Kto jak odpowiedział <span class="cnt" id="whoCnt"></span>
+            <span class="spacer"></span>
+            <button class="btn btn-ghost btn-sm" onclick="exportWho()">⬇️ Excel</button></div>
+          <div class="sv-filters">
+            <input type="text" id="whoSearch" placeholder="Szukaj: pracownik, login, obiekt…" oninput="renderWho()" />
+            <label><input type="checkbox" id="whoAnswered" checked onchange="renderWho()" /> tylko z odpowiedziami</label>
+            <label><input type="checkbox" id="whoFlag" onchange="renderWho()" /> tylko niepokojące</label>
+          </div>
+          <div class="tblwrap" id="whoTable"><div class="loading">Ładowanie…</div></div>
+          <div class="legend" id="whoLegend"></div>
         </div>
       </div>
 
@@ -346,6 +407,9 @@
       <div class="rz-view" id="view-settings"><div id="settingsBody"><div class="loading">Ładowanie…</div></div></div>
     </div>
   </div>
+
+  <div class="drawer-bg" id="drawerBg" onclick="closeWorker()"></div>
+  <div class="drawer" id="drawer" aria-hidden="true"></div>
 
   <script src="js/rozmowy.js"></script>
   <div class="sidebar-hover-zone"

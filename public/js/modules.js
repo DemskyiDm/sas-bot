@@ -1225,7 +1225,7 @@ function clearHistoryFilters() {
   updateStatusUI('history');
   filterHistory();
 }
-
+/*
 function downloadAllTabele() {
   const month = document.getElementById("tabeleMonth").value
     || new Date().toISOString().substring(0, 7);
@@ -1233,4 +1233,29 @@ function downloadAllTabele() {
   // Прямий перехід — браузер сам завантажить ZIP
   const url = `/api/tabele/download-all?month=${encodeURIComponent(month)}&session=${encodeURIComponent(session)}`;
   window.location.href = url;
+}*/
+
+function downloadAllTabele() {
+  const month =
+    document.getElementById("tabeleMonth").value ||
+    new Date().toISOString().substring(0, 7);
+
+  const facility =
+    document.getElementById("tabeleFacility").value || "";
+
+  const status =
+    document.getElementById("tabeleStatus").value || "";
+
+  const session = SESSION || localStorage.getItem("sas_session") || "";
+
+  const params = new URLSearchParams({
+    month,
+    session
+  });
+
+  if (facility) params.append("facility", facility);
+  if (status) params.append("status", status);
+
+  window.location.href =
+    `/api/tabele/download-all?${params.toString()}`;
 }

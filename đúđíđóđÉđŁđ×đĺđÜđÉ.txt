@@ -1,0 +1,22 @@
+«Poleć znajomego» + анкета на старте + раздел Ankiety в Rozmowy — установка
+
+1. Миграции (по порядку; обе можно запускать повторно):
+   psql -U postgres -d sasdb -f db/migration_referral.sql
+   psql -U postgres -d sasdb -f db/migration_start_survey.sql
+
+2. Скопировать с заменой:
+   bot/referral.js, bot/care.js
+   api/ref.js, api/care.js, api/board.js
+   public/polecenia.html, public/js/polecenia.js
+   public/rozmowy.html, public/js/rozmowy.js
+   db/migration_care.sql (только чтобы при повторном запуске анкета start не планировалась по расписанию)
+
+3. index.js, bot/handlers.js, public/index.html — правки по docs/POLECENIA_ZAMENY.txt
+   (или готовые файлы из папки full/, если ваши совпадают с репозиторием).
+
+4. Перезапустить сервер.
+
+5. Пилот: Poleć znajomego → Ustawienia → «Ankieta na starcie — pilotaż» → отметить объекты → Zapisz.
+   Результаты: Rozmowy → Ankiety → вкладка «Start».
+
+Подробно: docs/POLECENIA.md, docs/ROZMOWY.md (раздел «Вкладка Ankiety»).

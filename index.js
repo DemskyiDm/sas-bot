@@ -17,6 +17,7 @@ const { router: adminRoutes } = require("./api/admin");
 const regional = require("./api/regional");
 const care = require("./api/care");
 const board = require("./api/board");
+const flow = require("./api/flow");
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const app = express();
@@ -58,6 +59,7 @@ app.use(async (req, res, next) => {
 app.use("/api/regional", regional.router);
 app.use("/api/care", care.router);
 app.use("/api/board", board.router);
+app.use("/api/flow", flow.router);
 app.use("/api", apiRoutes);
 app.use("/api", require("./api/reports"));
 app.use("/admin", adminRoutes);
@@ -66,6 +68,8 @@ app.use("/admin", adminRoutes);
 app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
   try {
+    // групи Telegram: запам'ятати чат для зведень «Wyjazdy / przyjazdy», боту працівників там робити нічого
+    if (await flow.onUpdate(req.body)) return;
     await handleUpdate(bot, req.body);
   } catch (err) {
     console.error("Webhook error:", err.message);
@@ -345,3 +349,4 @@ scheduleReminder();
 scheduleImport();
 regional.schedule(bot);
 require("./bot/care").schedule(bot);
+flow.schedule(bot);

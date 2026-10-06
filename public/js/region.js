@@ -729,11 +729,28 @@ async function loadSettings() {
         <span class="cnt">${unassigned ? `<span style="color:var(--rag-r)">${unassigned} obiektów z ludźmi bez regionu</span>` : ""}</span>
         <span class="spacer"></span>
         <label style="font-size:11px;color:var(--text2)"><input type="checkbox" id="onlyUnassigned" onchange="renderSitesCfg()" /> tylko bez regionu</label>
+        <label style="font-size:11px;color:var(--text2)"><input type="checkbox" id="onlyEmpty" onchange="renderSitesCfg()" /> tylko bez ludzi</label>
       </div>
       <div id="sitesCfg"></div>
       <div class="hint">Obiekt = grupa z pola <i>group_name</i> (np. IDL Psary = APT + SAS + WELL). Zmiana działa od podanej daty
         i na ostatnim tygodniu tablicy widać ją od razu. Wcześniejsze tygodnie zostają przy starym przypisaniu —
         żeby przypisać na całą historię, ustaw wcześniejszą datę i przelicz 12 tygodni.</div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">📦 Archiwum obiektów <span class="cnt">${(r.archive || []).length ? `${r.archive.length} — z nimi już nie pracujemy` : "puste"}</span></div>
+      ${(r.archive || []).length ? `<table class="rg"><thead><tr><th>Obiekt</th><th class="num">W archiwum od</th><th>Kto</th><th>Powód</th>
+          <th>Było przypisane</th><th class="num">Ludzie wg grafiku</th><th></th></tr></thead><tbody>
+        ${r.archive.map((a) => `<tr><td><b>${esc(a.site_key)}</b></td><td class="num">${ddy(a.archived_at)}</td>
+          <td>${esc(a.archived_by_name || "")}</td><td>${esc(a.note || "")}</td>
+          <td>${esc([a.prev_region, a.prev_coordinator].filter(Boolean).join(" · ") || "—")}</td>
+          <td class="num">${a.headcount ? `<span style="color:var(--rag-r)" title="W grafiku nadal ktoś pracuje — sprawdź daty ostatniego dnia">${a.headcount}</span>` : "0"}</td>
+          <td><button class="btn btn-ghost btn-sm" onclick="unarchiveSite('${encodeURIComponent(a.site_key)}')">Przywróć</button></td></tr>`).join("")}
+        </tbody></table>` : ""}
+      <div class="hint">Obiekt w archiwum znika z: Wyjazdy / przyjazdy (lista, plan naboru, zestawienia, przypomnienia), Region (tablica i historia tygodni,
+        nowe czerwone karty — otwarta karta się zamyka), Tablicy zarządu, Rozmów (ryzyko, rozmowy, ankiety — otwarte rozmowy się anulują)
+        i pakietu startowego dla nowych. Przypisanie do regionu i koordynatora się zamyka. Dane nie są usuwane:
+        „Przywróć” wraca obiekt z poprzednim regionem i koordynatorem. Do archiwum — przycisk 📦 w tabeli obiektów powyżej.</div>
     </div>
 
     <div class="section">
@@ -774,7 +791,8 @@ async function loadSettings() {
 function renderSitesCfg() {
   const r = ST.config;
   const only = document.getElementById("onlyUnassigned") && document.getElementById("onlyUnassigned").checked;
-  const rows = r.sites.filter((s) => !only || !s.region_id);
+  const empty = document.getElementById("onlyEmpty") && document.getElementById("onlyEmpty").checked;
+  const rows = r.sites.filter((s) => (!only || !s.region_id) && (!empty || !s.headcount));
   const coordOpts = (sel) => `<option value="">—</option>` +
     ST.coordinators.map((c) => `<option value="${c.id}" ${c.id === sel ? "selected" : ""}>${esc(c.full_name)}</option>`).join("");
   const regionOpts = (sel) => `<option value="">— bez regionu —</option>` +
@@ -784,13 +802,31 @@ function renderSitesCfg() {
     <table class="rg"><thead><tr><th>Obiekt</th><th class="num">Ludzie</th><th>Region</th><th>Koordynator</th><th>Od</th><th></th></tr></thead><tbody>
     ${rows.map((s, i) => `<tr>
       <td title="${esc(s.facilities || "")}"><b>${esc(s.site_key)}</b></td>
-      <td class="num">${s.headcount}</td>
+      <td class="num">${s.headcount}${!s.headcount && s.last_work ? `<div class="muted" style="font-size:10px" title="Ostatni dzień pracy wg grafiku">ost. ${ddy(s.last_work)}</div>` : ""}</td>
       <td><select id="stR${i}">${regionOpts(s.region_id)}</select></td>
       <td><select id="stC${i}">${coordOpts(s.coordinator_id)}</select></td>
       <td><input type="date" id="stF${i}" value="${today}" title="Obowiązuje od" /></td>
-      <td><button class="btn btn-ghost btn-sm" onclick="saveSite(${i}, '${encodeURIComponent(s.site_key)}')">Zapisz</button>
+      <td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="saveSite(${i}, '${encodeURIComponent(s.site_key)}')">Zapisz</button>
+        <button class="btn btn-ghost btn-sm" title="Do archiwum — już nie pracujemy z tym obiektem" onclick="archiveSite('${encodeURIComponent(s.site_key)}', ${Number(s.headcount) || 0})">📦</button>
         <span class="form-msg" id="stM${i}"></span></td></tr>`).join("")}
     </tbody></table>`;
+}
+
+async function archiveSite(encKey, headcount) {
+  const site = decodeURIComponent(encKey);
+  const note = window.prompt(`Przenieść „${site}” do archiwum?\n\n` +
+    (headcount ? `Uwaga: wg grafiku pracuje tam jeszcze ${headcount} os.\n\n` : "") +
+    "Obiekt zniknie z Wyjazdów, Regionu, Tablicy i Rozmów; przypisanie do regionu i koordynatora się zamknie. " +
+    "Dane zostają — można przywrócić.\n\nPowód (opcjonalnie):", "");
+  if (note === null) return;
+  const r = await api(`/admin/archive`, { method: "POST", body: { site_key: site, note } });
+  if (r && r.ok) loadSettings(); else alertBox(r);
+}
+async function unarchiveSite(encKey) {
+  const site = decodeURIComponent(encKey);
+  if (!window.confirm(`Przywrócić „${site}” z archiwum? Wróci poprzedni region i koordynator.`)) return;
+  const r = await api(`/admin/unarchive`, { method: "POST", body: { site_key: site } });
+  if (r && r.ok) loadSettings(); else alertBox(r);
 }
 
 async function runSnapshot(weeks) {

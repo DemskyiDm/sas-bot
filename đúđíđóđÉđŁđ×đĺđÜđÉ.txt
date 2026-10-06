@@ -1,16 +1,31 @@
-Питання «На скільки приїхали» + тест анкети + меню розділами
+СТАРТОВЫЙ ПАКЕТ (6 вопросов) + Poleć znajomego внутри Rozmowy
+=============================================================
 
-Зроблено на вашому коді з GitHub (гілка dayoff-url, коміт 9010b32). Цей архів містить і зміни з test_i_menu.zip —
-якщо його ще не ставили, достатньо цього.
+1) Миграция (можно запускать повторно):
+   psql -U postgres -d sasdb -f db/migration_start_survey.sql
+   — добавляет в анкету Start вопрос 6 «На сколько приехали» (код stay_plan)
+     и меняет её вступление на «Ещё 5 коротких вопросов».
 
-1. Міграція (додає дві колонки, повторний запуск безпечний):
-   psql -U postgres -d sasdb -f db/migration_referral.sql
+2) Заменить файлы целиком (пути как в архиве):
+   bot/referral.js
+   bot/care.js
+   api/ref.js
+   api/care.js
+   public/index.html
+   public/rozmowy.html
+   public/js/rozmowy.js
+   public/polecenia.html
+   public/js/polecenia.js
+   db/migration_start_survey.sql
+   docs/POLECENIA.md, docs/ROZMOWY.md (описание)
+   index.js и bot/handlers.js менять НЕ нужно.
 
-2. Замінити файли:
-   bot/referral.js, bot/care.js
-   api/ref.js, api/care.js
-   public/polecenia.html, public/js/polecenia.js, public/js/rozmowy.js
-   public/index.html, public/js/app.js
-   docs/POLECENIA.md
+3) Перезапустить сервер (pm2 restart sas-bot).
 
-3. Перезапустити сервер, оновити сторінку Ctrl+F5.
+4) Проверить:
+   - Rozmowy → Ustawienia: анкета «Start» включена — это выключатель всего пакета.
+   - Rozmowy → Koordynatorzy: отмечены координаторы, чьи новые работники получают пакет.
+   - Rozmowy → 🧪 Test → «Pakiet startowy przy rejestracji (6 pytań)» → себе.
+
+ВНИМАНИЕ: после установки пакет сразу пойдёт новым на объектах ВСЕХ координаторов,
+включённых в Rozmowy → Koordynatorzy (прежний выбор объектов пилота больше не действует).

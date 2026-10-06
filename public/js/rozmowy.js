@@ -26,7 +26,7 @@ const OUT = {
 const TITLES = { tasks: "Do rozmowy", risk: "Ryzyko odejścia", surveys: "Ankiety", control: "Kontrola koordynacji",
   coords: "Koordynatorzy", test: "Test wiadomości", settings: "Ustawienia" };
 const SURVEY_NAME = { start: "Start (rejestracja)", d3: "3. dzień", d14: "14 dni", d30: "30 dni", d60: "60 dni", exit: "Po odejściu" };
-const SURVEY_WHEN = { start: "przy rejestracji w bocie (pilotaż)", exit: "po odejściu z pracy" };
+const SURVEY_WHEN = { start: "pakiet startowy przy rejestracji w bocie (pytania 2–6; pytanie 1 — „Skąd wiesz o firmie?”)", exit: "po odejściu z pracy" };
 
 // ── Утиліти ───────────────────────────────────────────────────────────
 function esc(s) {
@@ -105,9 +105,24 @@ window.addEventListener("hashchange", () => {
   if (ST.me && TITLES[h] && h !== ST.view) showView(h);
 });
 
+// Блок «Poleć znajomego» у меню (окрема сторінка polecenia.html)
+async function refMenu() {
+  try {
+    const r = await fetch("/api/ref/me", { headers: { "x-session": SESSION } });
+    const d = r.ok ? await r.json() : null;
+    if (!d || !d.has_access) return null;
+    document.getElementById("navRef").style.display = "";
+    if (d.sees_tg) document.getElementById("navRefSec").style.display = "";
+    if (d.is_admin) document.getElementById("navRefSet").style.display = "";
+    return d;
+  } catch (e) { return null; }
+}
+
 async function init() {
   if (CURRENT_USER) document.getElementById("userName").textContent = CURRENT_USER.full_name || "";
-  const me = await api("/me");
+  const [me, ref] = await Promise.all([api("/me"), refMenu()]);
+  // лише «Poleć znajomego» (Rozmowy не ввімкнені або модуля немає) — одразу туди
+  if ((!me || !me.ok || !me.has_access) && ref) { location.replace("polecenia.html"); return; }
   if (!me) return;
   if (!me.ok) { document.getElementById("content").innerHTML = `<div class="error">${esc(me.error)}</div>`; return; }
   ST.me = me;
@@ -447,6 +462,7 @@ const Q_SHORT = {
   work5: "Praca 1–5", housing5: "Mieszk. 1–5", stay: "Zostanie", problem: "Co przeszkadza", coord5: "Koord. 1–5",
   reason: "Powód odejścia", coordx: "Koord. pomagał", back: "Wróciłby",
   clarity5: "Warunki jasne 1–5", recruit5: "Rekruter szybko 1–5", housing_promise: "Mieszk. jak obiecano", coord_start5: "Koord. 1–5",
+  stay_plan: "Na ile przyjechał",
 };
 const qShort = (c) => Q_SHORT[c.code] || String(c.text || c.code).replace(/^\W+/u, "").split(/[?.]/)[0].slice(0, 28);
 const emo = (t) => { const m = String(t || "").match(/^(\p{Extended_Pictographic}️?)/u); return m ? m[1] : null; };
@@ -480,7 +496,7 @@ function renderSurveyTabs() {
     const rate = x.sent ? x.done / x.sent : null;
     const cls = rate == null ? "" : rate < 0.4 ? "bad" : rate < 0.6 ? "warn" : "good";
     return `<div class="kpi ${cls} ${x.code === r.survey ? "on" : ""}" onclick="pickSurvey('${esc(x.code)}')" title="Pokaż tylko tę ankietę">
-      ${x.code === "start" ? `<span class="pilot">pilotaż</span>` : ""}
+      ${x.code === "start" ? `<span class="pilot">6 pytań</span>` : ""}
       <div class="l">${esc(surveyLabel(x.code, x.name))}</div>
       <div class="v">${rate == null ? "—" : Math.round(rate * 100) + "%"}</div>
       <div class="s">odp. ${x.done} z ${x.sent}${x.no_tg ? ` · bez bota ${x.no_tg}` : ""}${x.high ? ` · <span class="red">⚠️ ${x.high}</span>` : ""}</div></div>`;
@@ -597,7 +613,7 @@ function renderWho() {
     return `<td class="a ${a.f === "high" ? "hi" : a.f === "low" ? "lo" : ""}" title="${esc(a.t)}">${esc(t)}</td>`;
   };
   document.getElementById("whoTable").innerHTML = rows.length ? `<table class="rg"><thead><tr><th>Data</th><th>Pracownik</th><th>Obiekt</th>
-      ${isStart ? `<th>Skąd wie o nas</th>` : ""}
+      ${isStart ? `<th title="Pytanie 1 pakietu startowego (Poleć znajomego)">Skąd wie o nas</th>` : ""}
       ${r.cols.map((c) => `<th class="q" title="${esc(c.text)}">${esc(qShort(c))}${c.visibility === "manager" ? " 🔒" : ""}</th>`).join("")}
       <th>Stan</th></tr></thead><tbody>
     ${shown.map((x) => {
@@ -605,7 +621,7 @@ function renderWho() {
       return `<tr><td class="muted nw">${dd(x.answered_at || x.sent_at)}</td>
         <td class="nw"><a class="wk" onclick="openWorker(${Number(x.worker_id)})"><b>${esc(x.full_name)}</b></a><div class="sub">${esc(x.login || "")} · BHP ${dd(x.bhp)}</div></td>
         <td>${esc(x.site_key || "")}<div class="sub">${esc(x.coord_name || "")}</div></td>
-        ${isStart ? `<td>${x.ref ? `${esc(x.ref.label)}${x.ref.text ? `<div class="sub">„${esc(x.ref.text)}”</div>` : ""}${x.ref.stay ? `<div class="sub">📅 na ${esc(x.ref.stay)}</div>` : ""}` : `<span class="muted">—</span>`}</td>` : ""}
+        ${isStart ? `<td>${x.ref ? `${esc(x.ref.label)}${x.ref.text ? `<div class="sub">„${esc(x.ref.text)}”</div>` : ""}` : `<span class="muted">—</span>`}</td>` : ""}
         ${r.cols.map((c) => ans(c, x.ans[c.code])).join("")}
         <td class="nw"><span class="${sc}">${sl}</span>${x.status !== "done" && x.answered ? ` <span class="sub">${x.answered}/${r.cols.length}</span>` : ""}</td></tr>`;
     }).join("")}</tbody></table>
@@ -621,7 +637,7 @@ function exportWho() {
   if (!r) return;
   const rows = whoRows();
   const isStart = r.survey === "start";
-  const head = ["Data odpowiedzi", "Login", "Pracownik", "BHP", "Obiekt", "Koordynator", ...(isStart ? ["Skąd wie o nas", "Kto polecił (wpisane)", "Na ile przyjechał"] : []),
+  const head = ["Data odpowiedzi", "Login", "Pracownik", "BHP", "Obiekt", "Koordynator", ...(isStart ? ["Skąd wie o nas", "Kto polecił (wpisane)"] : []),
     ...r.cols.map((c) => c.text), "Stan"];
   const aoa = [[`Ankieta: ${surveyLabel(r.survey)} — kto jak odpowiedział`], [`Okres: ${days()} dni`], head];
   const xd = (v) => { if (!v) return ""; const d = new Date(v); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); };
@@ -629,13 +645,13 @@ function exportWho() {
   const flags = [];
   rows.forEach((x) => {
     aoa.push([xd(x.answered_at || x.sent_at), x.login || "", x.full_name, xi(x.bhp), x.site_key || "", x.coord_name || "",
-      ...(isStart ? [x.ref ? x.ref.label : "", x.ref && x.ref.text ? x.ref.text : "", x.ref && x.ref.stay ? x.ref.stay : ""] : []),
+      ...(isStart ? [x.ref ? x.ref.label : "", x.ref && x.ref.text ? x.ref.text : ""] : []),
       ...r.cols.map((c) => { const a = x.ans[c.code]; if (!a) return ""; return c.scale && /^[1-5]$/.test(a.o) ? Number(a.o) : a.t; }),
       (SV_STATUS[x.status] || [x.status])[0]]);
     flags.push(r.cols.map((c) => (x.ans[c.code] || {}).f || null));
   });
   const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true });
-  const qStart = 6 + (isStart ? 3 : 0);
+  const qStart = 6 + (isStart ? 2 : 0);
   const range = XLSX.utils.decode_range(ws["!ref"]);
   for (let R = 0; R <= range.e.r; R++) {
     for (let C = 0; C <= range.e.c; C++) {
@@ -653,7 +669,7 @@ function exportWho() {
       c.s = st;
     }
   }
-  ws["!cols"] = [{ wch: 11 }, { wch: 11 }, { wch: 26 }, { wch: 11 }, { wch: 22 }, { wch: 20 }, ...(isStart ? [{ wch: 16 }, { wch: 22 }, { wch: 12 }] : []),
+  ws["!cols"] = [{ wch: 11 }, { wch: 11 }, { wch: 26 }, { wch: 11 }, { wch: 22 }, { wch: 20 }, ...(isStart ? [{ wch: 16 }, { wch: 22 }] : []),
     ...r.cols.map(() => ({ wch: 18 })), { wch: 14 }];
   ws["!rows"] = []; ws["!rows"][2] = { hpt: 60 };
   ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 2, c: 0 }, e: { r: range.e.r, c: range.e.c } }) };
@@ -676,9 +692,9 @@ async function openWorker(wid) {
   let h = `<div class="dw-head"><div><h2>${esc(r.worker.full_name)}</h2><div class="sub">${esc(r.worker.login || "")} · wszystkie ankiety</div></div>
     <button class="dw-close" onclick="closeWorker()">✕</button></div><div class="dw-body">`;
   if (r.refs.length) {
-    h += `<div class="section"><div class="section-head">🧭 Skąd wie o firmie</div>${r.refs.map((x) => `<div class="qa">
+    h += `<div class="section"><div class="section-head">🧭 Skąd wie o firmie <span class="cnt">pytanie 1 pakietu startowego</span></div>${r.refs.map((x) => `<div class="qa">
       <span class="q">BHP ${dd(x.bhp)} · ${esc(x.site_key || "")}</span>
-      <span class="a">${x.status === "answered" ? `${esc(x.label)}${x.referrer_text ? ` „${esc(x.referrer_text)}”` : ""}${x.stay ? ` · 📅 na ${esc(x.stay)}` : ""}` : `<span class="muted">brak odpowiedzi</span>`}</span></div>`).join("")}</div>`;
+      <span class="a">${x.status === "answered" ? `${esc(x.label)}${x.referrer_text ? ` „${esc(x.referrer_text)}”` : ""}` : `<span class="muted">brak odpowiedzi</span>`}</span></div>`).join("")}</div>`;
   }
   h += r.sends.length ? r.sends.map((s) => `<div class="section">
       <div class="section-head">📝 ${esc(surveyLabel(s.survey_code, s.name))}
@@ -782,7 +798,7 @@ async function loadSettings() {
   html += `<div class="section"><div class="section-head">Ankiety — włączone</div>
     ${r.surveys.map((s) => `<div class="cfg-row"><span class="k">${esc(s.code)}</span>
       <label style="display:flex; gap:6px; align-items:center"><input type="checkbox" data-sv="${esc(s.code)}" ${s.is_active ? "checked" : ""}/> aktywna</label>
-      <span class="note">${esc(s.name)} · ${s.code === "start" ? "przy rejestracji w bocie — obiekty pilotażu: Poleć znajomego → Ustawienia" : s.day_offset == null ? "po odejściu" : s.day_offset + ". dzień"} · pytań: ${s.questions}</span></div>`).join("")}
+      <span class="note">${esc(s.name)} · ${s.code === "start" ? "pakiet startowy przy rejestracji w bocie — nowi na obiektach koordynatorów włączonych w zakładce Koordynatorzy" : s.day_offset == null ? "po odejściu" : s.day_offset + ". dzień"} · pytań: ${s.code === "start" ? `${s.questions + 1} (1 „Skąd wiesz o firmie?” + ${s.questions})` : s.questions}</span></div>`).join("")}
     <div class="legend">Treść pytań (4 języki) jest w tabeli care.questions — zmiany przez administratora bazy.</div></div>`;
   html += `<div class="section"><div class="section-head">Uruchomienia</div>
     <div class="cfg-row" style="grid-template-columns:1fr"><span class="note">Ostatnio: ${r.jobs.map((j) => `${esc(j.job)} ${esc(j.last)}`).join(" · ") || "—"}</span></div>
@@ -928,7 +944,7 @@ const TEST_LABEL = {
   manual: ["Zlecenie od regionalnego", 1], assess: ["Ocena nowego 🌱 (👍 😐 👎)", 1],
   esc_coord: ["Przypomnienie: rozmowy po terminie", 1], lead_leaving: ["Dla regionalnego: „chce odejść”", 1],
   lead_esc: ["Dla regionalnego: lista po terminie", 1],
-  start: ["Ankieta na starcie, pyt. 2–5 (pilotaż)", 2], d3: ["Ankieta — 3. dzień", 2], d14: ["Ankieta — 14 dni", 2], d30: ["Ankieta — 30 dni", 2], d60: ["Ankieta — 60 dni", 2],
+  start: ["Pakiet startowy przy rejestracji (6 pytań)", 1], d3: ["Ankieta — 3. dzień", 2], d14: ["Ankieta — 14 dni", 2], d30: ["Ankieta — 30 dni", 2], d60: ["Ankieta — 60 dni", 2],
   exit: ["Ankieta po odejściu", 2], remind: ["Przypomnienie o ankiecie", 2], spot: ["Pytanie kontrolne: czy była rozmowa", 1],
 };
 ST.test = null;

@@ -11,6 +11,7 @@ const ST = {
   view: "list", me: null, from: null, to: null, preset: "60",
   list: null, sort: { key: "bhp", dir: -1 }, ranking: null, sources: null, security: null,
   item: null, seq: 0, iseq: 0,
+  outOnly: false,                        // tylko «poza ankietą» (KPI); domyślnie ukryci
 };
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -70,7 +71,8 @@ const SRC = { friend: "znajomy", coord: "koordynator", recruit: "rekrutacja", ot
 const SRC_CLS = { friend: "acc", coord: "warn", recruit: "", other: "" };
 const ADS = ["facebook", "instagram", "tiktok", "telegram", "jobsite"];
 const STAY = { m1: "1 mies.", m2: "2 mies.", m3: "3 mies.", m6: "6 mies.", more: "dłużej" };   // «Na ile przyjechał»
-const STAY_KEYS = ["m1", "m2", "m3", "m6", "more"];      // pilotaż: kanały reklamy
+const STAY_KEYS = ["m1", "m2", "m3", "m6", "more"];
+// pytania 2–5 pakietu startowego (6 — «na ile przyjechał» — to kolumna stay_plan)
 const START_Q = [["clarity5", "Warunki jasne 1–5"], ["recruit5", "Rekruter szybko 1–5"], ["housing_promise", "Mieszk. jak obiecano"], ["coord_start5", "Koord. 1–5"]];
 const START_ST = { done: "wypełniona", sent: "w trakcie", expired: "bez odpowiedzi", failed: "nie doszła", planned: "w kolejce" };
 const STATE = {
@@ -81,6 +83,7 @@ const STATE = {
   no_tg: ["nie wszedł do bota", "bad"],
   expired: ["brak odpowiedzi", "bad"],
   before: ["przed startem", ""],
+  out: ["poza ankietą", "z"],          // obiekt bez Rozmowy — bot nic nie wysyła
 };
 const BONUS = {
   due: ["należy się", "fill-ok"],
@@ -133,17 +136,33 @@ async function init() {
     if (sv && [...selR.options].some((o) => o.value === sv)) selR.value = sv;
   }
   if (me.sees_tg) { document.getElementById("navSecurity").style.display = ""; document.getElementById("fFlagBox").style.display = ""; }
-  if (me.is_admin) { document.getElementById("navSettings").style.display = ""; document.getElementById("navTest").style.display = ""; }
+  if (me.is_admin) document.getElementById("navSettings").style.display = "";
+  careMenu();
   setPreset(store.get("sas_ref_preset") || "60", true);
   renderBanner();
   const h = location.hash.replace("#", "");
-  showView(["list", "ranking", "sources", "security", "test", "settings"].includes(h) ? h : "list");
+  showView(["list", "ranking", "sources", "security", "settings"].includes(h) ? h : "list");
+}
+window.addEventListener("hashchange", () => {
+  const h = location.hash.replace("#", "");
+  if (ST.me && h !== ST.view && ["list", "ranking", "sources", "security", "settings"].includes(h)) showView(h);
+});
+// Blok «Rozmowy» w menu — Poleć znajomego jest teraz częścią Rozmowy
+async function careMenu() {
+  try {
+    const r = await fetch("/api/care/me", { headers: { "x-session": SESSION } });
+    const d = r.ok ? await r.json() : null;
+    if (!d || !d.has_access) return;
+    document.getElementById("navCare").style.display = "";
+    if (d.is_admin) document.querySelectorAll("#navCare .adm").forEach((el) => (el.style.display = ""));
+  } catch (e) { /* bez Rozmowy */ }
 }
 
 function renderBanner() {
   const me = ST.me, s = me.settings || {};
   const parts = [];
-  if (s.enabled !== "1") parts.push(`<div class="banner warn">⏸️ Bot <b>nie pyta</b> nowych pracowników — sekcja wyłączona w ustawieniach. Dane poniżej to wcześniejsze odpowiedzi.</div>`);
+  if (!s.package_on) parts.push(`<div class="banner warn">⏸️ Pakiet startowy jest <b>wyłączony</b> (Rozmowy → Ustawienia, ankieta „Start”) — bot nie pyta nowych pracowników. Dane poniżej to wcześniejsze odpowiedzi.</div>`);
+  else if (me.role !== "coord" && s.package_sites < s.sites) parts.push(`<div class="banner">📦 Pakiet startowy (6 pytań, pierwsze — „Skąd wiesz o firmie?”) dostają nowi na <b>${s.package_sites} z ${s.sites}</b> obiektów — tam, gdzie koordynator jest włączony w Rozmowy → Koordynatorzy. Pozostali nie dostają nic (w tabeli: „poza ankietą”).</div>`);
   if (me.role === "coord") parts.push(`<div class="banner">👁️ Podgląd Twoich obiektów. Zestawienie z bazą i premie prowadzi koordynator regionalny / kierownictwo.</div>`);
   document.getElementById("topBanner").innerHTML = parts.join("");
 }
@@ -180,7 +199,7 @@ function onFilter() {
 }
 
 function showView(v) {
-  if ((v === "settings" || v === "test") && !(ST.me && ST.me.is_admin)) v = "list";
+  if (v === "settings" && !(ST.me && ST.me.is_admin)) v = "list";
   if (v === "security" && !(ST.me && ST.me.sees_tg)) v = "list";
   ST.view = v;
   location.hash = v;
@@ -188,8 +207,8 @@ function showView(v) {
   document.querySelectorAll(".nav-item[data-view]").forEach((el) => el.classList.toggle("active", el.dataset.view === v));
   document.getElementById("topTitle").textContent =
     { list: "Poleć znajomego — odpowiedzi", ranking: "Poleć znajomego — polecający", sources: "Poleć znajomego — źródła",
-      security: "Poleć znajomego — bezpieczeństwo", test: "Poleć znajomego — test ankiety", settings: "Poleć znajomego — ustawienia" }[v];
-  const noFilters = v === "settings" || v === "security" || v === "test";
+      security: "Poleć znajomego — bezpieczeństwo", settings: "Poleć znajomego — ustawienia" }[v];
+  const noFilters = v === "settings" || v === "security";
   document.getElementById("toolbar").style.visibility = noFilters ? "hidden" : "";
   document.getElementById("periodBar").style.display = noFilters ? "none" : "";
   loadView();
@@ -200,7 +219,6 @@ function loadView() {
   if (ST.view === "sources") loadSources();
   if (ST.view === "security") loadSecurity();
   if (ST.view === "settings") loadSettings();
-  if (ST.view === "test") loadTest();
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -223,7 +241,7 @@ function filteredRows() {
   const bn = document.getElementById("fBonus").value;
   const fl = document.getElementById("fFlag").checked;
   const fs = document.getElementById("fStay").value;
-  let rows = all;
+  let rows = ST.outOnly ? all.filter((x) => x.state === "out") : all.filter((x) => x.state !== "out");
   if (fs === "none") rows = rows.filter((x) => x.state === "answered" && !x.stay_plan);
   else if (fs) rows = rows.filter((x) => x.stay_plan === fs);
   if (q) rows = rows.filter((x) => [x.full_name, x.login, x.referrer_text, x.match && x.match.full_name, x.match && x.match.login,
@@ -250,6 +268,7 @@ function sortBy(k) {
 function clearFilters() {
   ["fQ", "fSource", "fMatch", "fBonus", "fStay"].forEach((id) => (document.getElementById(id).value = ""));
   document.getElementById("fFlag").checked = false;
+  ST.outOnly = false;
   renderList();
 }
 function quick(kind) {
@@ -258,12 +277,14 @@ function quick(kind) {
   if (kind === "due") document.getElementById("fBonus").value = "due";
   if (kind === "flag") document.getElementById("fFlag").checked = true;
   if (kind === "none") document.getElementById("fSource").value = "none";
+  if (kind === "out") ST.outOnly = true;
   if (SRC[kind] || kind === "ads") document.getElementById("fSource").value = kind;
   renderList();
 }
 
 function renderKpis() {
-  const all = ST.list.rows;
+  const out = ST.list.rows.filter((x) => x.state === "out").length;
+  const all = ST.list.rows.filter((x) => x.state !== "out");          // poza ankietą — bez pytań, nie liczymy
   const counted = all.filter((x) => x.state !== "before");
   const ans = all.filter((x) => x.state === "answered");
   const bySrc = (s) => ans.filter((x) => x.source === s).length;
@@ -278,7 +299,7 @@ function renderKpis() {
   const k = (l, v, s, click, cls) => `<div class="kpi${click ? " click" : ""}"${click ? ` onclick="quick('${click}')"` : ""}>
     <div class="l">${l}</div><div class="v ${cls || ""}">${v}</div><div class="s">${s || ""}</div></div>`;
   document.getElementById("listKpis").innerHTML = [
-    k("Nowi pracownicy", all.length, `${noTg ? `nie weszło do bota: ${noTg}` : "wszyscy w bocie"}`),
+    k("Nowi pracownicy", all.length, `${noTg ? `nie weszło do bota: ${noTg}` : "wszyscy w bocie"}${out ? ` · <a href="#" onclick="quick('out');return false" title="Obiekty bez Rozmowy — bot nic nie wysyła">poza ankietą: ${out}</a>` : ""}`),
     k("Odpowiedzieli", `${ans.length} <small>${pct(ans.length, counted.length)}</small>`, wait ? `czeka na odpowiedź: ${wait}` : "", "none"),
     k("👥 Znajomy", bySrc("friend"), pct(bySrc("friend"), ans.length) + " odpowiedzi", "friend"),
     k("🧑‍💼 Koordynator", bySrc("coord"), pct(bySrc("coord"), ans.length) + " odpowiedzi", "coord"),
@@ -340,8 +361,9 @@ function renderList() {
   if (!ST.list) return;
   renderKpis();
   const rows = filteredRows();
-  const all = ST.list.rows;
-  document.getElementById("listCnt").textContent = rows.length === all.length ? `${all.length}` : `${rows.length} z ${all.length}`;
+  const all = ST.list.rows.filter((x) => (ST.outOnly ? x.state === "out" : x.state !== "out"));   // «poza ankietą» — osobno
+  document.getElementById("listCnt").textContent = (rows.length === all.length ? `${all.length}` : `${rows.length} z ${all.length}`)
+    + (ST.outOnly ? " · poza ankietą" : "");
   const tg = ST.me.sees_tg;
   const th = (k, l, cls) => `<th class="${cls || ""}" data-k="${k}" onclick="sortBy('${k}')">${l}${ST.sort.key === k ? (ST.sort.dir > 0 ? " ▲" : " ▼") : ""}</th>`;
   if (!rows.length) {
@@ -401,26 +423,27 @@ function renderItem() {
       <div class="sub">${esc(x.login)} · BHP ${ddy(x.bhp)} · ${esc(x.facility_name || x.site_key)}${x.coordinator_name ? " · " + esc(x.coordinator_name) : ""}</div>
     </div><button class="dw-close" onclick="closeDrawer()">✕</button></div><div class="dw-body">`;
 
-  // Ankieta
-  h += `<div class="section"><div class="section-head">📝 Ankieta</div><div class="kv">
+  // Pytanie 1 pakietu startowego
+  const stayInSv = !!(x.start && x.start.answers.some((a) => a.code === "stay_plan"));
+  h += `<div class="section"><div class="section-head">📝 Pytanie 1 — skąd wie o firmie</div><div class="kv">
     <span class="k">Stan</span><span>${stateCell(x)}</span>
     <span class="k">Odpowiedź</span><span>${x.state === "answered" ? `${tag(SRC[x.source], SRC_CLS[x.source])} ${x.referrer_text ? `<span class="typed">„${esc(x.referrer_text)}”</span>` : ""}` : `<span class="z">—</span>`}</span>
-    <span class="k">Na ile przyjechał</span><span>${x.stay_plan ? `<b>${esc(STAY[x.stay_plan])}</b>` : `<span class="z">brak odpowiedzi</span>`}</span>
+    ${stayInSv ? "" : `<span class="k">Na ile przyjechał</span><span>${x.stay_plan ? `<b>${esc(STAY[x.stay_plan])}</b>` : `<span class="z">brak odpowiedzi</span>`}</span>`}
     <span class="k">Termin odpowiedzi</span><span>${ddy(x.deadline)} (BHP + ${esc(me.settings.window_days)} dni)</span>
     <span class="k">Wysłano</span><span>${x.sends ? `${x.sends}× · pierwsze ${ts(x.first_sent_at)} · ostatnie ${ts(x.last_sent_at)}` : `<span class="z">jeszcze nie</span>`}</span>
     ${x.manual_by ? `<span class="k">Wpisane ręcznie</span><span>${esc(x.manual_by_name || "")}</span>` : ""}
     ${x.flags && x.flags.length ? `<span class="k">Uwagi</span><span>${flagsCell(x)}</span>` : ""}
   </div></div>`;
 
-  // Ankieta startowa (pilotaż)
+  // Pytania 2–6 pakietu startowego (Rozmowy, ankieta «start»)
   if (x.start || x.ext) {
     const sv = x.start;
-    h += `<div class="section"><div class="section-head">📝 Ankieta startowa <span class="cnt">pilotaż · ${sv ? esc(START_ST[sv.status] || sv.status) : "jeszcze nie wysłana"}</span></div>`;
+    h += `<div class="section"><div class="section-head">📝 Pytania 2–6 <span class="cnt">${sv ? esc(START_ST[sv.status] || sv.status) : "jeszcze nie wysłane"}</span></div>`;
     if (sv && sv.answers.length) {
       h += `<div class="kv kv2">${sv.answers.map((a) => `<span class="k">${esc(a.q)}${a.mgr ? " 🔒" : ""}</span>
         <span class="${a.f === "high" ? "bad" : a.f === "low" ? "warn" : ""}"><b>${esc(a.a)}</b></span>`).join("")}</div>`;
     } else {
-      h += `<div class="note" style="border-top:none">${sv ? "Brak odpowiedzi." : "Pytania 2–5 przychodzą zaraz po odpowiedzi na pierwsze pytanie."}</div>`;
+      h += `<div class="note" style="border-top:none">${sv ? "Brak odpowiedzi." : "Pytania 2–6 przychodzą zaraz po odpowiedzi na pierwsze pytanie."}</div>`;
     }
     if (sv && sv.hidden) h += `<div class="note">🔒 Ocena koordynatora ukryta — widzą ją tylko regionalni i kierownictwo.</div>`;
     h += `</div>`;
@@ -609,7 +632,7 @@ async function loadSources() {
   const N = r.bonus_days;
   const ret = (x, s) => { const e = x.ret[s]; return e && e.n ? `<span class="${e.ok / e.n >= 0.7 ? "good" : e.ok / e.n >= 0.4 ? "warn" : "bad"}">${pct(e.ok, e.n)}</span><div class="sub">${e.ok}/${e.n}</div>` : `<span class="z">—</span>`; };
   const n = (v) => (v ? v : `<span class="z">0</span>`);
-  const ads = r.total.ads > 0;              // kolumna „Reklama” — gdy jest pilotaż
+  const ads = r.total.ads > 0;              // kolumna „Reklama” — Facebook, Instagram, TikTok, Telegram, portale
   const line = (x, tot) => `<tr class="${tot ? "tot" : ""}">
       <td class="l">${esc(x.site_key)}${!tot ? `<div class="sub">${esc(x.coordinator_name || "— bez koordynatora —")}${x.region_name ? " · " + esc(x.region_name) : ""}</div>` : ""}</td>
       <td>${x.hires}</td><td>${pct(x.answered, x.hires)}</td>
@@ -677,75 +700,6 @@ async function loadSecurity() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-//  Test ankiety (admin) — jak w Rozmowy → Test
-// ══════════════════════════════════════════════════════════════════════
-const TEST_LABEL = {
-  ask: ["Pytanie „Kto Cię polecił?” — zwykłe, 4 przyciski", "+ imię znajomego / koordynatora"],
-  ask_x: ["Ankieta na starcie (pilotaż): „Skąd wiesz o firmie?” + pytania 2–5", "pełna ankieta, jak na obiektach pilotażu"],
-  remind: ["Przypomnienie o pytaniu", "tak przychodzi kolejnego dnia"],
-  blocked: ["Co widzi koordynator, gdy próbuje odpowiedzieć za pracownika", "komunikat blokady"],
-};
-ST.test = null; ST.tWho = new Set(); ST.tWhat = new Set(["ask_x"]);
-async function loadTest() {
-  const r = await api("/test");
-  if (!r) return;
-  if (!r.ok) { document.getElementById("tWho").innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
-  ST.test = r;
-  if (!ST.tWho.size && r.me) ST.tWho.add(r.me);
-  renderTestWho();
-  document.getElementById("tWhat").innerHTML = r.items.map((k) => `<label>
-    <input type="checkbox" ${ST.tWhat.has(k) ? "checked" : ""} onchange="toggleTestWhat('${k}', this.checked)"/>
-    <span>${esc(TEST_LABEL[k][0])}${k === "ask_x" && !r.start_on ? ` <span class="bad">— pytania 2–5 wyłączone w Rozmowy</span>` : ""}
-      <div class="sub" style="font-size:11px;color:var(--text3)">${esc(TEST_LABEL[k][1])}</div></span></label>`).join("");
-  updateTestBtn();
-  renderTestSent();
-}
-function renderTestWho() {
-  const q = (document.getElementById("tSearch").value || "").toLowerCase();
-  const rows = ST.test.coordinators.filter((c) => !q || c.full_name.toLowerCase().includes(q));
-  document.getElementById("tWhoCnt").textContent = ST.tWho.size ? `wybrano ${ST.tWho.size}` : "";
-  document.getElementById("tWho").innerHTML = rows.map((c) => `<label title="${c.has_tg ? "" : "Brak Telegrama w karcie — nie da się wysłać"}" style="${c.has_tg ? "" : "opacity:.45"}">
-      <input type="checkbox" ${ST.tWho.has(c.id) ? "checked" : ""} ${c.has_tg ? "" : "disabled"} onchange="toggleTestWho(${c.id}, this.checked)"/>
-      ${esc(c.full_name)}${c.id === ST.test.me ? ` <span class="tag acc">Ty</span>` : ""}
-      <span class="c">${c.has_tg ? "" : "bez Telegrama"}</span></label>`).join("") || `<div class="empty">Brak</div>`;
-}
-function toggleTestWho(id, on) { if (on) ST.tWho.add(id); else ST.tWho.delete(id); renderTestWho(); updateTestBtn(); }
-function toggleTestWhat(k, on) { if (on) ST.tWhat.add(k); else ST.tWhat.delete(k); updateTestBtn(); }
-function updateTestBtn() { document.getElementById("tSend").disabled = !ST.tWho.size || !ST.tWhat.size; }
-async function sendTest() {
-  const btn = document.getElementById("tSend"), msg = document.getElementById("tMsg");
-  btn.disabled = true; msg.className = "msg"; msg.textContent = "Wysyłam…";
-  const r = await api("/test/send", { method: "POST", body: { coordinators: [...ST.tWho], items: [...ST.tWhat], worker_lang: document.getElementById("tLang").value } });
-  updateTestBtn();
-  if (!r || !r.ok) { msg.className = "msg err"; msg.textContent = (r && r.error) || "Błąd"; return; }
-  const errs = r.result.filter((x) => x.error);
-  msg.className = "msg " + (errs.length ? "err" : "ok");
-  msg.textContent = r.result.map((x) => `${x.name}: ${x.error === "no_telegram" ? "brak Telegrama" : x.error ? "błąd" : x.sent + " wiad."}`).join(" · ")
-    + (errs.length ? "" : " — sprawdź Telegram");
-  const s = await api("/test");
-  if (s && s.ok) { ST.test.sent = s.sent; renderTestSent(); }
-}
-function renderTestSent() {
-  const rows = (ST.test && ST.test.sent) || [];
-  document.getElementById("tSentCnt").textContent = rows.length ? `${rows.reduce((a, x) => a + x.n, 0)} wiad.` : "";
-  document.getElementById("tClearAll").style.display = rows.length ? "" : "none";
-  document.getElementById("tSent").innerHTML = rows.length ? `<table class="fl"><thead><tr><th class="l">Odbiorca</th><th>Wiadomości</th>
-    <th class="l">Pierwsza</th><th class="l">Ostatnia</th><th></th></tr></thead><tbody>
-    ${rows.map((x) => `<tr><td class="l">${esc(x.full_name || "—")}</td><td>${x.n}</td><td class="l">${ts(x.first_at)}</td><td class="l">${ts(x.last_at)}</td>
-      <td><button class="btn btn-ghost btn-sm" onclick="clearTest([${Number(x.coordinator_id)}])">Usuń</button></td></tr>`).join("")}
-    </tbody></table>` : `<div class="empty">Brak testowych wiadomości w czatach</div>`;
-}
-async function clearTest(ids) {
-  const msg = document.getElementById("tClearMsg");
-  msg.className = "msg"; msg.textContent = "Usuwam…";
-  const r = await api("/test/clear", { method: "POST", body: { coordinators: ids || [] } });
-  if (!r || !r.ok) { msg.className = "msg err"; msg.textContent = (r && r.error) || "Błąd"; return; }
-  msg.className = "msg ok";
-  msg.textContent = `Usunięto ${r.result.deleted}${r.result.edited ? ` · oznaczono ${r.result.edited} (starsze niż 48 h)` : ""}`;
-  ST.test.sent = r.sent; renderTestSent();
-}
-
-// ══════════════════════════════════════════════════════════════════════
 //  Ustawienia (admin)
 // ══════════════════════════════════════════════════════════════════════
 async function loadSettings() {
@@ -755,20 +709,36 @@ async function loadSettings() {
   if (!r) return;
   if (!r.ok) { body.innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
   const S = r.settings;
+  const pk = r.package_coords || [];
+  const nSites = pk.reduce((a, c) => a + c.sites.length, 0);
   body.innerHTML = `
   <div class="section">
-    <div class="section-head">Ankieta w bocie i dostęp</div>
+    <div class="section-head">📦 Pakiet startowy (6 pytań) <span class="cnt">${r.package_on ? `włączony · ${nSites} obiektów, ${pk.length} koordynatorów` : "wyłączony"}</span></div>
     <div class="cfg">
-      <span class="k">Ankieta włączona</span><span><label><input type="checkbox" id="s_enabled" ${S.enabled === "1" ? "checked" : ""}/> bot pyta nowych pracowników „kto Cię polecił?”</label></span>
-      <span class="h">Wyłączone — bot nie wysyła pytań ani przypomnień. Historia Telegrama zapisuje się dalej, panel działa.</span>
-      <span class="k">Widoczne dla koordynatorów</span><span><label><input type="checkbox" id="s_visible_coords" ${S.visible_coords === "1" ? "checked" : ""}/> koordynatorzy obiektów widzą sekcję</label></span>
-      <span class="h">Tylko swoje obiekty i tylko podgląd: bez zestawiania, bez premii, bez danych Telegrama. Regionalni i kierownictwo widzą sekcję zawsze.</span>
+      <span class="k">Co dostaje pracownik</span><span>Zaraz po wejściu do bota — jeden pakiet:
+        1) <b>skąd wie o firmie</b> (znajomy, koordynator, rekruter, Facebook, Instagram, TikTok, Telegram, portal, inne; przy znajomym i koordynatorze — imię i nazwisko → premia),
+        2) jasność warunków, 3) szybkość rekrutera, 4) mieszkanie jak obiecano, 5) ocena koordynatora, 6) na ile przyjechał.</span>
+      <span class="k">Kto dostaje</span><span>Nowi na obiektach koordynatorów włączonych w <a href="rozmowy.html#coords">Rozmowy → Koordynatorzy</a>.
+        Cały blok włącza / wyłącza ankieta „Start” w <a href="rozmowy.html#settings">Rozmowy → Ustawienia</a>. Pozostali nowi nie dostają nic.
+        ${r.package_on ? "" : `<br><b class="bad">Teraz wyłączony — bot nie pyta nowych pracowników.</b>`}</span>
+      <span class="h">Wyniki pytań 2–6 — Rozmowy → Ankiety → „Start”. Test całego pakietu — Rozmowy → Test.</span>
+    </div>
+    ${pk.length ? `<div class="tblwrap"><table class="fl"><thead><tr><th class="l">Koordynator (włączony w Rozmowy)</th><th>Obiektów</th><th class="l">Obiekty — nowi dostają pakiet</th></tr></thead>
+      <tbody>${pk.map((c) => `<tr><td class="l nw">${esc(c.name || "—")}</td><td>${c.sites.length}</td><td class="l">${c.sites.map(esc).join(", ")}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="note">Żaden koordynator nie jest włączony w Rozmowy → Koordynatorzy — nowi nie dostają pakietu.</div>`}
+  </div>
+  <div class="section">
+    <div class="section-head">Pytanie 1 i dostęp</div>
+    <div class="cfg">
+      <span class="k">Widoczne dla koordynatorów</span><span><label><input type="checkbox" id="s_visible_coords" ${S.visible_coords === "1" ? "checked" : ""}/> koordynatorzy obiektów widzą Poleć znajomego</label></span>
+      <span class="h">Tylko swoje obiekty i tylko podgląd: bez zestawiania, bez premii, bez danych Telegrama. Regionalni i kierownictwo widzą zawsze.</span>
       <span class="k">Pytać pracowników z BHP od</span><span><input type="date" id="s_start_date" value="${esc(S.start_date)}"/></span>
       <span class="h">Starszych pracowników bot nie pyta — w tabeli mają stan „przed startem”.</span>
       <span class="k">Termin odpowiedzi</span><span>BHP + <input type="number" id="s_window_days" value="${esc(S.window_days)}" min="1" max="30"/> dni</span>
-      <span class="h">Do tego dnia włącznie można odpowiedzieć lub zmienić odpowiedź. Potem bot odpowiada „czas minął”.</span>
-      <span class="k">Przypomnienia</span><span><input type="number" id="s_remind_max" value="${esc(S.remind_max)}" min="0" max="5"/> razy, jedno dziennie, od <input type="time" id="s_remind_time" value="${esc(S.remind_time)}"/></span>
+      <span class="h">Do tego dnia włącznie można odpowiedzieć na pytanie 1 lub zmienić odpowiedź. Potem bot odpowiada „czas minął”.</span>
+      <span class="k">Przypomnienia — pytanie 1</span><span><input type="number" id="s_remind_max" value="${esc(S.remind_max)}" min="0" max="5"/> razy, jedno dziennie, od <input type="time" id="s_remind_time" value="${esc(S.remind_time)}"/></span>
       <span class="h">Tylko tym, kto nie odpowiedział, i tylko w terminie odpowiedzi. Bot nie pisze między 20:00 a 8:00.</span>
+      <span class="k">Przypomnienia — pytania 2–6</span><span><input type="number" id="s_start_remind_days" value="${esc(S.start_remind_days || "2")}" min="0" max="5"/> dni, raz dziennie</span>
     </div>
   </div>
   <div class="section">
@@ -781,69 +751,18 @@ async function loadSettings() {
     </div>
   </div>
   <div class="section">
-    <div class="section-head">📝 Ankieta na starcie — pilotaż <span class="cnt">${pilotInfo(S, r)}</span></div>
-    <div class="cfg">
-      <span class="k">Co dostaje pracownik</span><span>1) <b>Skąd dowiedział się o firmie</b> (Facebook, Instagram, TikTok, Telegram, portale, rekruter, znajomy, koordynator)
-        i od razu 2–5: jasność warunków, szybkość rekrutera, mieszkanie jak obiecano, ocena koordynatora.</span>
-      <span class="h">Tylko nowi z wybranych obiektów. Pozostali dostają jak dotąd jedno pytanie „kto Cię polecił”. Wyniki — Rozmowy → Ankiety → „Start”.
-        ${r.start_active ? "" : `<b class="bad">Ankieta „start” jest wyłączona w Rozmowy → Ustawienia — pilotaż nie działa.</b>`}</span>
-      <span class="k">Przypomnienia pytań 2–5</span><span><input type="number" id="s_start_remind_days" value="${esc(S.start_remind_days || "2")}" min="0" max="5"/> dni, raz dziennie</span>
-    </div>
-    <div class="filters"><label><input type="checkbox" id="sp_all" ${S.start_sites === "*" ? "checked" : ""} onchange="togglePickAll()"/> <b>wszystkie obiekty</b></label>
-      <input type="text" class="inp" id="sp_q" placeholder="Szukaj obiektu…" oninput="filterPick()" style="width:180px"/>
-      <span id="sp_cnt"></span></div>
-    <div class="sites-pick" id="sitesPick">${sitesPick(S, r.sites)}</div>
-  </div>
-  <div class="section">
     <div class="actions" style="border-top:none"><button class="btn btn-primary btn-sm" onclick="saveSettings()">Zapisz ustawienia</button><span class="msg" id="setMsg"></span>
       <span style="margin-left:auto;font-size:11px;color:var(--text3)">Ankiet: ${r.stats.answers} · odpowiedzi: ${r.stats.answered} · zapisów Telegrama: ${r.stats.tg_events}</span></div>
   </div>`;
-  countPick();
-}
-function pickedSites(S) {
-  if (S.start_sites === "*") return "*";
-  try { return new Set(JSON.parse(S.start_sites || "[]")); } catch (e) { return new Set(); }
-}
-function pilotInfo(S) {
-  const p = pickedSites(S);
-  return p === "*" ? "wszystkie obiekty" : p.size ? `obiektów: ${p.size}` : "wyłączony";
-}
-function sitesPick(S, sites) {
-  const p = pickedSites(S);
-  let lastReg = null;
-  return sites.map((x) => {
-    const reg = x.region_name || "Bez regionu";
-    const head = reg !== lastReg ? `<div class="rg">${esc(reg)}</div>` : "";
-    lastReg = reg;
-    return `${head}<label data-q="${esc((x.site_key + " " + (x.coordinator_name || "")).toLowerCase())}">
-      <input type="checkbox" class="sp" value="${esc(x.site_key)}" ${p === "*" || (p.has && p.has(x.site_key)) ? "checked" : ""} ${p === "*" ? "disabled" : ""} onchange="countPick()"/>
-      ${esc(x.site_key)}<span class="c">${esc(x.coordinator_name || "")}</span></label>`;
-  }).join("") || `<div class="empty">Brak obiektów w Region → Ustawienia</div>`;
-}
-function togglePickAll() {
-  const all = document.getElementById("sp_all").checked;
-  document.querySelectorAll("#sitesPick input.sp").forEach((i) => { i.disabled = all; if (all) i.checked = true; });
-  countPick();
-}
-function filterPick() {
-  const q = document.getElementById("sp_q").value.trim().toLowerCase();
-  document.querySelectorAll("#sitesPick label").forEach((l) => (l.style.display = !q || l.dataset.q.includes(q) ? "" : "none"));
-}
-function countPick() {
-  const all = document.getElementById("sp_all").checked;
-  const n = document.querySelectorAll("#sitesPick input.sp:checked").length;
-  document.getElementById("sp_cnt").textContent = all ? "pilotaż na wszystkich obiektach" : n ? `zaznaczono: ${n}` : "pilotaż wyłączony";
 }
 async function saveSettings() {
   const v = (id) => document.getElementById(id).value.trim();
   const c = (id) => (document.getElementById(id).checked ? "1" : "0");
   const body = {
-    enabled: c("s_enabled"), visible_coords: c("s_visible_coords"), start_date: v("s_start_date"),
+    visible_coords: c("s_visible_coords"), start_date: v("s_start_date"),
     window_days: v("s_window_days"), remind_max: v("s_remind_max"), remind_time: v("s_remind_time"),
     bonus_days: v("s_bonus_days"), bonus_amount: v("s_bonus_amount"),
     start_remind_days: v("s_start_remind_days"),
-    start_sites: document.getElementById("sp_all").checked ? "*"
-      : JSON.stringify([...document.querySelectorAll("#sitesPick input.sp:checked")].map((i) => i.value)),
   };
   const msg = document.getElementById("setMsg");
   const res = await api("/settings", { method: "PATCH", body });
@@ -919,11 +838,11 @@ function exportList() {
   const wb = XLSX.utils.book_new();
 
   // 1) Odpowiedzi
-  const head = ["BHP", "Login", "Pracownik", "Obiekt", "Region", "Koordynator obiektu", "Ankieta", "Termin odpowiedzi", "Wysłano (razy)",
-    "Data odpowiedzi", "Źródło", "Wpisane imię i nazwisko", "Na ile przyjechał", "Zestawiono: login", "Zestawiono: imię i nazwisko", "Zestawiono: obiekt",
+  const head = ["BHP", "Login", "Pracownik", "Obiekt", "Region", "Koordynator obiektu", "Pytanie 1: stan", "Termin odpowiedzi", "Wysłano (razy)",
+    "Data odpowiedzi", "Skąd wie o firmie", "Wpisane imię i nazwisko", "Na ile przyjechał", "Zestawiono: login", "Zestawiono: imię i nazwisko", "Zestawiono: obiekt",
     "Polecający pracuje", "Dni pracy nowego", "Premia: stan", "Premia od dnia", "Kwota, zł", "Wypłacono", "Notatka"];
-  const pilot = rows.some((x) => x.ext || x.start);
-  if (pilot) head.push("Ankieta startowa", ...START_Q.map((q) => q[1]));
+  const pilot = rows.some((x) => x.ext || x.start);         // są pytania 2–6 pakietu startowego
+  if (pilot) head.push("Pytania 2–6: stan", ...START_Q.map((q) => q[1]));
   if (tg) head.push("Uwagi (Telegram)");
   const aoa = [["Poleć znajomego — odpowiedzi nowych pracowników"], [info], head];
   const styles = {};
@@ -948,7 +867,7 @@ function exportList() {
     if (pilot) {
       const sv = x.start;
       const val = (c) => { const a = sv && sv.answers.find((y) => y.code === c); if (!a) return ""; return /^[1-5]$/.test(a.o) ? Number(a.o) : a.a; };
-      line.push(sv ? START_ST[sv.status] || sv.status : x.ext ? "nie wysłana" : "", ...START_Q.map(([c]) => val(c)));
+      line.push(sv ? START_ST[sv.status] || sv.status : x.ext ? "nie wysłane" : "", ...START_Q.map(([c]) => val(c)));
     }
     if (tg) line.push(flagsText(x));
     const R = aoa.length;

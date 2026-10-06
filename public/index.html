@@ -51,7 +51,6 @@
         <div class="nav-gb">
           <div id="rozmowyLink" class="nav-item" onclick="location.href='rozmowy.html'" style="display: none">📞 Rozmowy</div>
           <div id="flowLink" class="nav-item" onclick="location.href='wyjazdy.html'" style="display: none">🚌 Wyjazdy / przyjazdy</div>
-          <div id="polecLink" class="nav-item" onclick="location.href='polecenia.html'" style="display: none">🤝 Poleć znajomego</div>
         </div>
       </div>
       <div class="nav-group" data-g="reports">
@@ -1140,14 +1139,13 @@ fetch('/api/flow/me', { headers: { 'x-session': localStorage.getItem('sas_sessio
   .then(function (r) { return r.ok ? r.json() : null; })
   .then(function (d) { if (d && d.has_access) document.getElementById('flowLink').style.display = ''; })
   .catch(function () {});
-fetch('/api/ref/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
-  .then(function (r) { return r.ok ? r.json() : null; })
-  .then(function (d) { if (d && d.has_access) document.getElementById('polecLink').style.display = ''; })
-  .catch(function () {});
-fetch('/api/care/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
-  .then(function (r) { return r.ok ? r.json() : null; })
-  .then(function (d) { if (d && d.has_access) document.getElementById('rozmowyLink').style.display = ''; })
-  .catch(function () {});
+// «Rozmowy» — і для тих, хто бачить лише «Poleć znajomego» (тепер це блок усередині Rozmowy)
+['/api/care/me', '/api/ref/me'].forEach(function (u) {
+  fetch(u, { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) { if (d && d.has_access) document.getElementById('rozmowyLink').style.display = ''; })
+    .catch(function () {});
+});
 </script>
 </body>
 

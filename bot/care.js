@@ -565,13 +565,15 @@ async function questionCount(code) {
   const r = await db.query(`SELECT COUNT(*)::int AS n FROM care.questions WHERE survey_code = $1`, [code]);
   return r.rows[0].n;
 }
+// «start» — питання 2–6 стартового пакета: питання 1 («як дізналися») ставить bot/referral.js
+const qNum = (code, sort, n) => (code === "start" ? `(${sort + 1}/${n + 1})` : `(${sort}/${n})`);
 
 async function sendQuestion(send, sort, chatId) {
   const q = (await db.query(`SELECT * FROM care.questions WHERE survey_code = $1 AND sort = $2`, [send.survey_code, sort])).rows[0];
   if (!q) return { ok: false };
   const lang = wLang(send.lang);
   const n = await questionCount(send.survey_code);
-  return tgSend(chatId, `<b>${esc(q.text[lang] || q.text.uk)}</b>  <i>(${sort}/${n})</i>`, kb(optionRows(q, lang, send.id)));
+  return tgSend(chatId, `<b>${esc(q.text[lang] || q.text.uk)}</b>  <i>${qNum(send.survey_code, sort, n)}</i>`, kb(optionRows(q, lang, send.id)));
 }
 
 async function runSurveys(day) {
@@ -624,8 +626,8 @@ async function runSurveys(day) {
   return { sent, failed, reminded: rem.rows.length };
 }
 
-// Анкета «start» (реєстрація в боті): надсилає bot/referral.js одразу після
-// питання «як дізналися про компанію», нагадує теж він (раз на день, 2 дні)
+// Анкета «start» — питання 2–6 стартового пакета: надсилає bot/referral.js одразу після
+// питання 1 «як дізналися про компанію», нагадує теж він (раз на день, 2 дні)
 async function startSurveyNow(sendId, chatId) {
   const s = (await db.query(
     `SELECT s.*, sv.intro FROM care.survey_sends s JOIN care.surveys sv ON sv.code = s.survey_code WHERE s.id = $1`, [sendId])).rows[0];
@@ -729,6 +731,13 @@ async function onSurveyAnswer(cq, chatId, parts) {
     `INSERT INTO care.answers (send_id, question_id, option_code, flag) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
     [s.id, q.id, code, opt.f || null],
   );
+  // «на скільки приїхали» (питання 6 пакета) — і в «Poleć znajomego» (список, джерела, Excel)
+  if (s.survey_code === "start" && q.code === "stay_plan") {
+    await db.query(
+      `UPDATE ref.answers a SET stay_plan = $2, stay_at = now(), updated_at = now()
+         FROM care.survey_sends s WHERE s.id = $1 AND a.worker_id = s.worker_id AND abs(a.bhp_date - s.bhp_date) <= 14`,
+      [s.id, code]).catch((e) => console.error("[care] stay → ref", e.message));
+  }
   await answer();
   await tgEdit(chatId, cq.message.message_id, `${esc(q.text[lang] || q.text.uk)}\n→ <b>${esc(opt.t[lang] || opt.t.uk)}</b>`);
 
@@ -1122,7 +1131,7 @@ async function testQuestion(ctx, sid, survey, sort, lang) {
     const code = b.callback_data.split("_").slice(3).join("_");
     return { text: b.text, callback_data: `SV_X_${sid}_${sort}_${code}` };
   }));
-  return tSend(ctx, "survey_q", lang, `<b>${esc(q.text[lang] || q.text.uk)}</b>  <i>(${sort}/${n})</i>`, () => opts, { sid, sort });
+  return tSend(ctx, "survey_q", lang, `<b>${esc(q.text[lang] || q.text.uk)}</b>  <i>${qNum(survey, sort, n)}</i>`, () => opts, { sid, sort });
 }
 
 async function testSurvey(ctx, code, wlang, withReminder = false) {
@@ -1184,7 +1193,9 @@ async function sendTestSet({ coordinatorIds, items, coordLang = "profile", worke
         await tSend(ctx, "info", lang, `<i>(${tt(lang).leadNote})</i>\n${t.esc_head(2)}\n• <b>${esc(c.full_name)}</b>: 2 — TEST OKSANA, TEST PETRO`);
 
       if (workerItems.length) await tSend(ctx, "part", lang, tt(lang).workerPart(LANG_NAME[wl]));
-      for (const code of ["start", "d3", "d14", "d30", "d60", "exit"]) if (want.has(code)) await testSurvey(ctx, code, wl);
+      // «start» — увесь стартовий пакет: питання 1 (bot/referral.js), далі 2–6
+      if (want.has("start")) await require("./referral").testPackage(ctx, wl);
+      for (const code of ["d3", "d14", "d30", "d60", "exit"]) if (want.has(code)) await testSurvey(ctx, code, wl);
       if (want.has("remind")) await testSurvey(ctx, "d14", wl, true);
       if (want.has("spot")) {
         const w = tw(wl);

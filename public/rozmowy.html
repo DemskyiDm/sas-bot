@@ -16,6 +16,11 @@
     .nav-badge { margin-left: auto; background: var(--red); color: #fff; font-size: 10px; font-weight: 700;
       border-radius: 9px; padding: 1px 7px; font-family: var(--mono); }
     .nav-badge:empty { display: none; }
+    /* блоки меню: Rozmowy · Poleć znajomego */
+    .nav-sec { padding: 10px 10px 4px; font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+      color: var(--text3); font-family: var(--mono); user-select: none; }
+    .nav-sec + .nav-item { margin-top: 0; }
+    #navRef { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 2px; }
     .content { overflow-y: auto; }
 
     .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
@@ -211,13 +216,25 @@
     </div>
     <div class="nav">
       <div class="nav-item" onclick="location.href='index.html'">⬅️ Panel główny</div>
-      <div class="nav-item active" data-view="tasks" onclick="showView('tasks')">📞 Do rozmowy <span class="nav-badge" id="badgeTasks"></span></div>
-      <div class="nav-item" data-view="risk" onclick="showView('risk')">📈 Ryzyko</div>
-      <div class="nav-item" data-view="surveys" onclick="showView('surveys')">📝 Ankiety</div>
-      <div class="nav-item" data-view="control" onclick="showView('control')">🎯 Kontrola</div>
-      <div class="nav-item" data-view="coords" id="navCoords" onclick="showView('coords')" style="display:none">👥 Koordynatorzy</div>
-      <div class="nav-item" data-view="test" id="navTest" onclick="showView('test')" style="display:none">🧪 Test</div>
-      <div class="nav-item" data-view="settings" id="navSettings" onclick="showView('settings')" style="display:none">⚙️ Ustawienia</div>
+      <div id="navCare">
+        <div class="nav-sec">📞 Rozmowy</div>
+        <div class="nav-item active" data-view="tasks" onclick="showView('tasks')">📞 Do rozmowy <span class="nav-badge" id="badgeTasks"></span></div>
+        <div class="nav-item" data-view="risk" onclick="showView('risk')">📈 Ryzyko</div>
+        <div class="nav-item" data-view="surveys" onclick="showView('surveys')">📝 Ankiety</div>
+        <div class="nav-item" data-view="control" onclick="showView('control')">🎯 Kontrola</div>
+        <div class="nav-item" data-view="coords" id="navCoords" onclick="showView('coords')" style="display:none">👥 Koordynatorzy</div>
+        <div class="nav-item" data-view="test" id="navTest" onclick="showView('test')" style="display:none">🧪 Test</div>
+        <div class="nav-item" data-view="settings" id="navSettings" onclick="showView('settings')" style="display:none">⚙️ Ustawienia</div>
+      </div>
+      <!-- «Poleć znajomego» — окрема сторінка polecenia.html, показується за доступом /api/ref/me -->
+      <div id="navRef" style="display:none">
+        <div class="nav-sec">🤝 Poleć znajomego</div>
+        <div class="nav-item" onclick="location.href='polecenia.html#list'">📋 Odpowiedzi</div>
+        <div class="nav-item" onclick="location.href='polecenia.html#ranking'">🏆 Polecający</div>
+        <div class="nav-item" onclick="location.href='polecenia.html#sources'">🧭 Źródła</div>
+        <div class="nav-item" id="navRefSec" onclick="location.href='polecenia.html#security'" style="display:none">🛡️ Bezpieczeństwo</div>
+        <div class="nav-item" id="navRefSet" onclick="location.href='polecenia.html#settings'" style="display:none">⚙️ Ustawienia</div>
+      </div>
     </div>
   </div>
 

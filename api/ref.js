@@ -55,14 +55,17 @@ const canMatch = (rs) => rs.role === "all" || rs.role === "lead";
 const canPay = (rs) => rs.role === "all";
 const seesTg = (rs) => rs.role === "all" || rs.role === "lead";
 
-// об'єкти (site_key) → регіон, відповідальний
+// об'єкти (site_key) → регіон, відповідальний; care_on — координатор увімкнений у Rozmowy (об'єкт у стартовому пакеті)
 async function sitesMap() {
-  const r = await db.query(
-    `SELECT so.site_key, so.region_id, so.coordinator_id, c.full_name AS coordinator_name, rg.name AS region_name
+  const q = (care) => db.query(
+    `SELECT so.site_key, so.region_id, so.coordinator_id, c.full_name AS coordinator_name, rg.name AS region_name,
+            ${care ? "care.is_on(so.coordinator_id)" : "false"} AS care_on
        FROM reg.site_owner so
        LEFT JOIN public.coordinators c ON c.id = so.coordinator_id
        LEFT JOIN reg.regions rg ON rg.id = so.region_id
       WHERE so.valid_to IS NULL`);
+  let r;
+  try { r = await q(true); } catch (e) { r = await q(false); }        // модуля Rozmowy немає
   const m = new Map();
   r.rows.forEach((x) => m.set(x.site_key, { ...x, region_id: x.region_id == null ? null : Number(x.region_id) }));
   return m;
@@ -247,6 +250,7 @@ async function startAnswers(rs, rows) {
 // ── Рядки: нові працевлаштування + відповіді ─────────────────────────
 async function loadRows(rs, q) {
   const st = rs.st;
+  const pkgOn = await refBot.startOn();
   const td = (await db.query(`SELECT to_char(ref.today(), 'YYYY-MM-DD') AS d`)).rows[0].d;
   const from = isDate(q.from) ? q.from : addDays(td, -30);
   const to = isDate(q.to) ? q.to : td;
@@ -311,9 +315,12 @@ async function loadRows(rs, q) {
       coordinator_id: s.coordinator_id ?? null, coordinator_name: s.coordinator_name || null,
       emp_end: employmentEnd(ps, x.bhp),
       deadline: addDays(x.bhp, Number(st.window_days) || 5),
+      in_pkg: !!(pkgOn && s.care_on),
     };
+    // out — об'єкт не в стартовому пакеті (координатор не ввімкнений у Rozmowy): бот нічого не надсилає.
+    // Загальний вимикач (анкета «Start») тут не враховуємо — інакше після вимкнення «переписалася б» історія; про нього — банер.
     row.state = !x.answer_id
-      ? (x.bhp < (st.start_date || "2000-01-01") ? "before" : !x.has_tg ? "no_tg" : row.deadline < td ? "expired" : "queued")
+      ? (x.bhp < (st.start_date || "2000-01-01") ? "before" : !s.care_on ? "out" : !x.has_tg ? "no_tg" : row.deadline < td ? "expired" : "queued")
       : x.a_status === "answered" ? "answered" : x.a_status === "expired" ? "expired" : x.source ? "waiting_name" : "waiting";
     row.bonus = bonusOf(row, st, td);
     if (x.match_worker_id) {
@@ -363,8 +370,8 @@ router.get("/me", async (req, res) => {
       can_match: canMatch(rs), can_pay: canPay(rs), sees_tg: seesTg(rs),
       regions: regs.rows.filter((g) => rs.role === "all" || rs.regionIds.includes(Number(g.id))),
       coordinators: [...coordIds].map(([id, name]) => ({ id, name })).sort((a, b) => String(a.name).localeCompare(String(b.name))),
-      settings: { bonus_days: rs.st.bonus_days, bonus_amount: rs.st.bonus_amount, window_days: rs.st.window_days, start_date: rs.st.start_date, enabled: rs.st.enabled,
-        pilot: String(rs.st.start_sites || "") !== "" && (await refBot.startOn()) },
+      settings: { bonus_days: rs.st.bonus_days, bonus_amount: rs.st.bonus_amount, window_days: rs.st.window_days, start_date: rs.st.start_date,
+        package_on: await refBot.startOn(), package_sites: sites.filter((s) => s.care_on).length, sites: sites.length },
       today: (await db.query(`SELECT to_char(ref.today(), 'YYYY-MM-DD') AS d`)).rows[0].d,
     });
   } catch (e) { fail(res, e); }
@@ -553,7 +560,7 @@ router.get("/sources", async (req, res) => {
     const N = Number(req.rs.st.bonus_days) || 30;
     const by = new Map();
     const tot = { site_key: "Razem", hires: 0, answered: 0, friend: 0, coord: 0, recruit: 0, ads: 0, other: 0, none: 0, ret: {}, stay: {} };
-    const ADS = new Set(["facebook", "instagram", "tiktok", "telegram", "jobsite"]);   // пілот: канали реклами
+    const ADS = new Set(["facebook", "instagram", "tiktok", "telegram", "jobsite"]);   // канали реклами (питання 1 пакета)
     const add = (x, r) => {
       x.hires++;
       const src = r.state !== "answered" ? "none" : ADS.has(r.source) ? "ads" : r.source;
@@ -567,6 +574,7 @@ router.get("/sources", async (req, res) => {
       }
     };
     for (const r of d.rows) {
+      if (r.state === "out" || r.state === "before") continue;         // поза пакетом — питань не було
       const k = r.site_key;
       const x = by.get(k) || { site_key: k, coordinator_name: r.coordinator_name, region_name: r.region_name, hires: 0, answered: 0, friend: 0, coord: 0, recruit: 0, ads: 0, other: 0, none: 0, ret: {}, stay: {} };
       add(x, r); add(tot, r);
@@ -628,46 +636,9 @@ router.get("/security", async (req, res) => {
   } catch (e) { fail(res, e); }
 });
 
-// ── Тест: анкета собі в Telegram (адмін) ─────────────────────────────
-const careBotOrNull = () => { try { return require("../bot/care"); } catch (e) { return null; } };
-router.get("/test", async (req, res) => {
-  try {
-    if (!req.rs.admin) return fail(res, new Error("Tylko administrator"), 403);
-    const care = careBotOrNull();
-    const c = await db.query(
-      `SELECT c.id, c.full_name, (c.telegram_chat_id IS NOT NULL) AS has_tg
-         FROM public.coordinators c WHERE COALESCE(c.is_active, true) ORDER BY (c.id = $1) DESC, c.full_name`, [req.rs.me]);
-    let sent = [];
-    try { if (care) sent = await care.testSummary(); } catch (e) { sent = []; }
-    res.json({ ok: true, me: req.rs.me, coordinators: c.rows, items: refBot.TEST_ITEMS, start_on: await refBot.startOn(), sent });
-  } catch (e) { fail(res, e); }
-});
-router.post("/test/send", async (req, res) => {
-  try {
-    if (!req.rs.admin) return fail(res, new Error("Tylko administrator"), 403);
-    if (!careBotOrNull()) return fail(res, new Error("Brak modułu Rozmowy (bot/care.js) — test korzysta z jego tabeli"), 400);
-    const ids = (req.body?.coordinators || []).map((x) => parseInt(x, 10)).filter(Boolean);
-    const items = (req.body?.items || []).filter((x) => refBot.TEST_ITEMS.includes(x));
-    if (!ids.length) return fail(res, new Error("Wybierz odbiorcę"), 400);
-    if (!items.length) return fail(res, new Error("Wybierz, co wysłać"), 400);
-    if (ids.length > 10) return fail(res, new Error("Maksymalnie 10 odbiorców naraz"), 400);
-    const result = await refBot.sendTest({ coordinatorIds: ids, items, workerLang: String(req.body?.worker_lang || "uk"), by: req.rs.me });
-    res.json({ ok: true, result });
-  } catch (e) { fail(res, e); }
-});
-router.post("/test/clear", async (req, res) => {
-  try {
-    if (!req.rs.admin) return fail(res, new Error("Tylko administrator"), 403);
-    const care = careBotOrNull();
-    if (!care) return fail(res, new Error("Brak modułu Rozmowy"), 400);
-    const ids = (req.body?.coordinators || []).map((x) => parseInt(x, 10)).filter(Boolean);
-    res.json({ ok: true, result: await care.clearTests(ids.length ? ids : null), sent: await care.testSummary() });
-  } catch (e) { fail(res, e); }
-});
-
 // ── Налаштування (адмін) ─────────────────────────────────────────────
+// «enabled» і «start_sites» більше не використовуються: хто отримує стартовий пакет — Rozmowy (Koordynatorzy + Ustawienia)
 const VALID = {
-  enabled: (v) => v === "0" || v === "1",
   visible_coords: (v) => v === "0" || v === "1",
   window_days: (v) => /^\d+$/.test(v) && +v >= 1 && +v <= 30,
   remind_max: (v) => /^\d+$/.test(v) && +v >= 0 && +v <= 5,
@@ -676,11 +647,6 @@ const VALID = {
   bonus_amount: (v) => v === "" || (/^\d+([.,]\d{1,2})?$/.test(v) && parseFloat(v.replace(",", ".")) <= 100000),
   start_date: (v) => isDate(v),
   start_remind_days: (v) => /^\d+$/.test(v) && +v >= 0 && +v <= 5,
-  start_sites: (v) => {
-    if (v === "" || v === "*") return true;
-    try { const a = JSON.parse(v); return Array.isArray(a) && a.length <= 1000 && a.every((x) => typeof x === "string" && x.length <= 200); }
-    catch (e) { return false; }
-  },
 };
 router.get("/settings", async (req, res) => {
   try {
@@ -689,11 +655,16 @@ router.get("/settings", async (req, res) => {
     const stats = await db.query(
       `SELECT count(*)::int AS answers, count(*) FILTER (WHERE status = 'answered')::int AS answered,
               (SELECT count(*)::int FROM ref.tg_log) AS tg_events FROM ref.answers`);
-    const sites = [...(await sitesMap()).values()]
-      .map((x) => ({ site_key: x.site_key, region_name: x.region_name, coordinator_name: x.coordinator_name }))
-      .sort((a, b) => (a.region_name ? 0 : 1) - (b.region_name ? 0 : 1) || String(a.region_name || "").localeCompare(String(b.region_name || "")) || a.site_key.localeCompare(b.site_key));
-    const startActive = await refBot.startOn();
-    res.json({ ok: true, settings: Object.fromEntries(r.rows.map((x) => [x.key, x.value])), stats: stats.rows[0], sites, start_active: startActive });
+    // об'єкти в пакеті — за координаторами, увімкненими в Rozmowy
+    const coords = new Map();
+    for (const x of (await sitesMap()).values()) {
+      if (!x.care_on) continue;
+      const c = coords.get(x.coordinator_id) || coords.set(x.coordinator_id, { name: x.coordinator_name, sites: [] }).get(x.coordinator_id);
+      c.sites.push(x.site_key);
+    }
+    const pkg = [...coords.values()].map((c) => ({ ...c, sites: c.sites.sort() })).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    res.json({ ok: true, settings: Object.fromEntries(r.rows.map((x) => [x.key, x.value])), stats: stats.rows[0],
+      package_on: await refBot.startOn(), package_coords: pkg });
   } catch (e) { fail(res, e); }
 });
 router.patch("/settings", async (req, res) => {
@@ -707,7 +678,7 @@ router.patch("/settings", async (req, res) => {
     for (const [k, v] of Object.entries(b)) {
       await db.query(`INSERT INTO ref.settings (key, value, updated_at, updated_by) VALUES ($1, $2, now(), $3)
                       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`,
-        [k, k === "start_sites" ? String(v) : String(v).replace(",", "."), req.rs.me]);
+        [k, String(v).replace(",", "."), req.rs.me]);
     }
     refBot.resetSettingsCache();
     res.json({ ok: true });

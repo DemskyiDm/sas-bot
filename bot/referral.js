@@ -1,27 +1,26 @@
 // ══════════════════════════════════════════════════════════════════════
-//  «Poleć znajomego» — анкета для нових працівників у боті
+//  Стартовий пакет анкет у боті (+ «Poleć znajomego»)
 //
 //  Новий працівник (перший період у компанії або після перерви > 14 днів)
-//  одразу після входу в бот отримує питання «Хто вас привів?»:
-//    друг-працівник / координатор / рекрутація / інше.
-//  Для друга і координатора — вписує ім'я та прізвище (тільки текст).
+//  одразу після входу в бот отримує ОДИН пакет із 6 питань:
+//    1. «Як ви дізналися про компанію?» — тут (bot/referral.js): друг, координатор,
+//       рекрутер, Facebook, Instagram, TikTok, Telegram, сайт вакансій, інше.
+//       Для друга й координатора — ім'я та прізвище (тільки текст) → премія за полецення;
+//    2–6. анкета care «start» (bot/care.js, db/migration_start_survey.sql):
+//       умови, рекрутер, житло, координатор, «на скільки приїхали».
+//
+//  Хто отримує: нові на об'єктах координаторів, увімкнених у Rozmowy → Koordynatorzy,
+//  коли в Rozmowy → Ustawienia увімкнена анкета «start» (і анкети загалом).
+//  Решта нових не отримує нічого.
 //
 //  Правила:
-//   • відповісти можна до BHP + window_days (5) включно, потім — заборонено;
-//   • нагадування раз на день о remind_time, не більше remind_max (3);
+//   • питання 1 — до BHP + window_days (5) включно, потім — заборонено;
+//     нагадування раз на день о remind_time, не більше remind_max (3);
+//   • питання 2–6 — одразу після 1; нагадування раз на день start_remind_days (2) дні;
 //   • кожен вхід у бот під ID працівника записується в ref.tg_log
 //     (Telegram-ID, username, ім'я) — історія Telegram працівника;
 //   • з Telegram, який належить координатору, анкета не надсилається,
 //     а відповідь не приймається (спроба записується як blocked).
-//
-//  Після нього всім — обов'язкове «На скільки ви приїхали?» (1/2/3/6 міс., довше),
-//  нагадування — як для першого питання, поки не відповість (у межах BHP + 5).
-//
-//  Пілот «анкета на старті» (налаштування start_sites): на вибраних об'єктах
-//  перше питання — «Як ви дізналися про компанію?» з каналами (Facebook,
-//  Instagram, TikTok, Telegram, сайти вакансій, рекрутер, друг, координатор),
-//  а одразу після нього — анкета care «start» (4 питання, див.
-//  db/migration_start_survey.sql); нагадування — start_remind_days (2) дні.
 //
 //  Підключення (index.js):
 //    if (await referral.onUpdate(bot, req.body)) return;   // у вебхуку
@@ -49,10 +48,10 @@ const TX = {
     expired: "Час на відповідь минув ({dl}). Відповідь уже не можна внести або змінити.",
     blocked: "⛔ Цю анкету має заповнити сам працівник зі свого телефона.\nВідповідь із Telegram координатора не приймається.",
     other_worker: "Ця анкета для іншого працівника.",
-    stay_q: "📅 <b>На скільки ви приїхали працювати?</b>", stay_saved: "✅ Записали: {v}.",
+    stay_saved: "✅ Записали: {v}.",
     stay_m1: "1 місяць", stay_m2: "2 місяці", stay_m3: "3 місяці", stay_m6: "6 місяців", stay_more: "Довше",
-    ask_x: "👋 Вітаємо в SAS Logistic!\n\nСкажіть, будь ласка, <b>як ви дізналися про нашу компанію?</b>",
-    remind_x: "⏰ Нагадування: дайте відповідь до <b>{dl}</b>.\n\nЯк ви дізналися про SAS Logistic?",
+    ask_x: "👋 Вітаємо в SAS Logistic!\n\n6 коротких питань — займе хвилину.\n\n<b>Як ви дізналися про нашу компанію?</b>  <i>(1/6)</i>",
+    remind_x: "⏰ Нагадування: дайте відповідь до <b>{dl}</b>.\n\n<b>Як ви дізналися про SAS Logistic?</b>  <i>(1/6)</i>",
     o_recruit_x: "📞 Мені подзвонив / написав рекрутер",
     o_facebook: "📘 Facebook", o_instagram: "📸 Instagram", o_tiktok: "🎵 TikTok",
     o_telegram: "✈️ Telegram-канал / група", o_jobsite: "🌐 Сайт вакансій (OLX, Work.ua…)", o_other_x: "🔎 Інше",
@@ -74,10 +73,10 @@ const TX = {
     expired: "Время для ответа истекло ({dl}). Ответ уже нельзя внести или изменить.",
     blocked: "⛔ Эту анкету должен заполнить сам работник со своего телефона.\nОтвет с Telegram координатора не принимается.",
     other_worker: "Эта анкета для другого работника.",
-    stay_q: "📅 <b>На сколько вы приехали работать?</b>", stay_saved: "✅ Записали: {v}.",
+    stay_saved: "✅ Записали: {v}.",
     stay_m1: "1 месяц", stay_m2: "2 месяца", stay_m3: "3 месяца", stay_m6: "6 месяцев", stay_more: "Дольше",
-    ask_x: "👋 Добро пожаловать в SAS Logistic!\n\nСкажите, пожалуйста, <b>как вы узнали о нашей компании?</b>",
-    remind_x: "⏰ Напоминание: ответьте до <b>{dl}</b>.\n\nКак вы узнали о SAS Logistic?",
+    ask_x: "👋 Добро пожаловать в SAS Logistic!\n\n6 коротких вопросов — займёт минуту.\n\n<b>Как вы узнали о нашей компании?</b>  <i>(1/6)</i>",
+    remind_x: "⏰ Напоминание: ответьте до <b>{dl}</b>.\n\n<b>Как вы узнали о SAS Logistic?</b>  <i>(1/6)</i>",
     o_recruit_x: "📞 Мне позвонил / написал рекрутер",
     o_facebook: "📘 Facebook", o_instagram: "📸 Instagram", o_tiktok: "🎵 TikTok",
     o_telegram: "✈️ Telegram-канал / группа", o_jobsite: "🌐 Сайт вакансий (OLX, Work.ua…)", o_other_x: "🔎 Другое",
@@ -99,10 +98,10 @@ const TX = {
     expired: "Czas na odpowiedź minął ({dl}). Nie można już jej wpisać ani zmienić.",
     blocked: "⛔ Tę ankietę wypełnia sam pracownik ze swojego telefonu.\nOdpowiedź z Telegrama koordynatora nie jest przyjmowana.",
     other_worker: "Ta ankieta jest dla innego pracownika.",
-    stay_q: "📅 <b>Na jak długo przyjechałeś do pracy?</b>", stay_saved: "✅ Zapisaliśmy: {v}.",
+    stay_saved: "✅ Zapisaliśmy: {v}.",
     stay_m1: "1 miesiąc", stay_m2: "2 miesiące", stay_m3: "3 miesiące", stay_m6: "6 miesięcy", stay_more: "Dłużej",
-    ask_x: "👋 Witamy w SAS Logistic!\n\nPowiedz, proszę: <b>skąd dowiedziałeś się o naszej firmie?</b>",
-    remind_x: "⏰ Przypomnienie: odpowiedz do <b>{dl}</b>.\n\nSkąd dowiedziałeś się o SAS Logistic?",
+    ask_x: "👋 Witamy w SAS Logistic!\n\n6 krótkich pytań — zajmie minutę.\n\n<b>Skąd dowiedziałeś się o naszej firmie?</b>  <i>(1/6)</i>",
+    remind_x: "⏰ Przypomnienie: odpowiedz do <b>{dl}</b>.\n\n<b>Skąd dowiedziałeś się o SAS Logistic?</b>  <i>(1/6)</i>",
     o_recruit_x: "📞 Zadzwonił / napisał do mnie rekruter",
     o_facebook: "📘 Facebook", o_instagram: "📸 Instagram", o_tiktok: "🎵 TikTok",
     o_telegram: "✈️ Kanał / grupa w Telegramie", o_jobsite: "🌐 Portal z ofertami (OLX, Pracuj.pl…)", o_other_x: "🔎 Inne",
@@ -124,24 +123,22 @@ const TX = {
     expired: "The time to answer has passed ({dl}). The answer can no longer be entered or changed.",
     blocked: "⛔ This survey must be filled in by the worker from their own phone.\nAnswers from a coordinator's Telegram are not accepted.",
     other_worker: "This survey is for another worker.",
-    stay_q: "📅 <b>How long did you come to work for?</b>", stay_saved: "✅ Saved: {v}.",
+    stay_saved: "✅ Saved: {v}.",
     stay_m1: "1 month", stay_m2: "2 months", stay_m3: "3 months", stay_m6: "6 months", stay_more: "Longer",
-    ask_x: "👋 Welcome to SAS Logistic!\n\nPlease tell us: <b>how did you hear about our company?</b>",
-    remind_x: "⏰ Reminder: please answer by <b>{dl}</b>.\n\nHow did you hear about SAS Logistic?",
+    ask_x: "👋 Welcome to SAS Logistic!\n\n6 short questions — takes a minute.\n\n<b>How did you hear about our company?</b>  <i>(1/6)</i>",
+    remind_x: "⏰ Reminder: please answer by <b>{dl}</b>.\n\n<b>How did you hear about SAS Logistic?</b>  <i>(1/6)</i>",
     o_recruit_x: "📞 A recruiter called / messaged me",
     o_facebook: "📘 Facebook", o_instagram: "📸 Instagram", o_tiktok: "🎵 TikTok",
     o_telegram: "✈️ Telegram channel / group", o_jobsite: "🌐 Job website (OLX, Work.ua…)", o_other_x: "🔎 Other",
     s_recruit_x: "recruiter", s_facebook: "Facebook", s_instagram: "Instagram", s_tiktok: "TikTok", s_telegram: "Telegram", s_jobsite: "job website",
   },
 };
+// SOURCES — старе питання «хто привів» (4 кнопки; рядки до пакета, ext = false)
 const SOURCES = ["friend", "coord", "recruit", "other"];
-// пілот: «як дізналися» з каналами
+// пакет: «як дізналися» з каналами (ext = true)
 const SOURCES_X = ["friend", "coord", "recruit", "facebook", "instagram", "tiktok", "telegram", "jobsite", "other"];
+// «на скільки приїхали» — тепер питання 6 анкети care «start»; тут — назви для панелі й старих кнопок RF_T_
 const STAYS = ["m1", "m2", "m3", "m6", "more"];
-function stayKeyboard(t, id, prefix) {
-  const b = (c) => ({ text: t["stay_" + c], callback_data: `${prefix || `RF_T_${id}_`}${c}` });
-  return [[b("m1"), b("m2"), b("m3")], [b("m6"), b("more")]];
-}
 const srcLabel = (t, src, ext) => (ext && t["s_" + src + "_x"]) || t["s_" + src] || src;
 const langOf = (l) => (TX[l] ? l : l === "ua" ? "uk" : "uk");
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
@@ -167,7 +164,7 @@ async function settings() {
 }
 function resetSettingsCache() { SET = null; }
 
-// Пілот анкети на старті: об'єкт у start_sites і анкета care «start» увімкнена
+// Стартовий пакет увімкнений: анкета care «start» активна і анкети в Rozmowy не вимкнені
 async function startOn() {
   try {
     const r = await db.query(
@@ -176,15 +173,13 @@ async function startOn() {
     return !!(r.rows[0] && r.rows[0].is_active && Number(r.rows[0].surveys_on) !== 0);   // + загальний вимикач анкет у Rozmowy
   } catch (e) { return false; }                       // модуля Rozmowy немає
 }
-function sitePicked(st, siteKey) {
-  const v = String(st.start_sites || "").trim();
-  if (!v) return false;
-  if (v === "*") return true;
-  try { return JSON.parse(v).includes(siteKey); } catch (e) { return false; }
-}
-async function isPilot(siteKey) {
-  const st = await settings();
-  return sitePicked(st, siteKey) && (await startOn());
+// Об'єкт у пакеті: його координатор увімкнений у Rozmowy → Koordynatorzy
+const PKG_SQL = (site) => `EXISTS (SELECT 1 FROM reg.site_owner o WHERE o.site_key = ${site} AND o.valid_to IS NULL AND care.is_on(o.coordinator_id))`;
+async function inPackage(siteKey) {
+  if (!siteKey || !(await startOn())) return false;
+  try {
+    return (await db.query(`SELECT ${PKG_SQL("$1")} AS on`, [siteKey])).rows[0].on === true;
+  } catch (e) { return false; }
 }
 
 async function today() {
@@ -264,14 +259,20 @@ async function deadlineOf(row) {
   const st = await settings();
   return addDaysISO(toISO(row.bhp_date), Number(st.window_days) || 5);
 }
-async function ensureRow(workerId, hire, chatId, lang) {
-  const ext = await isPilot(hire.site_key);
-  await db.query(
-    `INSERT INTO ref.answers (worker_id, bhp_date, facility_id, sent_chat_id, lang, ext)
-     VALUES ($1, $2::date, $3, $4, $5, $6) ON CONFLICT (worker_id, bhp_date) DO NOTHING`,
-    [workerId, hire.bhp, hire.facility_id, chatId, lang, ext]);
+// Рядок відповіді створюється лише для об'єктів у пакеті (решта нових не отримує нічого).
+// Старий рядок без відповіді (4 кнопки, до пакета) на об'єкті в пакеті переходить у пакет.
+async function ensureRow(workerId, hire, chatId, lang, pkg) {
+  if (pkg === undefined) pkg = await inPackage(hire.site_key);
+  if (pkg) {
+    await db.query(
+      `INSERT INTO ref.answers (worker_id, bhp_date, facility_id, sent_chat_id, lang, ext)
+       VALUES ($1, $2::date, $3, $4, $5, true)
+       ON CONFLICT (worker_id, bhp_date) DO UPDATE SET ext = true, updated_at = now()
+        WHERE ref.answers.status = 'sent' AND NOT ref.answers.ext`,
+      [workerId, hire.bhp, hire.facility_id, chatId, lang]);
+  }
   const r = await db.query(`SELECT * FROM ref.answers WHERE worker_id = $1 AND bhp_date = $2::date`, [workerId, hire.bhp]);
-  return r.rows[0];
+  return r.rows[0] || null;
 }
 async function workerLang(workerId) {
   const r = await db.query(`SELECT lang::text AS lang, session_data->>'lang' AS slang FROM public.workers WHERE id = $1`, [workerId]);
@@ -279,19 +280,15 @@ async function workerLang(workerId) {
   return langOf(x.slang || x.lang || "uk");
 }
 
-// Надіслати питання (перше або нагадування). Якщо джерело вже обране
+// Надіслати питання 1 пакета (перше або нагадування). Якщо джерело вже обране
 // (друг/координатор), а ім'я не вписане — питаємо одразу ім'я.
 async function sendAsk(row, chatId, reminder) {
   const t = TX[langOf(row.lang)];
   const dl = ddmm(await deadlineOf(row));
   const src = row.pending_source || (row.status !== "answered" ? row.source : null);
-  const needStay = row.status === "answered" && !row.stay_plan && !row.pending_source;
   await db.query(`UPDATE ref.answers SET last_try_at = now() WHERE id = $1`, [row.id]);   // невдала спроба — наступна завтра
   let ok;
-  if (needStay) {
-    const head = reminder ? fmt(row.ext ? t.remind_x : t.remind, { dl }).split("\n\n")[0] + "\n\n" : "";
-    ok = await send(chatId, head + t.stay_q, stayKeyboard(t, row.id));
-  } else if (src === "friend" || src === "coord") {
+  if (src === "friend" || src === "coord") {
     const head = reminder ? fmt(row.ext ? t.remind_x : t.remind, { dl }).split("\n\n")[0] + "\n\n" : "";
     ok = await send(chatId, head + (src === "friend" ? t.name_friend : t.name_coord));
     if (ok) await db.query(`UPDATE ref.answers SET await_name = true WHERE id = $1`, [row.id]);
@@ -314,14 +311,19 @@ async function onLogin(bot, worker, chatId, from) {
   try {
     const coord = await coordByChat(chatId, from && from.id);
     await logTg(worker.id, chatId, from, "login", coord && coord.id, null);
-    const st = await settings();
-    if (st.enabled !== "1" || coord) return;           // Telegram координатора — анкету не показуємо
+    if (coord) return;                                 // Telegram координатора — анкету не показуємо
+    if (!(await startOn())) return;                    // пакет вимкнений у Rozmowy → Ustawienia
     await relink();
     const hire = await openHire(worker.id);
     if (!hire) return;
     const lang = await workerLang(worker.id);
-    const row = await ensureRow(worker.id, hire, chatId, lang);
-    if (!row || (row.status !== "sent" && !(row.status === "answered" && !row.stay_plan && !row.manual_by))) return;
+    const pkg = await inPackage(hire.site_key);
+    const row = await ensureRow(worker.id, hire, chatId, lang, pkg);
+    // об'єкт не в пакеті (координатора вимкнули в Rozmowy) або старий рядок до пакета — нічого не надсилаємо
+    if (!row || !row.ext || !pkg) return;
+    // питання 1 вже є — продовжити пакет (питання 2–6), якщо ще не надсилали
+    if (row.status === "answered") { if (!row.manual_by) await startSurvey(row, chatId); return; }
+    if (row.status !== "sent") return;
     // повторний вхід протягом години — не дублюємо питання
     if (row.last_sent_at && Date.now() - new Date(row.last_sent_at).getTime() < 3600 * 1000 && String(row.sent_chat_id) === String(chatId)) return;
     if (row.lang !== lang) { await db.query(`UPDATE ref.answers SET lang = $2 WHERE id = $1`, [row.id, lang]); row.lang = lang; }
@@ -388,18 +390,14 @@ async function thanks(chatId, t, row, label, dl) {
   await send(chatId, fmt(t.thanks, { v: esc(label), dl: ddmm(dl) }), [[{ text: t.edit, callback_data: `RF_E_${row.id}` }]]);
 }
 
-// Після «хто привів»: обов'язкове «на скільки приїхали», потім (пілот) анкета 2–5
-async function afterQ1(row, chatId, t) {
+// Після питання 1 — одразу питання 2–6 (анкета care «start»)
+async function afterQ1(row, chatId) {
   const r = (await db.query(`SELECT * FROM ref.answers WHERE id = $1`, [row.id])).rows[0] || row;
-  if (!r.stay_plan) {
-    await send(chatId, t.stay_q, stayKeyboard(t, r.id));
-    return;
-  }
   await startSurvey(r, chatId);
 }
 
-// ── Анкета на старті (пілот): питання 2–5 — анкета care «start» ──────
-// Створюється один раз на прийом, одразу після відповіді «як дізналися».
+// ── Питання 2–6 пакета — анкета care «start» ─────────────────────────
+// Створюється один раз на прийом, одразу після відповіді на питання 1.
 async function startSurvey(row, chatId) {
   if (!row.ext || !(await startOn())) return false;
   // відповіді анкети бот приймає тільки з Telegram у картці працівника — туди й надсилаємо;
@@ -418,7 +416,7 @@ async function startSurvey(row, chatId) {
        FROM ref.answers a
        LEFT JOIN ref.v_hires h ON h.worker_id = a.worker_id AND h.bhp_date = a.bhp_date
        LEFT JOIN reg.site_owner o ON o.site_key = h.site_key AND o.valid_to IS NULL
-      WHERE a.id = $1
+      WHERE a.id = $1 AND care.is_on(o.coordinator_id)        -- координатора об'єкта вимкнули в Rozmowy — не надсилаємо
      ON CONFLICT (worker_id, survey_code, bhp_date) DO NOTHING
      RETURNING id`, [row.id]);
   if (!ins.rows[0]) return false;                     // уже надсилали
@@ -445,7 +443,7 @@ async function onCallback(cq) {
     BOT.telegram.editMessageReplyMarkup(chatId, cq.message.message_id, undefined, { inline_keyboard: [] }).catch(() => {});
   }
   if (m[1] === "T") {
-    // «на скільки приїхали»
+    // «на скільки приїхали» — кнопки старих повідомлень (до пакета); тепер це питання 6 анкети «start»
     const v = m[3];
     if (!STAYS.includes(v)) return;
     await db.query(`UPDATE ref.answers SET stay_plan = $2, stay_at = now(), updated_at = now() WHERE id = $1`, [row.id, v]);
@@ -473,7 +471,7 @@ async function onCallback(cq) {
   }
   await saveAnswer(row, chatId, cq.from, src, null);
   await thanks(chatId, t, row, srcLabel(t, src, row.ext), dl);
-  await afterQ1(row, chatId, t);
+  await afterQ1(row, chatId);
 }
 
 // ── Текст (ім'я) ─────────────────────────────────────────────────────
@@ -514,27 +512,16 @@ async function onText(update) {
   RETRIED.delete(row.id);
   await saveAnswer(row, chatId, msg.from, src, name);
   await thanks(chatId, t, row, `${srcLabel(t, src, row.ext)}: ${name}`, dl);
-  await afterQ1(row, chatId, t);
+  await afterQ1(row, chatId);
   return true;
 }
 
 // ══════════════════════════════════════════════════════════════════════
-//  Тест (панель → 🧪 Test): анкета собі в Telegram — так, як її бачить новий
-//  працівник. Кнопки й ім'я працюють, але нічого не записується (care.test_msgs,
-//  кнопки RF_X_…, анкета «start» — тестові SV_X_… з bot/care.js).
+//  Тест (Rozmowy → 🧪 Test → «Pakiet startowy»): весь пакет собі в Telegram —
+//  так, як його бачить новий працівник. Кнопки й ім'я працюють, але нічого
+//  не записується (care.test_msgs, кнопки RF_X_…, питання 2–6 — тестові SV_X_…).
 // ══════════════════════════════════════════════════════════════════════
-const TEST_ITEMS = ["ask", "ask_x", "remind", "blocked"];
-const TTX = {
-  uk: { part: (l) => `🧪 <b>Тест «Poleć znajomego»</b> — так це бачить новий працівник (мова: ${l}). Кнопки працюють, ім'я можна вписати — нічого не записується.`,
-        block: "так це бачить координатор, якщо спробує відповісти за працівника", toast: "🧪 Тест: нічого не записано" },
-  ru: { part: (l) => `🧪 <b>Тест «Poleć znajomego»</b> — так это видит новый работник (язык: ${l}). Кнопки работают, имя можно вписать — ничего не записывается.`,
-        block: "так это видит координатор, если попробует ответить за работника", toast: "🧪 Тест: ничего не записано" },
-  pl: { part: (l) => `🧪 <b>Test „Poleć znajomego”</b> — tak to widzi nowy pracownik (język: ${l}). Przyciski działają, można wpisać imię — nic nie jest zapisywane.`,
-        block: "tak to widzi koordynator, gdy próbuje odpowiedzieć za pracownika", toast: "🧪 Test: nic nie zapisano" },
-  en: { part: (l) => `🧪 <b>"Refer a friend" test</b> — this is what a new worker sees (${l}). Buttons work, you can type a name — nothing is saved.`,
-        block: "what a coordinator sees when trying to answer for a worker", toast: "🧪 Test: nothing saved" },
-};
-const ttx = (l) => TTX[l] || TTX.uk;
+const TOAST = { uk: "🧪 Тест: нічого не записано", ru: "🧪 Тест: ничего не записано", pl: "🧪 Test: nic nie zapisano", en: "🧪 Test: nothing saved" };
 function testKeyboard(t, id, ext) {
   return askKeyboard(t, id, ext).map((row) => row.map((b) => ({ text: b.text, callback_data: b.callback_data.replace(/^RF_S_\d+_/, `RF_X_${id}_S_`) })));
 }
@@ -547,44 +534,24 @@ async function testDeadline() {
   const st = await settings();
   return ddmm(addDaysISO((await today()).d, Number(st.window_days) || 5));
 }
-async function sendTest({ coordinatorIds, items, workerLang = "uk", by = null }) {
+// Викликає bot/care.js (sendTestSet) — ctx того ж тесту
+async function testPackage(ctx, wl) {
   const api = careTest();
-  await api.ensureTestTable();
-  const coords = (await db.query(
-    `SELECT id, full_name, telegram_chat_id FROM public.coordinators WHERE id = ANY($1::int[])`, [coordinatorIds])).rows;
-  const want = new Set(items);
-  const wl = TX[workerLang] ? workerLang : "uk";
-  const t = TX[wl];
-  const dl = await testDeadline();
-  const result = [];
-  for (const c of coords) {
-    if (!c.telegram_chat_id) { result.push({ id: c.id, name: c.full_name, sent: 0, error: "no_telegram" }); continue; }
-    const ctx = { chat: c.telegram_chat_id, coordId: c.id, by, sent: 0 };
-    try {
-      await api.tSend(ctx, "part", wl, ttx(wl).part(api.LANG_NAME[wl] || wl));
-      if (want.has("ask")) await api.tSend(ctx, "ref_ask", wl, t.ask, (id) => testKeyboard(t, id, false), { ext: false });
-      if (want.has("ask_x")) await api.tSend(ctx, "ref_ask", wl, t.ask_x, (id) => testKeyboard(t, id, true), { ext: true });
-      if (want.has("remind")) await api.tSend(ctx, "ref_ask", wl, fmt(t.remind, { dl }), (id) => testKeyboard(t, id, false), { ext: false });
-      if (want.has("blocked")) await api.tSend(ctx, "info", wl, `<i>(${ttx(wl).block})</i>\n${t.blocked}`);
-      result.push({ id: c.id, name: c.full_name, sent: ctx.sent });
-    } catch (e) {
-      console.error("[ref] test", c.id, e.message);
-      result.push({ id: c.id, name: c.full_name, sent: ctx.sent, error: e.message });
-    }
-  }
-  return result;
+  const lang = TX[wl] ? wl : "uk";
+  const t = TX[lang];
+  return api.tSend(ctx, "ref_ask", lang, t.ask_x, (id) => testKeyboard(t, id, true), { ext: true });
 }
-async function testThanks(api, ctx, lang, askId, ext, label) {
+// Подяка за питання 1; потім — питання 2–6 (крім повторної відповіді через «змінити»)
+async function testThanks(api, ctx, lang, askId, again, label) {
   const t = TX[langOf(lang)];
   await api.tSend(ctx, "info", lang, fmt(t.thanks, { v: esc(label), dl: await testDeadline() }),
     () => [[{ text: t.edit, callback_data: `RF_X_${askId}_E` }]]);
-  // обов'язкове «на скільки приїхали» (тест); після відповіді — пілот: питання 2–5
-  await api.tSend(ctx, "ref_stay", lang, t.stay_q, (id) => stayKeyboard(t, id, `RF_X_${id}_T_`), { ext });
+  if (!again) await api.testSurvey(ctx, "start", lang);
 }
 async function onTestCallback(cq) {
   const chatId = cq.message && cq.message.chat && cq.message.chat.id;
   const ack = (txt) => BOT && BOT.telegram.answerCbQuery(cq.id, txt || "").catch(() => {});
-  const m = String(cq.data || "").match(/^RF_X_(\d+)_([SET])(?:_(\w+))?$/);
+  const m = String(cq.data || "").match(/^RF_X_(\d+)_([SE])(?:_(\w+))?$/);
   if (!m || !chatId) return ack();
   const api = careTest();
   await api.ensureTestTable();
@@ -592,30 +559,25 @@ async function onTestCallback(cq) {
   if (!row || String(row.chat_id) !== String(chatId)) return ack();
   const lang = langOf(row.lang);
   const t = TX[lang];
-  const ext = !!(row.payload && row.payload.ext);
+  const p = row.payload || {};
+  const ext = !!p.ext;
   const ctx = { chat: chatId, coordId: row.coordinator_id, by: row.sent_by, sent: 0 };
   if (m[2] === "E") {
     await ack();
-    return api.tSend(ctx, "ref_ask", lang, ext ? t.ask_x : t.ask, (id) => testKeyboard(t, id, ext), { ext });
-  }
-  if (m[2] === "T") {
-    if (!STAYS.includes(m[3]) || row.kind !== "ref_stay" || (row.payload && row.payload.done)) return ack();
-    await db.query(`UPDATE care.test_msgs SET payload = payload || '{"done": true}'::jsonb WHERE id = $1`, [row.id]);
-    await ack(ttx(lang).toast);
-    if (cq.message.message_id) BOT.telegram.editMessageReplyMarkup(chatId, cq.message.message_id, undefined, { inline_keyboard: [] }).catch(() => {});
-    await api.tSend(ctx, "info", lang, fmt(t.stay_saved, { v: t["stay_" + m[3]] }));
-    if (ext) await api.testSurvey(ctx, "start", lang);          // далі питання 2–5 (тестові SV_X_…)
-    return;
+    return api.tSend(ctx, "ref_ask", lang, ext ? t.ask_x : t.ask, (id) => testKeyboard(t, id, ext), { ext, again: true });
   }
   const src = m[3];
   if (!(ext ? SOURCES_X : SOURCES).includes(src)) return ack();
-  await ack(ttx(lang).toast);
+  // подвійне натискання — один раз (інакше пакет 2–6 прийшов би двічі)
+  const once = await db.query(`UPDATE care.test_msgs SET payload = payload || '{"done": true}'::jsonb WHERE id = $1 AND NOT (payload ? 'done') RETURNING id`, [row.id]);
+  if (!once.rows.length) return ack();
+  await ack(TOAST[lang] || TOAST.uk);
   if (cq.message.message_id) BOT.telegram.editMessageReplyMarkup(chatId, cq.message.message_id, undefined, { inline_keyboard: [] }).catch(() => {});
   if (src === "friend" || src === "coord") {
     await db.query(`UPDATE care.test_msgs SET payload = payload || '{"await": false}'::jsonb WHERE chat_id = $1 AND kind = 'ref_name'`, [chatId]);
-    return api.tSend(ctx, "ref_name", lang, src === "friend" ? t.name_friend : t.name_coord, null, { await: true, src, ext, ask: row.id });
+    return api.tSend(ctx, "ref_name", lang, src === "friend" ? t.name_friend : t.name_coord, null, { await: true, src, ext, ask: row.id, again: !!p.again });
   }
-  return testThanks(api, ctx, lang, row.id, ext, srcLabel(t, src, ext));
+  return testThanks(api, ctx, lang, row.id, !!p.again, srcLabel(t, src, ext));
 }
 // Тестове ім'я: true — оброблено
 const TEST_RETRIED = new Set();
@@ -641,7 +603,7 @@ async function onTestText(chatId, text) {
   }
   TEST_RETRIED.delete(row.id);
   await db.query(`UPDATE care.test_msgs SET payload = payload || '{"await": false}'::jsonb WHERE id = $1`, [row.id]);
-  await testThanks(api, ctx, lang, p.ask, !!p.ext, `${srcLabel(t, p.src, p.ext)}: ${name}`);
+  await testThanks(api, ctx, lang, p.ask, !!p.again, `${srcLabel(t, p.src, p.ext)}: ${name}`);
   return true;
 }
 
@@ -712,7 +674,7 @@ async function tick(opt) {
     await db.query(
       `UPDATE ref.answers SET await_name = false, pending_source = NULL
         WHERE status = 'answered' AND (await_name OR pending_source IS NOT NULL) AND bhp_date + $1::int < ref.today()`, [win]);
-    if (st.enabled !== "1") return;
+    if (!(await startOn())) return;                    // пакет вимкнений у Rozmowy → Ustawienia
     const now = await today();
     const nowMin = hm((opt && opt.hm) || now.hm);
     const day = nowMin >= 8 * 60 && nowMin < 20 * 60;           // уночі не пишемо
@@ -722,7 +684,7 @@ async function tick(opt) {
             NOT EXISTS (SELECT 1 FROM public.coordinators c WHERE c.telegram_chat_id = ${chat})
         AND NOT EXISTS (SELECT 1 FROM (SELECT l.worker_id FROM ref.tg_log l WHERE l.chat_id = ${chat} AND l.event = 'login'
                                         ORDER BY l.at DESC, l.id DESC LIMIT 1) z WHERE z.worker_id <> ${wid})`;
-    // 2) перше надсилання тим, хто вже в боті (вийшов на роботу, а анкети ще не було)
+    // 2) перше надсилання тим, хто вже в боті (вийшов на роботу, а пакета ще не було) — лише об'єкти в пакеті
     if (day) {
       const fresh = await db.query(
         `SELECT h.worker_id, to_char(h.bhp_date, 'YYYY-MM-DD') AS bhp, h.facility_id, h.site_key, w.telegram_chat_id AS chat
@@ -730,38 +692,45 @@ async function tick(opt) {
           WHERE h.bhp_date >= $1::date AND h.bhp_date <= ref.today() AND ref.today() <= h.bhp_date + $2::int
             AND w.telegram_chat_id IS NOT NULL
             AND NOT EXISTS (SELECT 1 FROM ref.answers a WHERE a.worker_id = h.worker_id AND a.bhp_date = h.bhp_date)
+            AND ${PKG_SQL("h.site_key")}
             AND ${chatOk("w.telegram_chat_id", "h.worker_id")}`,
         [st.start_date || "2000-01-01", win]);
       for (const x of fresh.rows) {
         const lang = await workerLang(x.worker_id);
-        const row = await ensureRow(x.worker_id, x, x.chat, lang);
-        if (row && row.status === "sent" && !row.sends) await sendAsk(row, x.chat, false);
+        const row = await ensureRow(x.worker_id, x, x.chat, lang, true);   // PKG_SQL уже перевірено в запиті
+        if (row && row.ext && row.status === "sent" && !row.sends) await sendAsk(row, x.chat, false);
       }
     }
-    // 3) нагадування — раз на день після remind_time, з дня BHP, не більше remind_max;
+    // старі рядки без відповіді (4 кнопки, до пакета) на об'єктах у пакеті — переходять у пакет
+    await db.query(
+      `UPDATE ref.answers a SET ext = true, updated_at = now() FROM ref.v_hires h
+        WHERE a.status = 'sent' AND NOT a.ext AND a.manual_by IS NULL AND h.worker_id = a.worker_id AND h.bhp_date = a.bhp_date
+          AND ref.today() <= a.bhp_date + $1::int AND ${PKG_SQL("h.site_key")}`, [win]);
+    // 3) нагадування питання 1 — раз на день після remind_time, з дня BHP, не більше remind_max;
     //    сюди ж — повтор першого питання, якщо воно не дійшло (sends = 0)
     if (day && nowMin >= remindAt) {
       const due = await db.query(
         `SELECT a.*
            FROM ref.answers a
-          WHERE (a.status = 'sent' OR (a.status = 'answered' AND a.stay_plan IS NULL AND a.manual_by IS NULL))
+          WHERE a.status = 'sent' AND a.ext
             AND a.sent_chat_id IS NOT NULL
             AND (a.reminders < $1::int OR a.sends = 0)
             AND a.bhp_date <= ref.today() AND ref.today() <= a.bhp_date + $2::int
             AND (COALESCE(a.last_try_at, a.last_sent_at) IS NULL
                  OR (COALESCE(a.last_try_at, a.last_sent_at) AT TIME ZONE 'Europe/Warsaw')::date < ref.today())
-            AND EXISTS (SELECT 1 FROM ref.v_hires h WHERE h.worker_id = a.worker_id AND h.bhp_date = a.bhp_date)
+            AND EXISTS (SELECT 1 FROM ref.v_hires h WHERE h.worker_id = a.worker_id AND h.bhp_date = a.bhp_date AND ${PKG_SQL("h.site_key")})
             AND ${chatOk("a.sent_chat_id", "a.worker_id")}`,
         [remindMax, win]);
       for (const row of due.rows) await sendAsk(row, row.sent_chat_id, row.sends > 0);
     }
-    // 4) анкета на старті: не надіслана (напр. відповідь внесли до пілоту) — надіслати;
-    //    не закінчена — нагадування раз на день упродовж start_remind_days днів
-    if (day && (await startOn())) {
+    // 4) питання 2–6: не надіслані (напр. питання 1 відповіли з іншого Telegram) — надіслати;
+    //    не закінчені — нагадування раз на день упродовж start_remind_days днів
+    if (day) {
       const late = await db.query(
         `SELECT a.*, w.telegram_chat_id AS chat FROM ref.answers a JOIN public.workers w ON w.id = a.worker_id
-          WHERE a.ext AND a.status = 'answered' AND a.stay_plan IS NOT NULL AND a.manual_by IS NULL AND w.telegram_chat_id IS NOT NULL
+          WHERE a.ext AND a.status = 'answered' AND a.manual_by IS NULL AND w.telegram_chat_id IS NOT NULL
             AND ref.today() <= a.bhp_date + $1::int
+            AND EXISTS (SELECT 1 FROM ref.v_hires h WHERE h.worker_id = a.worker_id AND h.bhp_date = a.bhp_date AND ${PKG_SQL("h.site_key")})
             AND NOT EXISTS (SELECT 1 FROM care.survey_sends s WHERE s.worker_id = a.worker_id AND s.survey_code = 'start'
                                AND abs(s.bhp_date - a.bhp_date) <= 14)
             AND ${chatOk("w.telegram_chat_id", "a.worker_id")}`, [win]);
@@ -771,7 +740,7 @@ async function tick(opt) {
         const rem = await db.query(
           `SELECT s.id, w.telegram_chat_id AS chat
              FROM care.survey_sends s JOIN public.workers w ON w.id = s.worker_id
-            WHERE s.survey_code = 'start' AND s.status = 'sent' AND w.telegram_chat_id IS NOT NULL
+            WHERE s.survey_code = 'start' AND s.status = 'sent' AND w.telegram_chat_id IS NOT NULL AND care.is_on(s.coordinator_id)
               AND (s.sent_at AT TIME ZONE 'Europe/Warsaw')::date < ref.today()
               AND ref.today() <= (s.sent_at AT TIME ZONE 'Europe/Warsaw')::date + $1::int
               AND (s.reminded_at IS NULL OR (s.reminded_at AT TIME ZONE 'Europe/Warsaw')::date < ref.today())
@@ -796,6 +765,6 @@ function schedule(bot) {
 }
 function setBot(bot) { BOT = bot; }
 
-module.exports = { onUpdate, onLogin, schedule, setBot, tick, settings, resetSettingsCache, startOn, sitePicked, TX, SOURCES_X, STAYS,
-  sendTest, TEST_ITEMS,
+module.exports = { onUpdate, onLogin, schedule, setBot, tick, settings, resetSettingsCache, startOn, inPackage, PKG_SQL, TX, SOURCES_X, STAYS,
+  testPackage,
   _test: { looksLikeName, cleanName } };

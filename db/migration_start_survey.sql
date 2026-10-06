@@ -1,24 +1,27 @@
 -- ══════════════════════════════════════════════════════════════════════
---  Анкета на старті (реєстрація в боті) — пілот на вибраних об'єктах
+--  Стартовий пакет анкет (реєстрація в боті) — 6 питань
 --
 --  1) «Як ви дізналися про компанію?» — питання «Poleć znajomego» з каналами
 --     (Facebook, Instagram, TikTok, Telegram, сайти вакансій, рекрутер…);
 --     для друга / координатора — ім'я та прізвище, як і раніше.
---  2–5) анкета care «start»: зрозумілість умов, швидкість рекрутера,
---     житло як обіцяли, оцінка координатора (бачать лише регіональні й керівник).
+--  2–6) анкета care «start»: зрозумілість умов, швидкість рекрутера,
+--     житло як обіцяли, оцінка координатора (бачать лише регіональні й керівник),
+--     на скільки приїхав.
 --  Надсилає bot/referral.js одразу після першого питання; нагадування —
 --  раз на день упродовж start_remind_days (2) днів.
+--  Хто отримує: нові на об'єктах координаторів, увімкнених у Rozmowy → Koordynatorzy;
+--  увесь пакет вмикає / вимикає анкета «start» у Rozmowy → Ustawienia.
 --  Потрібні: migration_care.sql, migration_referral.sql. Повторний запуск безпечний.
 -- ══════════════════════════════════════════════════════════════════════
 
--- ── Poleć znajomego: канали, пілот ────────────────────────────────────
+-- ── Poleć znajomego: канали ──────────────────────────────────────────
 ALTER TABLE ref.answers ADD COLUMN IF NOT EXISTS ext BOOLEAN NOT NULL DEFAULT false;   -- для цього прийому — розширена анкета
 ALTER TABLE ref.answers DROP CONSTRAINT IF EXISTS answers_source_check;
 ALTER TABLE ref.answers ADD CONSTRAINT answers_source_check
   CHECK (source IN ('friend','coord','recruit','other','facebook','instagram','tiktok','telegram','jobsite'));
 INSERT INTO ref.settings (key, value) VALUES
-  ('start_sites',       ''),    -- об'єкти пілоту: '' — ніде, '*' — усі, або JSON-масив site_key
-  ('start_remind_days', '2')    -- нагадування анкети 2–5: раз на день, стільки днів після надсилання
+  ('start_sites',       ''),    -- (не використовується з v2: хто отримує — Rozmowy → Koordynatorzy)
+  ('start_remind_days', '2')    -- нагадування питань 2–6: раз на день, стільки днів після надсилання
 ON CONFLICT (key) DO NOTHING;
 
 -- ── Анкета care «start» ──────────────────────────────────────────────
@@ -27,6 +30,17 @@ INSERT INTO care.questions (survey_code, sort, code, text, options, visibility) 
 INSERT INTO care.questions (survey_code, sort, code, text, options, visibility) VALUES ('start', 2, 'recruit5', '{"uk": "⏱ Як швидко ви отримували інформацію та відповіді від рекрутера? 1 — дуже довго, 5 — дуже швидко", "ru": "⏱ Как быстро вы получали информацию и ответы от рекрутера? 1 — очень долго, 5 — очень быстро", "pl": "⏱ Jak szybko dostawałeś informacje i odpowiedzi od rekrutera? 1 — bardzo długo, 5 — bardzo szybko", "en": "⏱ How quickly did you get information and answers from the recruiter? 1 — very slowly, 5 — very fast"}'::jsonb, '[{"c": "1", "t": {"uk": "1 🐢", "ru": "1 🐢", "pl": "1 🐢", "en": "1 🐢"}, "f": null}, {"c": "2", "t": {"uk": "2", "ru": "2", "pl": "2", "en": "2"}, "f": null}, {"c": "3", "t": {"uk": "3", "ru": "3", "pl": "3", "en": "3"}, "f": null}, {"c": "4", "t": {"uk": "4", "ru": "4", "pl": "4", "en": "4"}, "f": null}, {"c": "5", "t": {"uk": "5 ⚡", "ru": "5 ⚡", "pl": "5 ⚡", "en": "5 ⚡"}, "f": null}]'::jsonb, 'coordinator') ON CONFLICT (survey_code, code) DO NOTHING;
 INSERT INTO care.questions (survey_code, sort, code, text, options, visibility) VALUES ('start', 3, 'housing_promise', '{"uk": "🏠 Чи умови проживання такі, як вам обіцяли?", "ru": "🏠 Условия проживания такие, как вам обещали?", "pl": "🏠 Czy warunki zakwaterowania są takie, jak Ci obiecano?", "en": "🏠 Are the housing conditions what you were promised?"}'::jsonb, '[{"c": "yes", "t": {"uk": "✅ Так, як обіцяли", "ru": "✅ Да, как обещали", "pl": "✅ Tak, jak obiecano", "en": "✅ Yes, as promised"}, "f": null}, {"c": "mostly", "t": {"uk": "🤔 Здебільшого так", "ru": "🤔 В основном да", "pl": "🤔 W większości tak", "en": "🤔 Mostly yes"}, "f": "low"}, {"c": "no", "t": {"uk": "❌ Ні, сильно відрізняються", "ru": "❌ Нет, сильно отличаются", "pl": "❌ Nie, bardzo się różnią", "en": "❌ No, very different"}, "f": "high"}, {"c": "own", "t": {"uk": "🏡 Маю своє житло", "ru": "🏡 У меня своё жильё", "pl": "🏡 Mam własne mieszkanie", "en": "🏡 I have my own housing"}, "f": null}]'::jsonb, 'coordinator') ON CONFLICT (survey_code, code) DO NOTHING;
 INSERT INTO care.questions (survey_code, sort, code, text, options, visibility) VALUES ('start', 4, 'coord_start5', '{"uk": "📞 Як ви оцінюєте роботу координатора? Від 1 до 5", "ru": "📞 Как вы оцениваете работу координатора? От 1 до 5", "pl": "📞 Jak oceniasz pracę koordynatora? Od 1 do 5", "en": "📞 How do you rate your coordinator''s work? From 1 to 5"}'::jsonb, '[{"c": "1", "t": {"uk": "1 😞", "ru": "1 😞", "pl": "1 😞", "en": "1 😞"}, "f": null}, {"c": "2", "t": {"uk": "2", "ru": "2", "pl": "2", "en": "2"}, "f": null}, {"c": "3", "t": {"uk": "3", "ru": "3", "pl": "3", "en": "3"}, "f": null}, {"c": "4", "t": {"uk": "4", "ru": "4", "pl": "4", "en": "4"}, "f": null}, {"c": "5", "t": {"uk": "5 😀", "ru": "5 😀", "pl": "5 😀", "en": "5 😀"}, "f": null}]'::jsonb, 'manager') ON CONFLICT (survey_code, code) DO NOTHING;
+
+-- ── v2: один стартовий пакет із 6 питань ─────────────────────────────
+-- 1 — «Як дізналися про компанію?» (bot/referral.js), 2–5 — питання вище,
+-- 6 — «На скільки ви приїхали?» (відповідь копіюється і в ref.answers.stay_plan).
+-- Хто отримує: нові на об'єктах координаторів з увімкненим Rozmowy;
+-- увесь блок вмикає галочка «start» у Rozmowy → Ustawienia.
+INSERT INTO care.questions (survey_code, sort, code, text, options, visibility)
+VALUES ('start', 5, 'stay_plan', '{"uk": "📅 На скільки ви приїхали працювати?", "ru": "📅 На сколько вы приехали работать?", "pl": "📅 Na jak długo przyjechałeś do pracy?", "en": "📅 How long did you come to work for?"}'::jsonb, '[{"c": "m1", "t": {"uk": "1 місяць", "ru": "1 месяц", "pl": "1 miesiąc", "en": "1 month"}, "f": null}, {"c": "m2", "t": {"uk": "2 місяці", "ru": "2 месяца", "pl": "2 miesiące", "en": "2 months"}, "f": null}, {"c": "m3", "t": {"uk": "3 місяці", "ru": "3 месяца", "pl": "3 miesiące", "en": "3 months"}, "f": null}, {"c": "m6", "t": {"uk": "6 місяців", "ru": "6 месяцев", "pl": "6 miesięcy", "en": "6 months"}, "f": null}, {"c": "more", "t": {"uk": "Довше", "ru": "Дольше", "pl": "Dłużej", "en": "Longer"}, "f": null}]'::jsonb, 'coordinator')
+ON CONFLICT (survey_code, code) DO NOTHING;
+UPDATE care.surveys SET name = 'Старт: пакет при реєстрації (6 питань)', intro = '{"uk": "📝 Ще 5 коротких питань — менше хвилини.\n\nВідповіді бачить тільки команда координації SAS Logistic. Координатор не бачить, хто і як його оцінив.", "ru": "📝 Ещё 5 коротких вопросов — меньше минуты.\n\nОтветы видит только команда координации SAS Logistic. Координатор не видит, кто и как его оценил.", "pl": "📝 Jeszcze 5 krótkich pytań — mniej niż minuta.\n\nOdpowiedzi widzi tylko zespół koordynacji SAS Logistic. Koordynator nie widzi, kto i jak go ocenił.", "en": "📝 5 more short questions — less than a minute.\n\nOnly the SAS Logistic coordination team sees your answers. Your coordinator does not see who rated them or how."}'::jsonb
+ WHERE code = 'start' AND intro->>'uk' LIKE '%4 коротких%';
 
 -- «start» не плануємо за стажем — її надсилає бот при реєстрації
 CREATE OR REPLACE FUNCTION care.plan_day(p_day DATE)

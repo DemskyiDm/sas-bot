@@ -1026,6 +1026,21 @@ async function cancelForCoordinators(ids) {
   return r.rows.length;
 }
 
+// Об'єкт пішов в архів (Region → Ustawienia): відкриті розмови й заплановані анкети його людей — скасувати
+async function cancelForSite(siteKey) {
+  const r = await db.query(
+    `UPDATE care.tasks SET status = 'cancelled' WHERE status = 'open' AND site_key = $1 RETURNING id, tg_chat_id, tg_message_id`,
+    [siteKey],
+  );
+  await db.query(`UPDATE care.survey_sends SET status = 'expired' WHERE status = 'planned' AND site_key = $1`, [siteKey]);
+  for (const x of r.rows) {
+    if (!x.tg_chat_id || !x.tg_message_id) continue;
+    const task = await loadTask(x.id);
+    await tgEdit(x.tg_chat_id, x.tg_message_id, (await taskText(task, task.coord_lang)) + `\n\n<i>${tc(task.coord_lang).cancelled}</i>`);
+  }
+  return r.rows.length;
+}
+
 // Доручення з панелі — одразу в Telegram координатору
 async function sendTaskNow(id) {
   const task = await loadTask(id);
@@ -1314,7 +1329,7 @@ async function testSummary() {
 module.exports = {
   schedule, setBot, handleCallback, tick,
   runMorning, runSurveys, runEscalation, runSpotChecks, sendUrgent, startSurveyNow, remindSurveyNow,
-  closeTask, reopenTask, rateAssessment, loadTask, taskText, sendTaskNow, refreshAssessmentMsg, cancelForCoordinators,
+  closeTask, reopenTask, rateAssessment, loadTask, taskText, sendTaskNow, refreshAssessmentMsg, cancelForCoordinators, cancelForSite,
   sendTestSet, clearTests, testSummary, TEST_ITEMS,
   // для тесту «Poleć znajomego» (bot/referral.js): ті самі тестові повідомлення і анкета «start»
   _testApi: { tSend, testSurvey, ensureTestTable, LANG_NAME },

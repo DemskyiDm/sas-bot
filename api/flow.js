@@ -259,8 +259,14 @@ function orderWeeks(today) {
   const m1 = addDays(mondayOf(today), 7);
   return [m1, addDays(m1, 7), addDays(m1, 14)];
 }
-// Підтверджено цього циклу: на всі 3 тижні є запис від понеділка тижня перед m1 (00:00)
-function cycleStart(m1) { return addDays(m1, -7); }
+// Підтвердження плану діє від останньої суботи 00:00 (польський час): у суботу всі
+// підтвердження на наступні 3 тижні знімаються — цифри лишаються, координатор
+// підтверджує їх заново («Zapisz») до неділі orders_deadline.
+const CONFIRM_DOW = 6;                                    // 6 = субота
+function confirmFrom(today) {
+  const dow = new Date(today + "T00:00:00Z").getUTCDay(); // 0 = нд … 6 = сб
+  return addDays(today, -((dow - CONFIRM_DOW + 7) % 7));
+}
 
 // ══════════════════════════════════════════════════════════════════════
 //  API
@@ -374,7 +380,7 @@ router.get("/orders", async (req, res) => {
       query(`SELECT site_key, to_char(week_start, 'YYYY-MM-DD') AS week, qty, entered_at >= ($3::date)::timestamp AT TIME ZONE 'Europe/Warsaw' AS confirmed,
                     to_char(entered_at AT TIME ZONE 'Europe/Warsaw', 'YYYY-MM-DD HH24:MI') AS entered_at
                FROM flow.v_orders WHERE site_key = ANY($1::text[]) AND week_start BETWEEN $2::date AND $2::date + 21`,
-             [keys, cur, cycleStart(weeks[0])]),
+             [keys, cur, confirmFrom(ck.today)]),
       query(`SELECT site_key, count(DISTINCT worker_id)::int AS n FROM flow.v_rows
               WHERE site_key = ANY($1::text[]) AND status NOT IN ('rezygnacja', 'unknown')
                 AND bhp_date <= $2::date AND (last_work_date IS NULL OR last_work_date >= $2::date)
@@ -404,7 +410,7 @@ router.get("/orders", async (req, res) => {
     });
     const st = await getSettings();
     res.json({ ok: true, today: ck.today, current_week: cur, weeks, deadline: st.orders_deadline,
-      can_edit_current: req.fscope.role === "all", rows });
+      confirm_from: confirmFrom(ck.today), can_edit_current: req.fscope.role === "all", rows });
   } catch (e) { fail(res, e); }
 });
 
@@ -613,11 +619,11 @@ const TX = {
     rec: (f, p, e, t) => `Набір: ${f}${p != null ? ` з ${p}${p ? ` (${Math.round((f / p) * 100)}%)` : ""}` : " (план не введено)"} · вписано ${e}${t ? ` · переведенням ${t}` : ""}`,
     dep: (f, p, u) => `Виїзди: ${f}${p != null ? ` · план ${p}` : ""}${u ? ` · поза планом ${u}` : ""}`,
     more: (n) => `… і ще ${n}`,
-    remind: (weeks, dl) => `✍️ <b>План набору на 3 тижні</b>\nВведіть до ${dl}, скільки людей треба набрати на тижні ${weeks}.`,
+    remind: (weeks, dl) => `✍️ <b>План набору на 3 тижні</b>\nВведіть або підтвердіть до ${dl}, скільки людей треба набрати на тижні ${weeks}.\nУ суботу підтвердження знімаються — цифри лишаються, натисніть «Zapisz».`,
     remindSites: "Обʼєкти без плану:",
     where: "Панель → 🚌 Wyjazdy / przyjazdy → Plan naboru",
     monday: (d) => `📋 <b>План і факт · ${d}</b>`,
-    missing: (n) => `✍️ <b>Не ввели план набору: ${n}</b>`,
+    missing: (n) => `✍️ <b>Не ввели / не підтвердили план набору: ${n}</b>`,
     allIn: "✅ План набору ввели всі.",
     plans: "План набору:",
     prev: (a, b) => `📅 <b>Минулий тиждень ${a}–${b}</b>`,
@@ -646,11 +652,11 @@ const TX = {
     rec: (f, p, e, t) => `Набор: ${f}${p != null ? ` из ${p}${p ? ` (${Math.round((f / p) * 100)}%)` : ""}` : " (план не введён)"} · вписано ${e}${t ? ` · переводом ${t}` : ""}`,
     dep: (f, p, u) => `Выезды: ${f}${p != null ? ` · план ${p}` : ""}${u ? ` · вне плана ${u}` : ""}`,
     more: (n) => `… и ещё ${n}`,
-    remind: (weeks, dl) => `✍️ <b>План набора на 3 недели</b>\nВведите до ${dl}, сколько людей нужно набрать на недели ${weeks}.`,
+    remind: (weeks, dl) => `✍️ <b>План набора на 3 недели</b>\nВведите или подтвердите до ${dl}, сколько людей нужно набрать на недели ${weeks}.\nВ субботу подтверждения снимаются — цифры остаются, нажмите «Zapisz».`,
     remindSites: "Объекты без плана:",
     where: "Панель → 🚌 Wyjazdy / przyjazdy → Plan naboru",
     monday: (d) => `📋 <b>План и факт · ${d}</b>`,
-    missing: (n) => `✍️ <b>Не ввели план набора: ${n}</b>`,
+    missing: (n) => `✍️ <b>Не ввели / не подтвердили план набора: ${n}</b>`,
     allIn: "✅ План набора ввели все.",
     plans: "План набора:",
     prev: (a, b) => `📅 <b>Прошлая неделя ${a}–${b}</b>`,
@@ -679,11 +685,11 @@ const TX = {
     rec: (f, p, e, t) => `Nabór: ${f}${p != null ? ` z ${p}${p ? ` (${Math.round((f / p) * 100)}%)` : ""}` : " (brak planu)"} · wpisano ${e}${t ? ` · z przeniesienia ${t}` : ""}`,
     dep: (f, p, u) => `Wyjazdy: ${f}${p != null ? ` · plan ${p}` : ""}${u ? ` · poza planem ${u}` : ""}`,
     more: (n) => `… i jeszcze ${n}`,
-    remind: (weeks, dl) => `✍️ <b>Plan naboru na 3 tygodnie</b>\nWpisz do ${dl}, ilu ludzi trzeba zrekrutować na tygodnie ${weeks}.`,
+    remind: (weeks, dl) => `✍️ <b>Plan naboru na 3 tygodnie</b>\nWpisz lub potwierdź do ${dl}, ilu ludzi trzeba zrekrutować na tygodnie ${weeks}.\nW sobotę potwierdzenia się zerują — liczby zostają, kliknij „Zapisz”.`,
     remindSites: "Obiekty bez planu:",
     where: "Panel → 🚌 Wyjazdy / przyjazdy → Plan naboru",
     monday: (d) => `📋 <b>Plan i fakt · ${d}</b>`,
-    missing: (n) => `✍️ <b>Bez planu naboru: ${n}</b>`,
+    missing: (n) => `✍️ <b>Bez potwierdzonego planu naboru: ${n}</b>`,
     allIn: "✅ Plan naboru wpisali wszyscy.",
     plans: "Plan naboru:",
     prev: (a, b) => `📅 <b>Poprzedni tydzień ${a}–${b}</b>`,
@@ -947,7 +953,7 @@ async function sitesWithoutPlan(siteKeys, today) {
               WHERE o.site_key = s.k AND o.week_start = ANY($2::date[])
                 AND o.entered_at >= ($3::date)::timestamp AT TIME ZONE 'Europe/Warsaw') < 3
       ORDER BY 1`,
-    [siteKeys, weeks, cycleStart(weeks[0])],
+    [siteKeys, weeks, confirmFrom(today)],
   );
   return r.rows.map((x) => x.site_key);
 }
@@ -977,7 +983,7 @@ async function buildMonday(t, today) {
       `SELECT s.k AS site_key FROM unnest($1::text[]) s(k)
         WHERE (SELECT count(*) FROM flow.v_orders o WHERE o.site_key = s.k AND o.week_start = ANY($2::date[])
                 AND o.entered_at >= ($3::date)::timestamp AT TIME ZONE 'Europe/Warsaw') < 3 ORDER BY 1`,
-      [ts.keys, weeks, cycleStart(cur)]);
+      [ts.keys, weeks, confirmFrom(today)]);
     const byCoord = {};
     miss.rows.forEach((x) => {
       const s = ts.sites.find((y) => y.site_key === x.site_key) || {};

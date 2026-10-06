@@ -742,7 +742,7 @@ router.post("/cards/:id/notes", async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════
 router.get("/admin/config", requireAdminOnly, async (req, res) => {
   try {
-    const [regions, sites, settings, flags] = await Promise.all([
+    const [regions, sites, settings, flags, archive] = await Promise.all([
       db.query(
         `SELECT r.id, r.name, r.is_active,
                 COALESCE((SELECT json_agg(json_build_object('id', c.id, 'name', c.full_name) ORDER BY c.full_name)
@@ -758,15 +758,17 @@ router.get("/admin/config", requireAdminOnly, async (req, res) => {
             WHERE is_active AND name <> 'test'
            UNION SELECT site_key FROM reg.site_owner WHERE valid_to IS NULL),
          hc AS (
-           SELECT site_key, COUNT(DISTINCT worker_id)::int AS n FROM reg.v_periods
-            WHERE last_work_date IS NULL OR last_work_date > CURRENT_DATE GROUP BY site_key)
-         SELECT k.site_key, COALESCE(hc.n, 0) AS headcount,
+           SELECT site_key, COUNT(DISTINCT worker_id) FILTER (WHERE last_work_date IS NULL OR last_work_date > CURRENT_DATE)::int AS n,
+                  CASE WHEN bool_or(last_work_date IS NULL) THEN NULL ELSE to_char(MAX(last_work_date), 'YYYY-MM-DD') END AS last_work
+             FROM reg.v_periods GROUP BY site_key)
+         SELECT k.site_key, COALESCE(hc.n, 0) AS headcount, hc.last_work,
                 so.region_id, so.coordinator_id, to_char(so.valid_from,'YYYY-MM-DD') AS valid_from,
                 (SELECT string_agg(f.name, ', ' ORDER BY f.name) FROM public.facilities f
                   WHERE reg.site_key(f.group_name, f.name) = k.site_key) AS facilities
            FROM keys k
            LEFT JOIN hc ON hc.site_key = k.site_key
            LEFT JOIN reg.site_owner so ON so.site_key = k.site_key AND so.valid_to IS NULL
+          WHERE NOT reg.archived(k.site_key)                 -- архівні — окремим списком нижче
           ORDER BY (so.region_id IS NULL) DESC, k.site_key`,
       ),
       db.query(`SELECT key, value::float8 AS value, note FROM reg.settings ORDER BY key`),
@@ -775,8 +777,19 @@ router.get("/admin/config", requireAdminOnly, async (req, res) => {
                 to_char(date_to,'YYYY-MM-DD') AS date_to, note
            FROM reg.site_flags ORDER BY (date_to IS NULL) DESC, date_from DESC`,
       ),
+      db.query(
+        `SELECT a.site_key, to_char(a.archived_at AT TIME ZONE 'Europe/Warsaw', 'YYYY-MM-DD') AS archived_at, a.note,
+                c.full_name AS archived_by_name, rg.name AS prev_region, pc.full_name AS prev_coordinator,
+                (SELECT COUNT(DISTINCT p.worker_id)::int FROM reg.v_periods p
+                  WHERE p.site_key = a.site_key AND (p.last_work_date IS NULL OR p.last_work_date > CURRENT_DATE)) AS headcount
+           FROM reg.site_archive a
+           LEFT JOIN public.coordinators c  ON c.id = a.archived_by
+           LEFT JOIN public.coordinators pc ON pc.id = a.prev_coordinator_id
+           LEFT JOIN reg.regions rg         ON rg.id = a.prev_region_id
+          ORDER BY a.site_key`,
+      ),
     ]);
-    res.json({ ok: true, regions: regions.rows, sites: sites.rows, settings: settings.rows, flags: flags.rows });
+    res.json({ ok: true, regions: regions.rows, sites: sites.rows, settings: settings.rows, flags: flags.rows, archive: archive.rows });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -871,6 +884,75 @@ router.put("/admin/sites", requireAdminOnly, async (req, res) => {
     await client.query(`UPDATE reg.red_cards SET region_id = $2 WHERE site_key = $1 AND status <> 'closed'`, [
       site_key, region_id || null,
     ]);
+    await client.query("COMMIT");
+    res.json({ ok: true });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ── Архів об'єктів: більше не працюємо — зникає з Wyjazdy, Region, Tablica, Rozmowy, Poleć znajomego.
+// Прив'язка до регіону / координатора закривається і запам'ятовується; «Przywróć» її повертає.
+router.post("/admin/archive", requireAdminOnly, async (req, res) => {
+  const site = String((req.body && req.body.site_key) || "").trim();
+  const note = String((req.body && req.body.note) || "").trim().slice(0, 300);
+  if (!site) return res.status(400).json({ ok: false, error: "site_key required" });
+  const client = await db.pool.connect();
+  let cards = 0;
+  try {
+    await client.query("BEGIN");
+    const ins = await client.query(
+      `INSERT INTO reg.site_archive (site_key, archived_by, note, prev_region_id, prev_coordinator_id)
+       SELECT $1, $2, NULLIF($3, ''), o.region_id, o.coordinator_id
+         FROM (SELECT 1) x LEFT JOIN reg.site_owner o ON o.site_key = $1 AND o.valid_to IS NULL
+       ON CONFLICT (site_key) DO NOTHING RETURNING site_key`,
+      [site, req.coordinator.coordinator_id, note],
+    );
+    if (!ins.rows.length) { await client.query("ROLLBACK"); return res.status(400).json({ ok: false, error: "Obiekt jest już w archiwum" }); }
+    await client.query(
+      `UPDATE reg.site_owner SET valid_to = GREATEST(valid_from, (now() AT TIME ZONE 'Europe/Warsaw')::date - 1)
+        WHERE site_key = $1 AND valid_to IS NULL`,
+      [site],
+    );
+    const c = await client.query(
+      `UPDATE reg.red_cards SET status = 'closed', closed_at = now(), close_reason = 'archived'
+        WHERE site_key = $1 AND status <> 'closed'`,
+      [site],
+    );
+    cards = c.rowCount;
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    return res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    client.release();
+  }
+  // Rozmowy: відкриті розмови й заплановані анкети людей цього об'єкта
+  let tasks = 0;
+  try { tasks = await require("../bot/care").cancelForSite(site); } catch (e) { console.error("[region] archive care", e.message); }
+  res.json({ ok: true, cards_closed: cards, tasks_cancelled: tasks });
+});
+router.post("/admin/unarchive", requireAdminOnly, async (req, res) => {
+  const site = String((req.body && req.body.site_key) || "").trim();
+  if (!site) return res.status(400).json({ ok: false, error: "site_key required" });
+  const client = await db.pool.connect();
+  try {
+    await client.query("BEGIN");
+    const del = await client.query(`DELETE FROM reg.site_archive WHERE site_key = $1 RETURNING prev_region_id, prev_coordinator_id`, [site]);
+    if (!del.rows.length) { await client.query("ROLLBACK"); return res.status(404).json({ ok: false, error: "Nie ma w archiwum" }); }
+    const p = del.rows[0];
+    // poprzednie przypisanie wraca od dziś (jeśli w międzyczasie nikt nie przypisał inaczej)
+    if (p.prev_region_id || p.prev_coordinator_id) {
+      await client.query(
+        `INSERT INTO reg.site_owner (site_key, region_id, coordinator_id, valid_from, created_by)
+         SELECT $1, $2, $3, (now() AT TIME ZONE 'Europe/Warsaw')::date, $4
+          WHERE NOT EXISTS (SELECT 1 FROM reg.site_owner WHERE site_key = $1 AND valid_to IS NULL)`,
+        [site, p.prev_region_id, p.prev_coordinator_id, req.coordinator.coordinator_id],
+      );
+    }
     await client.query("COMMIT");
     res.json({ ok: true });
   } catch (e) {

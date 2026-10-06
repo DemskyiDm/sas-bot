@@ -361,7 +361,7 @@ async function refreshOrdersBadge() {
   const n = r && r.ok ? r.rows.filter((x) => !x.confirmed).length : 0;
   const b = document.getElementById("badgeOrders");
   b.textContent = n ? String(n) : "";
-  b.title = n ? `${n} obiektów bez planu na 3 tygodnie` : "";
+  b.title = n ? `${n} obiektów bez potwierdzonego planu na 3 tygodnie` : "";
 }
 async function loadOrders() {
   const my = ++ST.seq;
@@ -379,7 +379,8 @@ function renderOrders() {
   document.getElementById("ordBanner").innerHTML = `<div class="banner${done < r.rows.length ? " warn" : ""}">
     Wpisz do <b>niedzieli ${dd(sunday)}, ${esc(r.deadline)}</b>, ilu ludzi trzeba zrekrutować na tygodnie
     ${r.weeks.map((w) => `<b>${dd(w)}–${dd(addDays(w, 6))}</b>`).join(", ")}.
-    Potwierdzone: <b>${done} z ${r.rows.length}</b> obiektów. Plan na bieżący tydzień (${dd(r.current_week)}) jest już zamknięty${r.can_edit_current ? " — może go zmienić tylko kierownictwo" : ""}.</div>`;
+    Potwierdzone: <b>${done} z ${r.rows.length}</b> obiektów. Plan na bieżący tydzień (${dd(r.current_week)}) jest już zamknięty${r.can_edit_current ? " — może go zmienić tylko kierownictwo" : ""}.
+    <div class="sub" style="margin-top:4px">W każdą sobotę o 0:00 potwierdzenia się zerują — liczby zostają, ale trzeba je sprawdzić i potwierdzić ponownie („Zapisz”).${r.confirm_from ? ` Liczą się zapisy od soboty ${dd(r.confirm_from)}.` : ""}</div></div>`;
   document.getElementById("ordCnt").textContent = `${r.rows.length} obiektów`;
   if (!r.rows.length) { document.getElementById("ordTable").innerHTML = `<div class="empty">Brak obiektów</div>`; return; }
   // Koordynator: propozycja z poprzedniego tygodnia wpisana szarym — „Zapisz wszystkie” = potwierdzenie.
@@ -406,7 +407,9 @@ function renderOrders() {
         ? `<div class="ord-cell"><input type="number" min="0" max="999" value="${row.current.qty == null ? "" : row.current.qty}" data-i="${i}" data-j="cur" oninput="this.dataset.dirty='1'" /><span class="h">wyj. ${row.current.dep} · wpis. ${row.current.arr}</span></div>`
         : `${row.current.qty == null ? `<span class="z">—</span>` : row.current.qty}<div class="sub">wyj. ${row.current.dep} · wpis. ${row.current.arr}</div>`}</td>
       ${row.weeks.map((c, j) => `<td class="sep">${cell(row, c, i, j, true)}</td>`).join("")}
-      <td class="l sep">${row.confirmed ? `<span class="ok-mark">✓ potwierdzone</span>` : `<span class="no-mark">do wpisania</span>`}
+      <td class="l sep">${row.confirmed ? `<span class="ok-mark">✓ potwierdzone</span>`
+        : row.weeks.every((c) => c.qty != null) ? `<span class="no-mark" title="Liczby są, ale od soboty nikt ich nie potwierdził">do potwierdzenia</span>`
+        : `<span class="no-mark">do wpisania</span>`}
         <div class="sub">${row.weeks[0].entered_at ? "ost. zmiana " + esc(row.weeks[0].entered_at.slice(8, 10) + "." + row.weeks[0].entered_at.slice(5, 7) + " " + row.weeks[0].entered_at.slice(11)) : ""}</div></td>
       <td><button class="btn btn-ghost btn-sm" data-i="${i}" onclick="saveOrders(Number(this.dataset.i))">Zapisz</button></td>
     </tr>`).join("")}</tbody></table>`;

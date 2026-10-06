@@ -255,7 +255,7 @@ async function loadRows(rs, q) {
     `SELECT h.worker_id, to_char(h.bhp_date, 'YYYY-MM-DD') AS bhp, h.facility_id, h.facility_name, h.site_key,
             w.login, w.full_name, (w.telegram_chat_id IS NOT NULL) AS has_tg,
             a.id AS answer_id, a.status AS a_status, a.source, a.referrer_text, a.answered_at, a.answered_chat_id,
-            a.await_name, a.sends, a.first_sent_at, a.last_sent_at, a.blocked_attempts, a.manual_by, a.ext,
+            a.await_name, a.sends, a.first_sent_at, a.last_sent_at, a.blocked_attempts, a.manual_by, a.ext, a.stay_plan, a.stay_at,
             a.match_state, a.match_worker_id, a.match_coordinator_id, a.match_at, a.match_by,
             to_char(a.bonus_paid_at, 'YYYY-MM-DD') AS bonus_paid_at, a.bonus_note,
             mb.full_name AS match_by_name, mc.full_name AS match_coordinator_name, man.full_name AS manual_by_name
@@ -509,14 +509,17 @@ router.post("/manual", async (req, res) => {
     if (row.bonus_paid_at) return fail(res, new Error("Premia już wypłacona — najpierw cofnij wypłatę"), 400);
     const text = (src === "friend" || src === "coord") ? String(req.body.text || "").trim().slice(0, 80) : null;
     if ((src === "friend" || src === "coord") && text.length < 3) return fail(res, new Error("Wpisz imię i nazwisko"), 400);
+    const stay = req.body.stay ? String(req.body.stay) : null;               // «na ile przyjechał»
+    if (stay && !refBot.STAYS.includes(stay)) return fail(res, new Error("stay"), 400);
     await db.query(
-      `INSERT INTO ref.answers (worker_id, bhp_date, facility_id, status, source, referrer_text, answered_at, manual_by)
-       VALUES ($1, $2::date, $3, 'answered', $4, $5, now(), $6)
+      `INSERT INTO ref.answers (worker_id, bhp_date, facility_id, status, source, referrer_text, answered_at, manual_by, stay_plan, stay_at)
+       VALUES ($1, $2::date, $3, 'answered', $4, $5, now(), $6, $7, CASE WHEN $7::text IS NOT NULL THEN now() END)
        ON CONFLICT (worker_id, bhp_date) DO UPDATE SET status = 'answered', source = EXCLUDED.source, referrer_text = EXCLUDED.referrer_text,
+         stay_plan = COALESCE(EXCLUDED.stay_plan, ref.answers.stay_plan), stay_at = COALESCE(EXCLUDED.stay_at, ref.answers.stay_at),
          answered_at = now(), manual_by = EXCLUDED.manual_by, await_name = false, pending_source = NULL,
          answered_chat_id = NULL, answered_tg_user = NULL, match_state = 'none', match_worker_id = NULL,
          match_coordinator_id = NULL, updated_at = now()`,
-      [row.worker_id, row.bhp, row.facility_id, src, text, req.rs.me]);
+      [row.worker_id, row.bhp, row.facility_id, src, text, req.rs.me, stay]);
     res.json({ ok: true, row: await oneRow(req.rs, row.worker_id, row.bhp) });
   } catch (e) { fail(res, e); }
 });
@@ -549,13 +552,14 @@ router.get("/sources", async (req, res) => {
     const d = await loadRows(req.rs, req.query);
     const N = Number(req.rs.st.bonus_days) || 30;
     const by = new Map();
-    const tot = { site_key: "Razem", hires: 0, answered: 0, friend: 0, coord: 0, recruit: 0, ads: 0, other: 0, none: 0, ret: {} };
+    const tot = { site_key: "Razem", hires: 0, answered: 0, friend: 0, coord: 0, recruit: 0, ads: 0, other: 0, none: 0, ret: {}, stay: {} };
     const ADS = new Set(["facebook", "instagram", "tiktok", "telegram", "jobsite"]);   // пілот: канали реклами
     const add = (x, r) => {
       x.hires++;
       const src = r.state !== "answered" ? "none" : ADS.has(r.source) ? "ads" : r.source;
       if (r.state === "answered") x.answered++;
       x[src]++;
+      if (r.state === "answered") { const k = r.stay_plan || "none"; x.stay[k] = (x.stay[k] || 0) + 1; }
       // утримання: серед тих, у кого вже минуло N днів
       if (d.today >= r.bonus.due_date) {
         const e = (x.ret[src] = x.ret[src] || { n: 0, ok: 0 });
@@ -564,7 +568,7 @@ router.get("/sources", async (req, res) => {
     };
     for (const r of d.rows) {
       const k = r.site_key;
-      const x = by.get(k) || { site_key: k, coordinator_name: r.coordinator_name, region_name: r.region_name, hires: 0, answered: 0, friend: 0, coord: 0, recruit: 0, ads: 0, other: 0, none: 0, ret: {} };
+      const x = by.get(k) || { site_key: k, coordinator_name: r.coordinator_name, region_name: r.region_name, hires: 0, answered: 0, friend: 0, coord: 0, recruit: 0, ads: 0, other: 0, none: 0, ret: {}, stay: {} };
       add(x, r); add(tot, r);
       by.set(k, x);
     }

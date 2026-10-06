@@ -362,6 +362,7 @@ async function seesRef(sc) {
   } catch (e) { return false; }
 }
 // Канал «як дізналися» (Poleć znajomego, пілот анкети на старті)
+const REF_STAY = { m1: "1 mies.", m2: "2 mies.", m3: "3 mies.", m6: "6 mies.", more: "dłużej" };
 const REF_SRC = { friend: "znajomy", coord: "koordynator", recruit: "rekruter", facebook: "Facebook", instagram: "Instagram",
   tiktok: "TikTok", telegram: "Telegram", jobsite: "portal z ofertami", other: "inne" };
 
@@ -578,12 +579,13 @@ router.get("/surveys/answers", async (req, res) => {
     if (code === "start" && rows.length && (await seesRef(sc))) {
       try {
         const ra = await db.query(
-          `SELECT worker_id, to_char(bhp_date, 'YYYY-MM-DD') AS bhp, source, referrer_text, status
+          `SELECT worker_id, to_char(bhp_date, 'YYYY-MM-DD') AS bhp, source, referrer_text, status, stay_plan
              FROM ref.answers WHERE worker_id = ANY($1::int[])`, [rows.map((x) => x.worker_id)]);
         const m = new Map(ra.rows.map((x) => [`${x.worker_id}_${x.bhp}`, x]));
         rows.forEach((x) => {
           const a = m.get(`${x.worker_id}_${x.bhp}`);
-          if (a && a.status === "answered") x.ref = { source: a.source, label: REF_SRC[a.source] || a.source, text: a.referrer_text };
+          if (a && a.status === "answered") x.ref = { source: a.source, label: REF_SRC[a.source] || a.source, text: a.referrer_text,
+            stay: a.stay_plan ? REF_STAY[a.stay_plan] : null };
         });
       } catch (e) { /* немає розділу Poleć znajomego */ }
     }
@@ -619,10 +621,10 @@ router.get("/surveys/worker", async (req, res) => {
       const p2 = [wid];
       const w2 = siteScope(sc, {}, "h.site_key", p2);
       refs = (await db.query(
-        `SELECT to_char(a.bhp_date, 'YYYY-MM-DD') AS bhp, a.source, a.referrer_text, a.status, a.answered_at, a.ext, h.site_key
+        `SELECT to_char(a.bhp_date, 'YYYY-MM-DD') AS bhp, a.source, a.referrer_text, a.status, a.answered_at, a.ext, h.site_key, a.stay_plan
            FROM ref.answers a JOIN ref.v_hires h ON h.worker_id = a.worker_id AND h.bhp_date = a.bhp_date
           WHERE a.worker_id = $1 AND ${w2} ORDER BY a.bhp_date DESC`, p2)).rows
-        .map((x) => ({ ...x, label: REF_SRC[x.source] || x.source }));
+        .map((x) => ({ ...x, label: REF_SRC[x.source] || x.source, stay: x.stay_plan ? REF_STAY[x.stay_plan] : null }));
     } catch (e) { refs = []; }
     if (!sends.rows.length && !refs.length) return fail(res, new Error("Brak ankiet tego pracownika w Twoim zakresie"), 404);
     const ids = sends.rows.map((x) => x.id);

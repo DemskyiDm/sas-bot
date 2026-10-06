@@ -68,7 +68,9 @@ function qs(extra) {
 const SRC = { friend: "znajomy", coord: "koordynator", recruit: "rekrutacja", other: "inne",
   facebook: "Facebook", instagram: "Instagram", tiktok: "TikTok", telegram: "Telegram", jobsite: "portal z ofertami" };
 const SRC_CLS = { friend: "acc", coord: "warn", recruit: "", other: "" };
-const ADS = ["facebook", "instagram", "tiktok", "telegram", "jobsite"];      // pilotaż: kanały reklamy
+const ADS = ["facebook", "instagram", "tiktok", "telegram", "jobsite"];
+const STAY = { m1: "1 mies.", m2: "2 mies.", m3: "3 mies.", m6: "6 mies.", more: "dłużej" };   // «Na ile przyjechał»
+const STAY_KEYS = ["m1", "m2", "m3", "m6", "more"];      // pilotaż: kanały reklamy
 const START_Q = [["clarity5", "Warunki jasne 1–5"], ["recruit5", "Rekruter szybko 1–5"], ["housing_promise", "Mieszk. jak obiecano"], ["coord_start5", "Koord. 1–5"]];
 const START_ST = { done: "wypełniona", sent: "w trakcie", expired: "bez odpowiedzi", failed: "nie doszła", planned: "w kolejce" };
 const STATE = {
@@ -220,7 +222,10 @@ function filteredRows() {
   const mt = document.getElementById("fMatch").value;
   const bn = document.getElementById("fBonus").value;
   const fl = document.getElementById("fFlag").checked;
+  const fs = document.getElementById("fStay").value;
   let rows = all;
+  if (fs === "none") rows = rows.filter((x) => x.state === "answered" && !x.stay_plan);
+  else if (fs) rows = rows.filter((x) => x.stay_plan === fs);
   if (q) rows = rows.filter((x) => [x.full_name, x.login, x.referrer_text, x.match && x.match.full_name, x.match && x.match.login,
     x.match_coordinator_name, x.facility_name, x.site_key].some((v) => String(v || "").toLowerCase().includes(q)));
   if (src === "none") rows = rows.filter((x) => x.state !== "answered");
@@ -243,7 +248,7 @@ function sortBy(k) {
   renderList();
 }
 function clearFilters() {
-  ["fQ", "fSource", "fMatch", "fBonus"].forEach((id) => (document.getElementById(id).value = ""));
+  ["fQ", "fSource", "fMatch", "fBonus", "fStay"].forEach((id) => (document.getElementById(id).value = ""));
   document.getElementById("fFlag").checked = false;
   renderList();
 }
@@ -293,7 +298,9 @@ function stateCell(x) {
   if (x.sends) sub.push(`wysł. ${x.sends}×`);
   if (x.state === "answered" && x.answered_at) sub.push(ts(x.answered_at));
   else if (["waiting", "waiting_name", "queued", "no_tg"].includes(x.state)) sub.push(`termin ${dd(x.deadline)}`);
-  return `${tag(l, c)}${sub.length ? `<div class="sub">${esc(sub.join(" · "))}</div>` : ""}`;
+  const stay = x.stay_plan ? `<div class="sub">📅 na ${esc(STAY[x.stay_plan])}</div>`
+    : x.state === "answered" && !x.manual_by ? `<div class="sub warn">📅 bez „na ile”</div>` : "";
+  return `${tag(l, c)}${sub.length ? `<div class="sub">${esc(sub.join(" · "))}</div>` : ""}${stay}`;
 }
 function srcCell(x) {
   if (x.state === "answered" && x.source) {
@@ -398,6 +405,7 @@ function renderItem() {
   h += `<div class="section"><div class="section-head">📝 Ankieta</div><div class="kv">
     <span class="k">Stan</span><span>${stateCell(x)}</span>
     <span class="k">Odpowiedź</span><span>${x.state === "answered" ? `${tag(SRC[x.source], SRC_CLS[x.source])} ${x.referrer_text ? `<span class="typed">„${esc(x.referrer_text)}”</span>` : ""}` : `<span class="z">—</span>`}</span>
+    <span class="k">Na ile przyjechał</span><span>${x.stay_plan ? `<b>${esc(STAY[x.stay_plan])}</b>` : `<span class="z">brak odpowiedzi</span>`}</span>
     <span class="k">Termin odpowiedzi</span><span>${ddy(x.deadline)} (BHP + ${esc(me.settings.window_days)} dni)</span>
     <span class="k">Wysłano</span><span>${x.sends ? `${x.sends}× · pierwsze ${ts(x.first_sent_at)} · ostatnie ${ts(x.last_sent_at)}` : `<span class="z">jeszcze nie</span>`}</span>
     ${x.manual_by ? `<span class="k">Wpisane ręcznie</span><span>${esc(x.manual_by_name || "")}</span>` : ""}
@@ -503,6 +511,8 @@ function renderItem() {
           ${Object.entries(SRC).filter(([k]) => x.ext || !ADS.includes(k)).map(([k, l]) => `<option value="${k}" ${x.source === k ? "selected" : ""}>${l}</option>`).join("")}
         </select>
         <input type="text" class="inp" id="manText" placeholder="imię i nazwisko" value="${esc(x.referrer_text || "")}" style="flex:1;min-width:180px;${["friend", "coord"].includes(x.source || "friend") ? "" : "display:none"}" />
+        <select class="inp" id="manStay" title="Na ile przyjechał"><option value="">na ile — bez zmian</option>
+          ${STAY_KEYS.map((k) => `<option value="${k}" ${x.stay_plan === k ? "selected" : ""}>na ${STAY[k]}</option>`).join("")}</select>
         <button class="btn btn-ghost btn-sm" onclick="doManual()">Zapisz</button><span class="msg" id="manMsg"></span>
       </div></div>`;
   }
@@ -553,7 +563,8 @@ async function doPaid(paid) {
 }
 async function doManual() {
   const x = ST.item.row;
-  const body = { worker_id: x.worker_id, bhp: x.bhp, source: document.getElementById("manSrc").value, text: document.getElementById("manText").value.trim() };
+  const body = { worker_id: x.worker_id, bhp: x.bhp, source: document.getElementById("manSrc").value, text: document.getElementById("manText").value.trim(),
+    stay: document.getElementById("manStay").value || null };
   afterAction(await api("/manual", { method: "POST", body }), "manMsg");
 }
 
@@ -611,6 +622,18 @@ async function loadSources() {
       <tr><th class="sep">Znajomy</th><th>Koord.</th><th>Rekrut.</th>${ads ? `<th title="Facebook, Instagram, TikTok, Telegram, portale">Reklama</th>` : ""}<th>Inne</th><th>Brak odp.</th>
         <th class="sep">Znajomy</th><th>Koord.</th><th>Rekrut.</th>${ads ? `<th>Reklama</th>` : ""}<th>Brak odp.</th></tr></thead>
       <tbody>${r.rows.map((x) => line(x)).join("")}${line(r.total, true)}</tbody></table>`;
+  // na ile przyjechali
+  const st = (x) => STAY_KEYS.reduce((a, k) => a + (x.stay[k] || 0), 0);
+  const stRows = r.rows.filter((x) => st(x) || x.stay.none);
+  const stLine = (x, tot) => `<tr class="${tot ? "tot" : ""}"><td class="l">${esc(x.site_key)}${!tot ? `<div class="sub">${esc(x.coordinator_name || "— bez koordynatora —")}</div>` : ""}</td>
+    <td>${st(x) || `<span class="z">0</span>`}</td>
+    ${STAY_KEYS.map((k) => `<td class="${k === "m1" && x.stay[k] ? "warn" : ""}">${x.stay[k] ? `${x.stay[k]} <span class="sub">${pct(x.stay[k], st(x))}</span>` : `<span class="z">0</span>`}</td>`).join("")}
+    <td class="sep">${x.stay.none ? `<span class="warn">${x.stay.none}</span>` : `<span class="z">0</span>`}</td></tr>`;
+  document.getElementById("stayCnt").textContent = st(r.total) ? `${st(r.total)} odpowiedzi` : "";
+  document.getElementById("stayTable").innerHTML = stRows.length ? `<table class="fl"><thead><tr><th class="l">Obiekt</th><th>Odpowiedzi</th>
+      ${STAY_KEYS.map((k) => `<th>${esc(STAY[k])}</th>`).join("")}<th class="sep">Bez odpowiedzi</th></tr></thead>
+      <tbody>${stRows.map((x) => stLine(x)).join("")}${stLine(r.total, true)}</tbody></table>`
+    : `<div class="empty">Jeszcze nikt nie odpowiedział na to pytanie w tym okresie.</div>`;
   document.getElementById("srcNote").innerHTML = `„Przepracowało ${N} dni” — tylko wśród tych, od których BHP minęło już ${N} dni. Pokazuje, z jakiego źródła ludzie zostają dłużej.`;
 }
 
@@ -897,7 +920,7 @@ function exportList() {
 
   // 1) Odpowiedzi
   const head = ["BHP", "Login", "Pracownik", "Obiekt", "Region", "Koordynator obiektu", "Ankieta", "Termin odpowiedzi", "Wysłano (razy)",
-    "Data odpowiedzi", "Źródło", "Wpisane imię i nazwisko", "Zestawiono: login", "Zestawiono: imię i nazwisko", "Zestawiono: obiekt",
+    "Data odpowiedzi", "Źródło", "Wpisane imię i nazwisko", "Na ile przyjechał", "Zestawiono: login", "Zestawiono: imię i nazwisko", "Zestawiono: obiekt",
     "Polecający pracuje", "Dni pracy nowego", "Premia: stan", "Premia od dnia", "Kwota, zł", "Wypłacono", "Notatka"];
   const pilot = rows.some((x) => x.ext || x.start);
   if (pilot) head.push("Ankieta startowa", ...START_Q.map((q) => q[1]));
@@ -911,7 +934,7 @@ function exportList() {
       xDate(x.bhp), x.login, x.full_name, x.site_key, x.region_name || "", x.coordinator_name || "",
       (STATE[x.state] || [x.state])[0], xDate(x.deadline), x.sends || 0,
       x.state === "answered" && x.answered_at ? ts(x.answered_at) : "",
-      x.state === "answered" ? SRC[x.source] || "" : "", x.referrer_text || "",
+      x.state === "answered" ? SRC[x.source] || "" : "", x.referrer_text || "", x.stay_plan ? STAY[x.stay_plan] : "",
       named ? (m ? m.login || "" : x.match_coordinator_name ? "koordynator" : "") : "",
       named ? (m ? m.full_name || "" : x.match_coordinator_name || (x.match_state === "not_found" ? "nie ma w bazie" : "do zestawienia")) : "",
       named && m ? m.site_key || "" : "",
@@ -935,10 +958,10 @@ function exportList() {
     else if (isTodo(x)) styles[R] = XS.todo;
     aoa.push(line);
   });
-  const w1 = [11, 11, 26, 22, 12, 22, 18, 11, 8, 16, 12, 26, 12, 26, 20, 9, 8, 18, 11, 9, 11, 22];
+  const w1 = [11, 11, 26, 22, 12, 22, 18, 11, 8, 16, 12, 26, 14, 12, 26, 20, 9, 8, 18, 11, 9, 11, 22];
   if (pilot) w1.push(14, 12, 12, 16, 10);
   if (tg) w1.push(40);
-  XLSX.utils.book_append_sheet(wb, makeSheet(aoa, 2, styles, w1, [0, 7, 18, 20]), "Odpowiedzi");
+  XLSX.utils.book_append_sheet(wb, makeSheet(aoa, 2, styles, w1, [0, 7, 19, 21]), "Odpowiedzi");
 
   // 2) Premie — dla polecających
   const order = { due: 0, pending: 1, paid: 2, lost: 3 };

@@ -605,7 +605,7 @@ function renderWho() {
       return `<tr><td class="muted nw">${dd(x.answered_at || x.sent_at)}</td>
         <td class="nw"><a class="wk" onclick="openWorker(${Number(x.worker_id)})"><b>${esc(x.full_name)}</b></a><div class="sub">${esc(x.login || "")} · BHP ${dd(x.bhp)}</div></td>
         <td>${esc(x.site_key || "")}<div class="sub">${esc(x.coord_name || "")}</div></td>
-        ${isStart ? `<td>${x.ref ? `${esc(x.ref.label)}${x.ref.text ? `<div class="sub">„${esc(x.ref.text)}”</div>` : ""}` : `<span class="muted">—</span>`}</td>` : ""}
+        ${isStart ? `<td>${x.ref ? `${esc(x.ref.label)}${x.ref.text ? `<div class="sub">„${esc(x.ref.text)}”</div>` : ""}${x.ref.stay ? `<div class="sub">📅 na ${esc(x.ref.stay)}</div>` : ""}` : `<span class="muted">—</span>`}</td>` : ""}
         ${r.cols.map((c) => ans(c, x.ans[c.code])).join("")}
         <td class="nw"><span class="${sc}">${sl}</span>${x.status !== "done" && x.answered ? ` <span class="sub">${x.answered}/${r.cols.length}</span>` : ""}</td></tr>`;
     }).join("")}</tbody></table>
@@ -621,7 +621,7 @@ function exportWho() {
   if (!r) return;
   const rows = whoRows();
   const isStart = r.survey === "start";
-  const head = ["Data odpowiedzi", "Login", "Pracownik", "BHP", "Obiekt", "Koordynator", ...(isStart ? ["Skąd wie o nas", "Kto polecił (wpisane)"] : []),
+  const head = ["Data odpowiedzi", "Login", "Pracownik", "BHP", "Obiekt", "Koordynator", ...(isStart ? ["Skąd wie o nas", "Kto polecił (wpisane)", "Na ile przyjechał"] : []),
     ...r.cols.map((c) => c.text), "Stan"];
   const aoa = [[`Ankieta: ${surveyLabel(r.survey)} — kto jak odpowiedział`], [`Okres: ${days()} dni`], head];
   const xd = (v) => { if (!v) return ""; const d = new Date(v); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); };
@@ -629,13 +629,13 @@ function exportWho() {
   const flags = [];
   rows.forEach((x) => {
     aoa.push([xd(x.answered_at || x.sent_at), x.login || "", x.full_name, xi(x.bhp), x.site_key || "", x.coord_name || "",
-      ...(isStart ? [x.ref ? x.ref.label : "", x.ref && x.ref.text ? x.ref.text : ""] : []),
+      ...(isStart ? [x.ref ? x.ref.label : "", x.ref && x.ref.text ? x.ref.text : "", x.ref && x.ref.stay ? x.ref.stay : ""] : []),
       ...r.cols.map((c) => { const a = x.ans[c.code]; if (!a) return ""; return c.scale && /^[1-5]$/.test(a.o) ? Number(a.o) : a.t; }),
       (SV_STATUS[x.status] || [x.status])[0]]);
     flags.push(r.cols.map((c) => (x.ans[c.code] || {}).f || null));
   });
   const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true });
-  const qStart = 6 + (isStart ? 2 : 0);
+  const qStart = 6 + (isStart ? 3 : 0);
   const range = XLSX.utils.decode_range(ws["!ref"]);
   for (let R = 0; R <= range.e.r; R++) {
     for (let C = 0; C <= range.e.c; C++) {
@@ -653,7 +653,7 @@ function exportWho() {
       c.s = st;
     }
   }
-  ws["!cols"] = [{ wch: 11 }, { wch: 11 }, { wch: 26 }, { wch: 11 }, { wch: 22 }, { wch: 20 }, ...(isStart ? [{ wch: 16 }, { wch: 22 }] : []),
+  ws["!cols"] = [{ wch: 11 }, { wch: 11 }, { wch: 26 }, { wch: 11 }, { wch: 22 }, { wch: 20 }, ...(isStart ? [{ wch: 16 }, { wch: 22 }, { wch: 12 }] : []),
     ...r.cols.map(() => ({ wch: 18 })), { wch: 14 }];
   ws["!rows"] = []; ws["!rows"][2] = { hpt: 60 };
   ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 2, c: 0 }, e: { r: range.e.r, c: range.e.c } }) };
@@ -678,7 +678,7 @@ async function openWorker(wid) {
   if (r.refs.length) {
     h += `<div class="section"><div class="section-head">🧭 Skąd wie o firmie</div>${r.refs.map((x) => `<div class="qa">
       <span class="q">BHP ${dd(x.bhp)} · ${esc(x.site_key || "")}</span>
-      <span class="a">${x.status === "answered" ? `${esc(x.label)}${x.referrer_text ? ` „${esc(x.referrer_text)}”` : ""}` : `<span class="muted">brak odpowiedzi</span>`}</span></div>`).join("")}</div>`;
+      <span class="a">${x.status === "answered" ? `${esc(x.label)}${x.referrer_text ? ` „${esc(x.referrer_text)}”` : ""}${x.stay ? ` · 📅 na ${esc(x.stay)}` : ""}` : `<span class="muted">brak odpowiedzi</span>`}</span></div>`).join("")}</div>`;
   }
   h += r.sends.length ? r.sends.map((s) => `<div class="section">
       <div class="section-head">📝 ${esc(surveyLabel(s.survey_code, s.name))}

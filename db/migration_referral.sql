@@ -101,6 +101,9 @@ ALTER TABLE ref.answers DROP CONSTRAINT IF EXISTS answers_source_check;
 ALTER TABLE ref.answers ADD CONSTRAINT answers_source_check
   CHECK (source IN ('friend','coord','recruit','other','facebook','instagram','tiktok','telegram','jobsite'));
 INSERT INTO ref.settings (key, value) VALUES ('start_sites', ''), ('start_remind_days', '2') ON CONFLICT (key) DO NOTHING;
+-- v4: обов'язкове питання всім новим «На скільки ви приїхали?» (після «хто привів»)
+ALTER TABLE ref.answers ADD COLUMN IF NOT EXISTS stay_plan TEXT CHECK (stay_plan IN ('m1','m2','m3','m6','more'));
+ALTER TABLE ref.answers ADD COLUMN IF NOT EXISTS stay_at   TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS ref_answers_bhp_idx   ON ref.answers(bhp_date);
 CREATE INDEX IF NOT EXISTS ref_answers_await_idx ON ref.answers(sent_chat_id) WHERE await_name;
 CREATE INDEX IF NOT EXISTS ref_answers_match_idx ON ref.answers(match_worker_id);

@@ -191,6 +191,12 @@
               <option value="">wszystkie</option><option value="due">należy się</option><option value="pending">w trakcie</option>
               <option value="paid">wypłacona</option><option value="lost">odszedł przed terminem</option><option value="nomatch">bez zestawienia</option>
             </select>
+            <span>Na ile</span>
+            <select class="inp" id="fStay" onchange="renderList()">
+              <option value="">wszystkie</option><option value="m1">1 mies.</option><option value="m2">2 mies.</option>
+              <option value="m3">3 mies.</option><option value="m6">6 mies.</option><option value="more">dłużej</option>
+              <option value="none">bez odpowiedzi</option>
+            </select>
             <label id="fFlagBox" style="display:none"><input type="checkbox" id="fFlag" onchange="renderList()" /> tylko podejrzane</label>
             <a href="#" onclick="clearFilters();return false" style="font-size:11px;color:var(--text3)">wyczyść</a>
           </div>
@@ -220,6 +226,11 @@
           </div>
           <div class="tblwrap" id="srcTable"><div class="loading">Ładowanie…</div></div>
           <div class="note" id="srcNote"></div>
+        </div>
+        <div class="section">
+          <div class="section-head">📅 Na ile przyjechali — po obiektach <span class="cnt" id="stayCnt"></span></div>
+          <div class="tblwrap" id="stayTable"></div>
+          <div class="note">Odpowiedź na pytanie „Na ile przyjechałeś do pracy?” (wszyscy nowi, po pytaniu „kto Cię polecił”). Pomaga planować wyjazdy.</div>
         </div>
       </div>
 

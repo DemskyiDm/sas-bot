@@ -15,6 +15,7 @@ const express = require("express");
 const router = express.Router();
 const db = require("../db");
 const { requireAuth } = require("./admin");
+const IMG = require("./flow_img");   // картинки-таблиці (Telegram, форма «image»)
 
 // ── Утиліти ───────────────────────────────────────────────────────────
 const isDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s + "T00:00:00Z"));
@@ -268,6 +269,16 @@ function confirmFrom(today) {
   return addDays(today, -((dow - CONFIRM_DOW + 7) % 7));
 }
 
+// Темп набору: скільки % плану тижня має бути набрано до кінця дня (pace = пн,вт,ср,чт,пт; сб і нд — 100%).
+// Обʼєкт відстає (червоний), якщо набір з понеділка менший за round(план × темп).
+function paceOf(st, day) {
+  const p = String((st && st.pace) || "20,40,60,80,100").split(",").map(Number);
+  const dow = new Date(day + "T00:00:00Z").getUTCDay() || 7;   // 1 = пн … 7 = нд
+  const v = dow <= 5 ? p[dow - 1] : 100;
+  return Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 100;
+}
+const isLagging = (fact, plan, pace) => plan != null && Number(plan) > 0 && Number(fact) < Math.round((Number(plan) * pace) / 100);
+
 // ══════════════════════════════════════════════════════════════════════
 //  API
 // ══════════════════════════════════════════════════════════════════════
@@ -325,6 +336,65 @@ router.get("/list", async (req, res) => {
     const meta = Object.fromEntries(sites.map((s) => [s.site_key, s]));
     res.json({ ok: true, rows: rows.map((x) => ({ ...x, coordinator_name: (meta[x.site_key] || {}).coordinator_name || null })) });
   } catch (e) { fail(res, e, e.code === 400 ? 400 : 500); }
+});
+
+// Експорт поіменно за період (до 93 днів): хто закінчив, хто почав, план виїздів тижня.
+// План / поза планом — за планом того тижня, у який припадає дата (фіксація в пн 0:00).
+router.get("/export", async (req, res) => {
+  try {
+    const ck = await clock();
+    const from = isDate(req.query.from) ? req.query.from : mondayOf(ck.today);
+    const to = isDate(req.query.to) ? req.query.to : addDays(from, 6);
+    if (to < from) return res.status(400).json({ ok: false, error: "Data „do” wcześniejsza niż „od”" });
+    if (addDays(from, 92) < to) return res.status(400).json({ ok: false, error: "Najwyżej 93 dni naraz" });
+    const sites = await scopedSites(req.fscope, req.query);
+    const keys = sites.map((s) => s.site_key);
+    const [dep, arr, plan, weeks] = await Promise.all([
+      query(
+        `SELECT to_char(d.move_date, 'YYYY-MM-DD') AS date, d.site_key, w.full_name, w.login, d.status, d.is_transfer, d.to_site,
+                to_char(d.bhp_date, 'YYYY-MM-DD') AS bhp,
+                to_char(r.lwd_at AT TIME ZONE 'Europe/Warsaw', 'YYYY-MM-DD HH24:MI') AS seen_at, COALESCE(r.baseline, false) AS baseline,
+                CASE WHEN r.lwd_at IS NOT NULL AND NOT r.baseline
+                     THEN d.move_date - (r.lwd_at AT TIME ZONE 'Europe/Warsaw')::date END AS notice_days,
+                to_char(date_trunc('week', d.move_date), 'YYYY-MM-DD') AS week,
+                EXISTS (SELECT 1 FROM flow.week_plan pl WHERE pl.week_start = date_trunc('week', d.move_date)::date
+                         AND pl.worker_id = d.worker_id AND pl.site_key = d.site_key) AS planned
+           FROM flow.departures($1::date, $2::date) d
+           JOIN public.workers w ON w.id = d.worker_id
+           LEFT JOIN flow.rows r ON r.hid = d.hid
+          WHERE d.site_key = ANY($3::text[])
+          ORDER BY d.move_date, d.site_key, w.full_name`, [from, to, keys]),
+      query(
+        `SELECT to_char(a.move_date, 'YYYY-MM-DD') AS date, a.site_key, w.full_name, w.login, a.status, a.kind, a.from_site,
+                to_char(a.last_work_date, 'YYYY-MM-DD') AS lwd,
+                to_char(r.first_seen_at AT TIME ZONE 'Europe/Warsaw', 'YYYY-MM-DD HH24:MI') AS seen_at, COALESCE(r.baseline, false) AS baseline
+           FROM flow.arrivals($1::date, $2::date) a
+           JOIN public.workers w ON w.id = a.worker_id
+           LEFT JOIN flow.rows r ON r.hid = a.hid
+          WHERE a.site_key = ANY($3::text[])
+          ORDER BY a.move_date, a.site_key, w.full_name`, [from, to, keys]),
+      query(
+        `WITH dep AS (SELECT worker_id, site_key, move_date FROM flow.departures(date_trunc('week', $1::date)::date, $2::date + 6))
+         SELECT to_char(pl.week_start, 'YYYY-MM-DD') AS week, to_char(pl.move_date, 'YYYY-MM-DD') AS date, pl.site_key,
+                w.full_name, w.login, pl.is_transfer,
+                (SELECT to_char(min(dep.move_date), 'YYYY-MM-DD') FROM dep
+                  WHERE dep.worker_id = pl.worker_id AND dep.site_key = pl.site_key
+                    AND dep.move_date BETWEEN pl.week_start AND pl.week_start + 6) AS now_date
+           FROM flow.week_plan pl JOIN public.workers w ON w.id = pl.worker_id
+          WHERE pl.week_start BETWEEN date_trunc('week', $1::date)::date AND $2::date AND pl.site_key = ANY($3::text[])
+          ORDER BY pl.week_start, pl.move_date, pl.site_key, w.full_name`, [from, to, keys]),
+      query(`SELECT to_char(week_start, 'YYYY-MM-DD') AS week FROM flow.weeks
+              WHERE week_start BETWEEN date_trunc('week', $1::date)::date AND $2::date`, [from, to]),
+    ]);
+    const meta = Object.fromEntries(sites.map((s) => [s.site_key, s]));
+    const add = (x) => ({ ...x, coordinator_name: (meta[x.site_key] || {}).coordinator_name || null, region_name: (meta[x.site_key] || {}).region_name || null });
+    const fixed = new Set(weeks.rows.map((x) => x.week));
+    res.json({
+      ok: true, from, to, today: ck.today,
+      departures: dep.rows.map((x) => ({ ...add(x), week_fixed: fixed.has(x.week) })),
+      arrivals: arr.rows.map(add), plan: plan.rows.map(add),
+    });
+  } catch (e) { fail(res, e); }
 });
 
 // День: хто виїхав / приїхав, що дописали після зведення
@@ -458,6 +528,8 @@ const SETTING_RULES = {
   orders_remind: (v) => v === "" || v.split(",").every((t) => hmToMin(t) != null && hmToMin(t) < 1440),
   orders_deadline: (v) => hmToMin(v) != null && hmToMin(v) < 1440,
   monday_time: (v) => hmToMin(v) != null && hmToMin(v) < 1440,
+  coord_format: (v) => ["text", "image"].includes(v),
+  pace: (v) => /^\d{1,3}(,\d{1,3}){4}$/.test(v) && v.split(",").every((x) => Number(x) <= 100),
 };
 
 router.get("/settings", adminOnly, async (req, res) => {
@@ -521,6 +593,7 @@ function recipientBody(b) {
     region_id: b.region_id ? parseInt(b.region_id, 10) : null,
     daily: b.daily !== false, orders: !!b.orders, weekly: b.weekly !== false,
     lang: ["uk", "ru", "pl"].includes(b.lang) ? b.lang : "uk",
+    format: b.format === "image" ? "image" : "text",
     is_active: b.is_active !== false,
   };
   if (r.chat_id && !/^-?\d{4,20}$/.test(r.chat_id)) throw Object.assign(new Error("Chat ID — tylko cyfry (dla grup z minusem)"), { code: 400 });
@@ -533,9 +606,9 @@ router.post("/recipients", adminOnly, async (req, res) => {
   try {
     const r = recipientBody(req.body || {});
     const ins = await db.query(
-      `INSERT INTO flow.recipients (coordinator_id, chat_id, label, scope, region_id, daily, orders, weekly, lang, is_active, created_by)
-       VALUES ($1, $2::bigint, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
-      [r.coordinator_id, r.chat_id, r.label, r.scope, r.region_id, r.daily, r.orders, r.weekly, r.lang, r.is_active, req.coordinator.coordinator_id],
+      `INSERT INTO flow.recipients (coordinator_id, chat_id, label, scope, region_id, daily, orders, weekly, lang, is_active, created_by, format)
+       VALUES ($1, $2::bigint, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+      [r.coordinator_id, r.chat_id, r.label, r.scope, r.region_id, r.daily, r.orders, r.weekly, r.lang, r.is_active, req.coordinator.coordinator_id, r.format],
     );
     res.json({ ok: true, id: ins.rows[0].id });
   } catch (e) { fail(res, e, e.code === 400 ? 400 : 500); }
@@ -545,8 +618,8 @@ router.patch("/recipients/:id", adminOnly, async (req, res) => {
     const r = recipientBody(req.body || {});
     await db.query(
       `UPDATE flow.recipients SET coordinator_id = $2, chat_id = $3::bigint, label = $4, scope = $5, region_id = $6,
-              daily = $7, orders = $8, weekly = $9, lang = $10, is_active = $11 WHERE id = $1`,
-      [parseInt(req.params.id, 10), r.coordinator_id, r.chat_id, r.label, r.scope, r.region_id, r.daily, r.orders, r.weekly, r.lang, r.is_active],
+              daily = $7, orders = $8, weekly = $9, lang = $10, is_active = $11, format = $12 WHERE id = $1`,
+      [parseInt(req.params.id, 10), r.coordinator_id, r.chat_id, r.label, r.scope, r.region_id, r.daily, r.orders, r.weekly, r.lang, r.is_active, r.format],
     );
     res.json({ ok: true });
   } catch (e) { fail(res, e, e.code === 400 ? 400 : 500); }
@@ -559,11 +632,13 @@ router.delete("/recipients/:id", adminOnly, async (req, res) => {
 });
 
 // Тест: зведення «як зараз» — собі або вибраному отримувачу. Нічого не записує.
+// kind = recipient — рівно те, що отримує цей отримувач за галочками (Dzień / Plan naboru / Tydzień);
+// галочки беруться з форми (ще не збережені теж), інакше — збережені.
 router.post("/test", adminOnly, async (req, res) => {
   try {
     if (!BOT) return res.status(400).json({ ok: false, error: "Bot niedostępny" });
     const ck = await clock();
-    const kind = ["daily", "remind", "monday"].includes(req.body && req.body.kind) ? req.body.kind : "daily";
+    const kind = ["daily", "remind", "monday", "recipient"].includes(req.body && req.body.kind) ? req.body.kind : "daily";
     let targets;
     if (req.body && req.body.recipient_id) {
       targets = (await resolveRecipients()).filter((t) => t.id === parseInt(req.body.recipient_id, 10));
@@ -575,21 +650,42 @@ router.post("/test", adminOnly, async (req, res) => {
       targets = [{ chat, scope: "all", lang: langOf(me.rows[0].lang), label: "test", coordinator_id: req.coordinator.coordinator_id }];
     }
     if (!targets.length) return res.status(400).json({ ok: false, error: "Odbiorca bez Telegrama lub nieaktywny" });
+    // форма відправки: з форми (ще не збережена теж), інакше — збережена; «собі» — текст, якщо не вибрано
+    const fmt = ["text", "image"].includes(req.body && req.body.format) ? req.body.format : null;
+    targets = targets.map((t) => ({ ...t, format: fmt || t.format || "text" }));
     SITES_CACHE = await allSites();
     let sent = 0;
+    if (kind === "recipient") {
+      const b = req.body || {};
+      const flag = (k, t) => (typeof b[k] === "boolean" ? b[k] : !!t[k]);
+      const parts = [];
+      for (const t0 of targets) {
+        const t = { ...t0, daily: flag("daily", t0), orders: flag("orders", t0), weekly: flag("weekly", t0) };
+        if (!t.daily && !t.orders && !t.weekly) {
+          return res.status(400).json({ ok: false, error: "Nic nie zaznaczono — zaznacz Dzień, Plan naboru albo Tydzień" });
+        }
+        if (t.daily) {
+          const data = await dailyData(ck.today, false);
+          const ts = await targetSites(t);
+          if (await deliverDaily(t, data, ts, "🧪 TEST · Dzień\n")) { sent++; parts.push("daily"); }
+        }
+        if (t.orders || t.weekly) {
+          const what = [t.orders && "Plan naboru", t.weekly && "Tydzień"].filter(Boolean).join(" + ");
+          if (await deliverMonday(t, ck.today, `🧪 TEST · Poniedziałek: ${what}\n`)) { sent++; parts.push("monday"); }
+        }
+      }
+      return res.json({ ok: true, sent, of: targets.length, parts });
+    }
     if (kind === "daily") {
       const data = await dailyData(ck.today, false);
       for (const t of targets) {
-        const text = "🧪 TEST\n" + buildDaily(data, await targetSites(t), t);
-        if (await sendLong(t.chat, text)) sent++;
+        const ts = await targetSites(t);
+        if (await deliverDaily(t, data, ts, "🧪 TEST\n")) sent++;
       }
     } else if (kind === "remind") {
       for (const t of targets) if (await sendLong(t.chat, "🧪 TEST\n" + (await buildRemind(t, ck.today, true)))) sent++;
     } else {
-      for (const t of targets) {
-        const text = await buildMonday({ ...t, orders: true, weekly: true }, ck.today);
-        if (await sendLong(t.chat, "🧪 TEST\n" + text)) sent++;
-      }
+      for (const t of targets) if (await deliverMonday({ ...t, orders: true, weekly: true }, ck.today, "🧪 TEST\n")) sent++;
     }
     res.json({ ok: true, sent, of: targets.length });
   } catch (e) { fail(res, e); }
@@ -603,10 +699,10 @@ const TX = {
     days: ["нд", "пн", "вт", "ср", "чт", "пт", "сб"],
     title: (d) => `🚌 <b>Виїзди і приїзди · ${d}</b>`,
     sOwn: "Ваші обʼєкти", sAll: "Усі обʼєкти", sRegion: (n) => `Регіон: ${n}`,
-    out: (n, w) => `🔻 <b>Виїхали ${w}: ${n}</b>`,
+    out: (n, w) => `🔻 <b>Закінчили ${w}: ${n}</b>`,
     today: "сьогодні", since: (d) => `з ${d}`,
     tr: (n) => `🔁 <b>Переведення: ${n}</b>`,
-    inNew: (n, w) => `🟢 <b>Вийшли нові ${w}: ${n}</b>`,
+    inNew: (n, w) => `🟢 <b>Почали ${w}: ${n}</b>`,
     inTr: (n) => `↪️ Прийшли переведенням: ${n}`,
     unconf: (n) => `❔ Без статусу (не підтверджені): ${n}`,
     rez: (n) => `❌ Не доїхали: ${n}`,
@@ -626,6 +722,9 @@ const TX = {
     missing: (n) => `✍️ <b>Не ввели / не підтвердили план набору: ${n}</b>`,
     allIn: "✅ План набору ввели всі.",
     plans: "План набору:",
+    plansBy: (w) => `📋 <b>План набору по обʼєктах</b> · тижні ${w}`,
+    plansTotal: "Разом",
+    plansLegend: "✅ підтверджено · ⚠️ не підтверджено після суботи · ❌ не введено",
     prev: (a, b) => `📅 <b>Минулий тиждень ${a}–${b}</b>`,
     net: (n) => `Чисельність: ${n > 0 ? "+" : ""}${n}`,
     worst: "Найбільше відставання:",
@@ -636,10 +735,10 @@ const TX = {
     days: ["вс", "пн", "вт", "ср", "чт", "пт", "сб"],
     title: (d) => `🚌 <b>Выезды и приезды · ${d}</b>`,
     sOwn: "Ваши объекты", sAll: "Все объекты", sRegion: (n) => `Регион: ${n}`,
-    out: (n, w) => `🔻 <b>Уехали ${w}: ${n}</b>`,
+    out: (n, w) => `🔻 <b>Закончили ${w}: ${n}</b>`,
     today: "сегодня", since: (d) => `с ${d}`,
     tr: (n) => `🔁 <b>Переводы: ${n}</b>`,
-    inNew: (n, w) => `🟢 <b>Вышли новые ${w}: ${n}</b>`,
+    inNew: (n, w) => `🟢 <b>Начали ${w}: ${n}</b>`,
     inTr: (n) => `↪️ Пришли переводом: ${n}`,
     unconf: (n) => `❔ Без статуса (не подтверждены): ${n}`,
     rez: (n) => `❌ Не доехали: ${n}`,
@@ -659,6 +758,9 @@ const TX = {
     missing: (n) => `✍️ <b>Не ввели / не подтвердили план набора: ${n}</b>`,
     allIn: "✅ План набора ввели все.",
     plans: "План набора:",
+    plansBy: (w) => `📋 <b>План набора по объектам</b> · недели ${w}`,
+    plansTotal: "Итого",
+    plansLegend: "✅ подтверждено · ⚠️ не подтверждено после субботы · ❌ не введено",
     prev: (a, b) => `📅 <b>Прошлая неделя ${a}–${b}</b>`,
     net: (n) => `Численность: ${n > 0 ? "+" : ""}${n}`,
     worst: "Сильнее всего отстают:",
@@ -669,10 +771,10 @@ const TX = {
     days: ["nd", "pn", "wt", "śr", "cz", "pt", "sb"],
     title: (d) => `🚌 <b>Wyjazdy i przyjazdy · ${d}</b>`,
     sOwn: "Twoje obiekty", sAll: "Wszystkie obiekty", sRegion: (n) => `Region: ${n}`,
-    out: (n, w) => `🔻 <b>Wyjechali ${w}: ${n}</b>`,
+    out: (n, w) => `🔻 <b>Zakończyli ${w}: ${n}</b>`,
     today: "dziś", since: (d) => `od ${d}`,
     tr: (n) => `🔁 <b>Przeniesienia: ${n}</b>`,
-    inNew: (n, w) => `🟢 <b>Nowi zaczęli ${w}: ${n}</b>`,
+    inNew: (n, w) => `🟢 <b>Rozpoczęli ${w}: ${n}</b>`,
     inTr: (n) => `↪️ Przyszli z przeniesienia: ${n}`,
     unconf: (n) => `❔ Bez statusu (niepotwierdzeni): ${n}`,
     rez: (n) => `❌ Nie dojechali: ${n}`,
@@ -692,6 +794,9 @@ const TX = {
     missing: (n) => `✍️ <b>Bez potwierdzonego planu naboru: ${n}</b>`,
     allIn: "✅ Plan naboru wpisali wszyscy.",
     plans: "Plan naboru:",
+    plansBy: (w) => `📋 <b>Plan naboru po obiektach</b> · tygodnie ${w}`,
+    plansTotal: "Razem",
+    plansLegend: "✅ potwierdzone · ⚠️ niepotwierdzone po sobocie · ❌ brak planu",
     prev: (a, b) => `📅 <b>Poprzedni tydzień ${a}–${b}</b>`,
     net: (n) => `Liczebność: ${n > 0 ? "+" : ""}${n}`,
     worst: "Największe zaległości:",
@@ -700,6 +805,109 @@ const TX = {
   },
 };
 const langOf = (l) => (TX[l] ? l : "uk");
+
+// Тексти зведення за день (повідомлення 1) і тижня наростаючим підсумком (повідомлення 2)
+const B = (n) => `<b>${n}</b>`;
+const TXD = {
+  uk: {
+    inclTr: (n) => `в т.ч. переведенням: ${B(n)}`,
+    fromTr: (s) => ` ↪️ переведенням з ${s}`, toTr: (s) => ` → ${s}`,
+    trOut: (n) => `🔁 <b>Переведені на інші обʼєкти: ${n}</b>`,
+    trAll: (n) => `🔁 <b>Переведення: ${n}</b>`, fromN: (s, n) => `з ${s} ${B(n)}`,
+    lateN: (n) => `✍️ <b>Дописано після попереднього зведення: ${n}</b>`,
+    corrN: (n) => `↩️ <b>Зміни в уже показаному: ${n}</b>`,
+    wTitle: (a, b) => `📅 <b>Тиждень ${a}${a === b ? "" : "–" + b}</b> (з понеділка по сьогодні)`,
+    wNothing: "З понеділка виїздів і приїздів немає.",
+    wOut: (n) => `🔻 Закінчили: ${B(n)}`, wIn: (n) => `🟢 Почали: ${B(n)}`,
+    wTrOut: (n) => `🔁 Переведені на інші обʼєкти: ${B(n)}`,
+    wRez: (n) => `❌ Не доїхали: ${B(n)}`, wUnc: (n) => `❔ Без статусу: ${B(n)}`,
+    bySite: "По обʼєктах:",
+    siteLine: (s, o, i, tr, rz, to) => `${s} — закінчили ${B(o)}${to ? ` · переведені ${B(to)}` : ""} · почали ${B(i)}${tr ? ` (переведенням ${B(tr)})` : ""}${rz ? ` · не доїхали ${B(rz)}` : ""}`,
+    recTr: (n) => `в т.ч. переведенням: ${B(n)}`,
+    rec2: (f, p) => `Набір до плану тижня (з переведеннями): ${B(f)}${p != null ? ` з ${B(p)}${p ? ` (${B(Math.round((f / p) * 100) + "%")})` : ""}` : " (план не введено)"}`,
+    dep2: (f, p, u) => `Виїзди (з переведеннями): ${B(f)}${p != null ? ` · за планом тижня ${B(p)}` : ""}${u ? ` · поза планом ${B(u)}` : ""}`,
+    lagT: (p) => `🔴 <b>Відстають від темпу набору</b> (на сьогодні треба ${p}% плану тижня):`,
+    lagL: (s, f, p) => `• ${s} — ${B(f)} з ${B(p)} (${Math.round((f / p) * 100)}%)`,
+  },
+  ru: {
+    inclTr: (n) => `в т.ч. переводом: ${B(n)}`,
+    fromTr: (s) => ` ↪️ переводом из ${s}`, toTr: (s) => ` → ${s}`,
+    trOut: (n) => `🔁 <b>Переведены на другие объекты: ${n}</b>`,
+    trAll: (n) => `🔁 <b>Переводы: ${n}</b>`, fromN: (s, n) => `из ${s} ${B(n)}`,
+    lateN: (n) => `✍️ <b>Дописано после прошлой сводки: ${n}</b>`,
+    corrN: (n) => `↩️ <b>Изменения в уже показанном: ${n}</b>`,
+    wTitle: (a, b) => `📅 <b>Неделя ${a}${a === b ? "" : "–" + b}</b> (с понедельника по сегодня)`,
+    wNothing: "С понедельника выездов и приездов нет.",
+    wOut: (n) => `🔻 Закончили: ${B(n)}`, wIn: (n) => `🟢 Начали: ${B(n)}`,
+    wTrOut: (n) => `🔁 Переведены на другие объекты: ${B(n)}`,
+    wRez: (n) => `❌ Не доехали: ${B(n)}`, wUnc: (n) => `❔ Без статуса: ${B(n)}`,
+    bySite: "По объектам:",
+    siteLine: (s, o, i, tr, rz, to) => `${s} — закончили ${B(o)}${to ? ` · переведены ${B(to)}` : ""} · начали ${B(i)}${tr ? ` (переводом ${B(tr)})` : ""}${rz ? ` · не доехали ${B(rz)}` : ""}`,
+    recTr: (n) => `в т.ч. переводом: ${B(n)}`,
+    rec2: (f, p) => `Набор к плану недели (с переводами): ${B(f)}${p != null ? ` из ${B(p)}${p ? ` (${B(Math.round((f / p) * 100) + "%")})` : ""}` : " (план не введён)"}`,
+    dep2: (f, p, u) => `Выезды (с переводами): ${B(f)}${p != null ? ` · по плану недели ${B(p)}` : ""}${u ? ` · вне плана ${B(u)}` : ""}`,
+    lagT: (p) => `🔴 <b>Отстают от темпа набора</b> (на сегодня нужно ${p}% плана недели):`,
+    lagL: (s, f, p) => `• ${s} — ${B(f)} из ${B(p)} (${Math.round((f / p) * 100)}%)`,
+  },
+  pl: {
+    inclTr: (n) => `w tym z przeniesienia: ${B(n)}`,
+    fromTr: (s) => ` ↪️ przeniesiony z ${s}`, toTr: (s) => ` → ${s}`,
+    trOut: (n) => `🔁 <b>Przeniesieni na inne obiekty: ${n}</b>`,
+    trAll: (n) => `🔁 <b>Przeniesienia: ${n}</b>`, fromN: (s, n) => `z ${s} ${B(n)}`,
+    lateN: (n) => `✍️ <b>Dopisane po poprzednim podsumowaniu: ${n}</b>`,
+    corrN: (n) => `↩️ <b>Zmiany w już pokazanych: ${n}</b>`,
+    wTitle: (a, b) => `📅 <b>Tydzień ${a}${a === b ? "" : "–" + b}</b> (od poniedziałku do dziś)`,
+    wNothing: "Od poniedziałku brak wyjazdów i przyjazdów.",
+    wOut: (n) => `🔻 Zakończyli: ${B(n)}`, wIn: (n) => `🟢 Rozpoczęli: ${B(n)}`,
+    wTrOut: (n) => `🔁 Przeniesieni na inne obiekty: ${B(n)}`,
+    wRez: (n) => `❌ Nie dojechali: ${B(n)}`, wUnc: (n) => `❔ Bez statusu: ${B(n)}`,
+    bySite: "Po obiektach:",
+    siteLine: (s, o, i, tr, rz, to) => `${s} — zakończyli ${B(o)}${to ? ` · przeniesieni ${B(to)}` : ""} · rozpoczęli ${B(i)}${tr ? ` (z przeniesienia ${B(tr)})` : ""}${rz ? ` · nie dojechali ${B(rz)}` : ""}`,
+    recTr: (n) => `w tym z przeniesienia: ${B(n)}`,
+    rec2: (f, p) => `Nabór do planu tygodnia (z przeniesieniami): ${B(f)}${p != null ? ` z ${B(p)}${p ? ` (${B(Math.round((f / p) * 100) + "%")})` : ""}` : " (brak planu)"}`,
+    dep2: (f, p, u) => `Wyjazdy (z przeniesieniami): ${B(f)}${p != null ? ` · wg planu tygodnia ${B(p)}` : ""}${u ? ` · poza planem ${B(u)}` : ""}`,
+    lagT: (p) => `🔴 <b>Poniżej tempa naboru</b> (na dziś potrzeba ${p}% planu tygodnia):`,
+    lagL: (s, f, p) => `• ${s} — ${B(f)} z ${B(p)} (${Math.round((f / p) * 100)}%)`,
+  },
+};
+const txOf = (l) => ({ ...TX[langOf(l)], ...TXD[langOf(l)] });
+
+// Підписи картинок-таблиць (без HTML і емодзі: шрифт картинки їх не має)
+const IMGTX = {
+  uk: {
+    site: "Обʼєкт", coord: "Координатор", out: "Закінчили", in: "Почали", inTr: ["в т.ч.", "переведенням"], rez: ["Не", "доїхали"],
+    rec: "Набір / план", total: "Разом", gToday: "Сьогодні", gWtd: "Тиждень на сьогодні", gSince: "З понеділка", gPlan: "План тижня", gFull: "За тиждень",
+    dayTitle: (d) => `Виїзди і приїзди · ${d}`, daySub: "за день", weekTitle: (a, b) => `Тиждень ${a}${a === b ? "" : " – " + b}`,
+    wtdSub: "з понеділка по сьогодні", prevSub: "минулий тиждень", prevEmpty: "За тиждень виїздів і приїздів не було",
+    lag: (p) => `набір відстає від темпу: на сьогодні треба ${p}% плану тижня`, lagFull: "набір нижче плану тижня",
+    note: "«—» план не введено · «Закінчили» і «Почали» — разом із переведеннями",
+    oTitle: "План набору · 3 тижні", oSub: (d) => `стан на ${d}`, oWeeks: "Тижні з понеділка", oStatus: "Стан",
+    oOk: "підтверджено", oUnc: "не підтверджено", oMiss: "не введено",
+    oLegRed: "план не введено", oLegAmber: "не підтверджено після суботи",
+  },
+  ru: {
+    site: "Объект", coord: "Координатор", out: "Закончили", in: "Начали", inTr: ["в т.ч.", "переводом"], rez: ["Не", "доехали"],
+    rec: "Набор / план", total: "Итого", gToday: "Сегодня", gWtd: "Неделя на сегодня", gSince: "С понедельника", gPlan: "План недели", gFull: "За неделю",
+    dayTitle: (d) => `Выезды и приезды · ${d}`, daySub: "за день", weekTitle: (a, b) => `Неделя ${a}${a === b ? "" : " – " + b}`,
+    wtdSub: "с понедельника по сегодня", prevSub: "прошлая неделя", prevEmpty: "За неделю выездов и приездов не было",
+    lag: (p) => `набор отстаёт от темпа: на сегодня нужно ${p}% плана недели`, lagFull: "набор ниже плана недели",
+    note: "«—» план не введён · «Закончили» и «Начали» — вместе с переводами",
+    oTitle: "План набора · 3 недели", oSub: (d) => `на ${d}`, oWeeks: "Недели с понедельника", oStatus: "Статус",
+    oOk: "подтверждён", oUnc: "не подтверждён", oMiss: "не введён",
+    oLegRed: "план не введён", oLegAmber: "не подтверждён после субботы",
+  },
+  pl: {
+    site: "Obiekt", coord: "Koordynator", out: "Zakończyli", in: "Rozpoczęli", inTr: ["w tym z", "przeniesienia"], rez: ["Nie", "dojechali"],
+    rec: "Nabór / plan", total: "Razem", gToday: "Dziś", gWtd: "Tydzień do dziś", gSince: "Od poniedziałku", gPlan: "Plan tygodnia", gFull: "Za tydzień",
+    dayTitle: (d) => `Wyjazdy i przyjazdy · ${d}`, daySub: "dzień", weekTitle: (a, b) => `Tydzień ${a}${a === b ? "" : " – " + b}`,
+    wtdSub: "od poniedziałku do dziś", prevSub: "poprzedni tydzień", prevEmpty: "W tygodniu nie było wyjazdów ani przyjazdów",
+    lag: (p) => `nabór poniżej tempa: na dziś potrzeba ${p}% planu tygodnia`, lagFull: "nabór poniżej planu tygodnia",
+    note: "«—» brak planu · „Zakończyli” i „Rozpoczęli” — razem z przeniesieniami",
+    oTitle: "Plan naboru · 3 tygodnie", oSub: (d) => `stan na ${d}`, oWeeks: "Tygodnie od poniedziałku", oStatus: "Stan",
+    oOk: "potwierdzone", oUnc: "do potwierdzenia", oMiss: "do wpisania",
+    oLegRed: "brak planu", oLegAmber: "niepotwierdzone po sobocie",
+  },
+};
 
 // ── Отримувачі ────────────────────────────────────────────────────────
 // Явні — з flow.recipients; автоматичні — координатори зі своїми об'єктами (auto_coords).
@@ -718,7 +926,8 @@ async function resolveRecipients() {
     const chat = r.chat_id || r.c_chat;
     if (!chat) continue;
     out.push({ id: r.id, chat: String(chat), scope: r.scope, region_id: r.region_id, coordinator_id: r.coordinator_id,
-      daily: r.daily, orders: r.orders, weekly: r.weekly, lang: langOf(r.lang), auto: false });
+      daily: r.daily, orders: r.orders, weekly: r.weekly, lang: langOf(r.lang), auto: false,
+      format: r.format === "image" ? "image" : "text" });
   }
   if (st.auto_coords === "1") {
     const ac = await db.query(
@@ -728,7 +937,8 @@ async function resolveRecipients() {
     for (const c of ac.rows) {
       if (explicitCoords.has(c.id)) continue;
       out.push({ id: null, chat: String(c.telegram_chat_id), scope: "own", coordinator_id: c.id,
-        daily: true, orders: false, weekly: false, lang: langOf(c.lang), auto: true });
+        daily: true, orders: false, weekly: false, lang: langOf(c.lang), auto: true,
+        format: st.coord_format === "image" ? "image" : "text" });
     }
   }
   return out;
@@ -785,13 +995,14 @@ async function dailyData(day, record) {
     `SELECT to_char(min(day), 'YYYY-MM-DD') AS first, to_char(max(day) FILTER (WHERE day < $1::date), 'YYYY-MM-DD') AS prev
        FROM flow.summaries`, [day]);
   const { first, prev: prevDay } = prev.rows[0];
-  // Основний блок — усе від попереднього зведення (дні без зведення, напр. вихідні, теж тут).
-  // «Дописано» — дати, які вже були в попередніх зведеннях, але цих записів там не було.
-  // Перше зведення бере лише сьогодні: старіша історія не «дописана».
+  // Основний блок — лише цей день. Дні без зведення (сервер вимкнений, зведення вимкнене)
+  // у повідомленні 1 не показуються — їх кількості є в тижневому повідомленні 2.
+  // «Дописано» — записи з датою дня, за який зведення вже пішло, але яких у ньому не було.
   const clamp = (d) => (d < addDays(day, -lateDays) ? addDays(day, -lateDays) : d);
-  const mainFrom = prevDay ? clamp(addDays(prevDay, 1)) : day;
+  const mainFrom = day;
   const lateFrom = first ? clamp(first) : day;
   const lateTo = prevDay || addDays(day, -1);   // включно
+  const onSummaryDay = `EXISTS (SELECT 1 FROM flow.summaries s WHERE s.day = x.move_date)`;
   const names = `JOIN public.workers w ON w.id = x.worker_id`;
   const notShown = (kind) => `NOT EXISTS (SELECT 1 FROM flow.summary_items i WHERE i.kind = '${kind}' AND i.worker_id = x.worker_id
                                   AND i.site_key = x.site_key AND i.move_date = x.move_date)`;
@@ -802,9 +1013,9 @@ async function dailyData(day, record) {
     db.query(`SELECT x.*, to_char(x.move_date, 'YYYY-MM-DD') AS date, w.full_name FROM flow.arrivals($1::date, $2::date) x ${names}
                WHERE ${record ? notShown("in") : "true"}`, [mainFrom, day]),
     db.query(`SELECT x.*, to_char(x.move_date, 'YYYY-MM-DD') AS date, w.full_name FROM flow.departures($1::date, $2::date) x ${names}
-               WHERE ${notShown("out")}`, [lateFrom, lateTo]),
+               WHERE ${notShown("out")} AND ${onSummaryDay}`, [lateFrom, lateTo]),
     db.query(`SELECT x.*, to_char(x.move_date, 'YYYY-MM-DD') AS date, w.full_name FROM flow.arrivals($1::date, $2::date) x ${names}
-               WHERE ${notShown("in")}`, [lateFrom, lateTo]),
+               WHERE ${notShown("in")} AND ${onSummaryDay}`, [lateFrom, lateTo]),
     // показаний виїзд більше не стоїть на ту дату: перенесено (нова дата) або скасовано
     db.query(`SELECT i.*, to_char(i.move_date, 'YYYY-MM-DD') AS date, w.full_name,
                      (SELECT to_char(min(d.move_date), 'YYYY-MM-DD') FROM flow.departures(i.move_date - 31, i.move_date + 62) d
@@ -827,8 +1038,12 @@ async function dailyData(day, record) {
   ]);
   const week = mondayOf(day);
   const wk = await weekData(week, SITES_CACHE.map((s) => s.site_key), day);
+  // переведення з понеділка: куди і звідки (для зведення по всій фірмі)
+  const weekTr = await db.query(
+    `SELECT site_key, from_site, count(*)::int AS n FROM flow.arrivals($1::date, $2::date)
+      WHERE kind = 'transfer' AND status NOT IN ('rezygnacja', 'unknown') GROUP BY 1, 2`, [week, day]);
   const data = {
-    day, week, weekEnd: addDays(week, 6), mainFrom,
+    day, week, weekEnd: addDays(week, 6), mainFrom, weekTr: weekTr.rows, pace: paceOf(st, day),
     deps: deps.rows, arrs: arrs.rows, lateDeps: lateDeps.rows, lateArrs: lateArrs.rows,
     corrOut: corrOut.rows, corrIn: corrIn.rows, weekRows: wk.rows, weekFixed: !!wk.fixed,
   };
@@ -862,30 +1077,50 @@ async function dailyData(day, record) {
 }
 
 // ── Щоденне зведення: текст для одного отримувача ─────────────────────
-const NAMES_MAX = 15;
+const NAMES_MAX = 40;
+const NB = "\u00A0\u00A0\u00A0";       // відступ перед прізвищем
 function bySite(list, keyset) { return list.filter((x) => keyset.has(x.site_key)); }
-function groupLines(list, t, own, extra) {
-  // own: імена по обʼєкту; інакше — кількість по обʼєкту з координатором
+const coordOf = (k) => { const c = (SITES_CACHE || []).find((s) => s.site_key === k); return c && c.coordinator_name ? ` (${esc(c.coordinator_name)})` : ""; };
+// Рядок «Обʼєкт — N»; detail own / region — під ним прізвища, кожне з нового рядка; all — тільки кількість
+function siteBlocks(list, t, detail, extra) {
   const g = {};
   list.forEach((x) => { (g[x.site_key] = g[x.site_key] || []).push(x); });
-  const lines = Object.keys(g).sort((a, b) => g[b].length - g[a].length || a.localeCompare(b)).map((k) => {
-    if (own) {
-      const ns = g[k].map((x) => esc(x.full_name) + (extra ? extra(x) : ""));
-      return `• ${esc(k)}: ${ns.slice(0, NAMES_MAX).join(", ")}${ns.length > NAMES_MAX ? " " + t.more(ns.length - NAMES_MAX) : ""}`;
-    }
-    const c = (SITES_CACHE || []).find((s) => s.site_key === k);
-    return `• ${esc(k)} — ${g[k].length}${c && c.coordinator_name ? ` (${esc(c.coordinator_name)})` : ""}`;
-  });
-  return lines.slice(0, 25).concat(lines.length > 25 ? [t.more(lines.length - 25)] : []);
+  const keys = Object.keys(g).sort((a, b) => g[b].length - g[a].length || a.localeCompare(b));
+  const out = [];
+  for (const k of keys.slice(0, 40)) {
+    out.push(`${esc(k)} — ${B(g[k].length)}${detail === "own" ? "" : coordOf(k)}`);
+    if (detail === "all") continue;
+    g[k].slice(0, NAMES_MAX).forEach((x) => out.push(NB + esc(x.full_name) + (extra ? extra(x) : "")));
+    if (g[k].length > NAMES_MAX) out.push(NB + t.more(g[k].length - NAMES_MAX));
+  }
+  if (keys.length > 40) out.push(t.more(keys.length - 40));
+  return out;
 }
+// Переведення по обʼєкту призначення: «IDL Psary ← 3: з ANPACARS 2, з Mieszko 1»
+function trDestLines(list, t) {
+  const g = {};
+  list.forEach((x) => {
+    const d = (g[x.site_key] = g[x.site_key] || { n: 0, from: {} });
+    const n = Number(x.n) || 1;
+    const f = x.from_site || "?";
+    d.n += n; d.from[f] = (d.from[f] || 0) + n;
+  });
+  return Object.keys(g).sort((a, b) => g[b].n - g[a].n || a.localeCompare(b)).map((k) =>
+    `${esc(k)} ← ${B(g[k].n)}: ${Object.entries(g[k].from).sort((a, b) => b[1] - a[1]).map(([f, n]) => t.fromN(esc(f), n)).join(", ")}`);
+}
+const scopeLine = (t, ts) => `<i>${ts.label === "own" ? t.sOwn : ts.label === "region" ? esc(t.sRegion(ts.regionName || "—")) : t.sAll}</i>`;
+const detailOf = (ts) => (ts.label === "own" ? "own" : ts.label === "region" ? "region" : "all");
 
-function buildDaily(data, ts, target) {
-  const t = TX[langOf(target.lang)];
+// Повідомлення 1 — зведення за день: координатору й регіональному з прізвищами, по фірмі — кількість.
+// opts.image — підпис до картинки: по фірмі кількості по обʼєктах уже в таблиці, тут їх не повторюємо.
+function buildDaily(data, ts, target, opts = {}) {
+  const t = txOf(target.lang);
   const keys = new Set(ts.keys);
-  const own = ts.label === "own";
+  const detail = detailOf(ts);
+  const named = detail !== "all";
+  const inTable = !!opts.image && !named;
   const dow = new Date(data.day + "T00:00:00Z").getUTCDay();
-  const L = [t.title(`${t.days[dow]} ${dd(data.day)}`)];
-  L.push(`<i>${own ? t.sOwn : ts.label === "region" ? esc(t.sRegion(ts.regionName || "—")) : t.sAll}</i>`);
+  const L = [t.title(`${t.days[dow]} ${dd(data.day)}`), scopeLine(t, ts)];
 
   const deps = bySite(data.deps, keys);
   const out = deps.filter((x) => !x.is_transfer), tr = deps.filter((x) => x.is_transfer);
@@ -896,29 +1131,32 @@ function buildDaily(data, ts, target) {
   const aRez = arrs.filter((x) => x.status === "rezygnacja");
   const multi = data.mainFrom < data.day;
   const dt = (x) => (multi ? ` (${dd(x.date)})` : "");
-  const arrow = (x) => (x.to_site ? ` → ${esc(x.to_site)}` : "") + dt(x);
-  const from = (x) => (x.from_site ? ` ← ${esc(x.from_site)}` : "") + dt(x);
+  const when = multi ? t.since(dd(data.mainFrom)) : t.today;
 
-  const when = data.mainFrom < data.day ? t.since(dd(data.mainFrom)) : t.today;
   if (!deps.length && !arrs.length) L.push("", t.nothing(when));
-  if (out.length) L.push("", t.out(out.length, when), ...groupLines(out, t, own, dt));
-  if (tr.length) L.push("", t.tr(tr.length), ...groupLines(tr, t, true, arrow));
-  if (aNew.length) L.push("", t.inNew(aNew.length, when), ...groupLines(aNew, t, own, dt));
-  if (aTr.length) L.push("", t.inTr(aTr.length), ...groupLines(aTr, t, true, from));
-  if (aUnc.length) L.push("", t.unconf(aUnc.length), ...groupLines(aUnc, t, own, dt));
-  if (aRez.length) L.push("", t.rez(aRez.length), ...groupLines(aRez, t, own, dt));
+  if (out.length && !inTable) L.push("", t.out(out.length, when), ...siteBlocks(out, t, detail, dt));
+  const inAll = aNew.concat(aTr);
+  if (inAll.length && !inTable) {
+    L.push("", t.inNew(inAll.length, when));
+    if (aTr.length) L.push(t.inclTr(aTr.length));
+    L.push(...siteBlocks(inAll, t, detail, (x) => (x.kind === "transfer" ? t.fromTr(esc(x.from_site || "?")) : "") + dt(x)));
+  }
+  if (named && tr.length) L.push("", t.trOut(tr.length), ...siteBlocks(tr, t, detail, (x) => t.toTr(esc(x.to_site || "?")) + dt(x)));
+  if (!named && aTr.length) L.push("", t.trAll(aTr.length), ...trDestLines(aTr, t));
+  if (aUnc.length) L.push("", `<b>${t.unconf(aUnc.length)}</b>`, ...siteBlocks(aUnc, t, detail, dt));
+  if (aRez.length && !inTable) L.push("", `<b>${t.rez(aRez.length)}</b>`, ...siteBlocks(aRez, t, detail, dt));
 
   const late = [
     ...bySite(data.lateDeps, keys).map((x) => ({ ...x, k: x.is_transfer ? t.kOut + " 🔁" : t.kOut })),
     ...bySite(data.lateArrs, keys).map((x) => ({ ...x, k: x.status === "rezygnacja" ? t.kRez : t.kIn })),
   ].sort((a, b) => a.date.localeCompare(b.date) || a.site_key.localeCompare(b.site_key));
   if (late.length) {
-    L.push("", t.late);
-    if (own) late.slice(0, 30).forEach((x) => L.push(`• ${dd(x.date)} ${esc(x.site_key)} — ${x.k}: ${esc(x.full_name)}`));
+    L.push("", t.lateN(late.length));
+    if (named) late.slice(0, 30).forEach((x) => L.push(`• ${dd(x.date)} ${esc(x.site_key)} — ${x.k}: ${esc(x.full_name)}`));
     else {
       const g = {};
       late.forEach((x) => { const k = `${x.date}|${x.site_key}|${x.k}`; g[k] = (g[k] || 0) + 1; });
-      Object.entries(g).slice(0, 30).forEach(([k, n]) => { const [d, s, kk] = k.split("|"); L.push(`• ${dd(d)} ${esc(s)} — ${kk}: ${n}`); });
+      Object.entries(g).slice(0, 30).forEach(([k, n]) => { const [d, s2, kk] = k.split("|"); L.push(`• ${dd(d)} ${esc(s2)} — ${kk}: ${B(n)}`); });
     }
     if (late.length > 30) L.push(t.more(late.length - 30));
   }
@@ -927,21 +1165,335 @@ function buildDaily(data, ts, target) {
     ...bySite(data.corrIn, keys).map((x) => ({ ...x, what: x.cur_status === "rezygnacja" ? t.notCame : x.new_date ? t.moved(dd(x.new_date)) : t.cancelled, k: t.kIn })),
   ];
   if (corr.length) {
-    L.push("", t.corr);
-    corr.slice(0, 30).forEach((x) => L.push(`• ${dd(x.date)} ${esc(x.site_key)} — ${x.k} ${esc(x.full_name)}: ${x.what}`));
+    L.push("", t.corrN(corr.length));
+    if (named) corr.slice(0, 30).forEach((x) => L.push(`• ${dd(x.date)} ${esc(x.site_key)} — ${x.k} ${esc(x.full_name)}: ${x.what}`));
+    else {
+      const g = {};
+      corr.forEach((x) => { const k = `${x.date}|${x.site_key}|${x.k}|${x.what}`; g[k] = (g[k] || 0) + 1; });
+      Object.entries(g).slice(0, 30).forEach(([k, n]) => { const [d, s2, kk, w] = k.split("|"); L.push(`• ${dd(d)} ${esc(s2)} — ${kk}: ${w} — ${B(n)}`); });
+    }
   }
+  return L.join("\n");
+}
 
+// Повідомлення 2 — тиждень наростаючим підсумком (з понеділка по сьогодні), тільки цифри
+function buildWeekToDate(data, ts, target) {
+  const t = txOf(target.lang);
+  const keys = new Set(ts.keys);
+  const detail = detailOf(ts);
   const wr = data.weekRows.filter((x) => keys.has(x.site_key));
   const s = totals(wr);
-  L.push("", t.week(dd(data.week), dd(data.weekEnd)));
-  L.push(t.rec(s.arr_fact || 0, s.sites_with_order ? s.order_qty : null, s.arr_entered || 0, s.tr_fact || 0));
-  L.push(t.dep(s.dep_fact || 0, data.weekFixed ? s.dep_plan || 0 : null, data.weekFixed ? s.dep_unplanned || 0 : 0));
+  const n = (v) => Number(v) || 0;
+  const L = [t.wTitle(dd(data.week), dd(data.day)), scopeLine(t, ts)];
+  const outN = n(s.dep_fact) - n(s.dep_fact_tr), inN = n(s.arr_fact) + n(s.tr_fact);
+  if (!n(s.dep_fact) && !inN && !n(s.arr_rez) && !n(s.arr_unconf)) L.push("", t.wNothing);
+  else {
+    L.push("", t.wOut(outN), t.wIn(inN));
+    if (n(s.tr_fact)) L.push(t.inclTr(n(s.tr_fact)));
+    if (n(s.dep_fact_tr)) L.push(t.wTrOut(n(s.dep_fact_tr)));
+    if (n(s.arr_rez)) L.push(t.wRez(n(s.arr_rez)));
+    if (n(s.arr_unconf)) L.push(t.wUnc(n(s.arr_unconf)));
+    const act = (x) => n(x.dep_fact) + n(x.arr_fact) + n(x.tr_fact) + n(x.arr_rez);
+    const rows = wr.filter((x) => act(x) > 0).sort((a, b) => act(b) - act(a) || a.site_key.localeCompare(b.site_key));
+    if (rows.length) {
+      L.push("", t.bySite);
+      rows.slice(0, 70).forEach((x) => L.push(t.siteLine(esc(x.site_key) + (detail === "own" ? "" : coordOf(x.site_key)),
+        n(x.dep_fact) - n(x.dep_fact_tr), n(x.arr_fact) + n(x.tr_fact), n(x.tr_fact), n(x.arr_rez), n(x.dep_fact_tr))));
+      if (rows.length > 70) L.push(t.more(rows.length - 70));
+    }
+    if (detail === "all") {
+      const wt = (data.weekTr || []).filter((x) => keys.has(x.site_key));
+      if (wt.length) L.push("", t.trAll(wt.reduce((a, x) => a + x.n, 0)), ...trDestLines(wt, t));
+    }
+  }
+  // набір до плану — разом із переведеннями (місце на обʼєкті закрите), окремо скільки з них переведенням
+  L.push("", t.rec2(n(s.arr_fact) + n(s.tr_fact), s.sites_with_order ? n(s.order_qty) : null));
+  if (n(s.tr_fact)) L.push(t.recTr(n(s.tr_fact)));
+  L.push(t.dep2(n(s.dep_fact), data.weekFixed ? n(s.dep_plan) : null, data.weekFixed ? n(s.dep_unplanned) : 0));
+  // хто відстає від темпу набору (як червоні рядки на картинці)
+  const lag = wr.filter((x) => isLagging(n(x.arr_fact) + n(x.tr_fact), x.order_qty, data.pace))
+    .map((x) => ({ k: x.site_key, f: n(x.arr_fact) + n(x.tr_fact), p: n(x.order_qty) }))
+    .sort((a, b) => a.f / a.p - b.f / b.p || b.p - a.p || a.k.localeCompare(b.k));
+  if (lag.length) {
+    L.push("", t.lagT(data.pace));
+    lag.slice(0, 25).forEach((x) => L.push(t.lagL(esc(x.k) + (detail === "own" ? "" : coordOf(x.k)), x.f, x.p)));
+    if (lag.length > 25) L.push(t.more(lag.length - 25));
+  }
+  return L.join("\n");
+}
+// Підпис до картинки тижня: підсумки, яких немає в таблиці (план виїздів, без статусу, звідки переведення)
+function buildWeekCaption(data, ts, target) {
+  const t = txOf(target.lang);
+  const keys = new Set(ts.keys);
+  const s = totals(data.weekRows.filter((x) => keys.has(x.site_key)));
+  const n = (v) => Number(v) || 0;
+  const L = [t.wTitle(dd(data.week), dd(data.day)), scopeLine(t, ts), ""];
+  L.push(t.rec2(n(s.arr_fact) + n(s.tr_fact), s.sites_with_order ? n(s.order_qty) : null));
+  if (n(s.tr_fact)) L.push(t.recTr(n(s.tr_fact)));
+  L.push(t.dep2(n(s.dep_fact), data.weekFixed ? n(s.dep_plan) : null, data.weekFixed ? n(s.dep_unplanned) : 0));
+  if (n(s.arr_unconf)) L.push(t.wUnc(n(s.arr_unconf)));
+  if (detailOf(ts) === "all") {
+    const wt = (data.weekTr || []).filter((x) => keys.has(x.site_key));
+    if (wt.length) L.push("", t.trAll(wt.reduce((a, x) => a + x.n, 0)), ...trDestLines(wt, t));
+  }
   return L.join("\n");
 }
 // Чи є що показати координатору (для skip_empty)
 function dailyHasNews(data, ts) {
   const keys = new Set(ts.keys);
   return [data.deps, data.arrs, data.lateDeps, data.lateArrs, data.corrOut, data.corrIn].some((l) => l.some((x) => keys.has(x.site_key)));
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  Картинки-таблиці (форма відправки «image»)
+// ══════════════════════════════════════════════════════════════════════
+const coordName = (k) => { const s = (SITES_CACHE || []).find((x) => x.site_key === k); return (s && s.coordinator_name) || ""; };
+function scopeText(t, ts) {
+  if (ts.label === "own") { const s = (ts.sites || [])[0]; return t.sOwn + (s && s.coordinator_name ? ` · ${s.coordinator_name}` : ""); }
+  if (ts.label === "region") return t.sRegion(ts.regionName || "—");
+  return t.sAll;
+}
+const stamp = (day) => `KoorPanel · ${dd(day)} ${new Date().toLocaleTimeString("pl-PL", { timeZone: "Europe/Warsaw", hour: "2-digit", minute: "2-digit" })}`;
+
+// Колонки «Обʼєкт | Координатор | Закінчили | Почали | в т.ч. переведенням | Не доїхали | Набір / план | %»
+function moveCols(it, own, groupLabels) {
+  const cols = [{ label: it.site, kind: "site", align: "left" }];
+  if (!own) cols.push({ label: it.coord, kind: "muted", align: "left" });
+  cols.push({ label: it.out, kind: "num", sep: true }, { label: it.in, kind: "num" }, { label: it.inTr, kind: "num" },
+    { label: it.rez, kind: "num" }, { label: it.rec, kind: "text", sep: true }, { label: "%", kind: "pct" });
+  return { cols, lead: own ? 1 : 2, groups: [{ label: groupLabels[0], span: 4 }, { label: groupLabels[1], span: 2 }] };
+}
+// Набір / план, %, чи відстає від темпу
+function recCells(f, p, pace) {
+  if (p == null) return [{ v: `${f} / —`, tone: "muted" }, null, false];
+  return [`${f} / ${p}`, Number(p) > 0 ? `${Math.round((f / p) * 100)}%` : null, isLagging(f, p, pace)];
+}
+// Рядки: спершу найбільше відставання (найменший %), обʼєкти без плану — внизу
+function moveRows(items, own, pace) {
+  const pc = (x) => (x.p != null && Number(x.p) > 0 ? x.f / x.p : 9);
+  items.sort((a, b) => (a.p == null) - (b.p == null) || pc(a) - pc(b) || (b.p || 0) - (a.p || 0) || a.site.localeCompare(b.site));
+  return items.map((x) => {
+    const [rec, pct, lag] = recCells(x.f, x.p, pace);
+    const cells = [x.site];
+    if (!own) cells.push(x.coord || "—");
+    cells.push(x.out, x.in, x.inTr, x.rez, rec, pct);
+    return { cells, tone: lag ? "red" : null };
+  });
+}
+function moveTotal(it, own, x, pace) {
+  const [rec, pct, lag] = recCells(x.f, x.p, pace);
+  const cells = [it.total];
+  if (!own) cells.push("");
+  cells.push(x.out, x.in, x.inTr, x.rez, rec, lag && pct ? { v: pct, tone: "red" } : pct);
+  return { cells };
+}
+const nz = (v) => Number(v) || 0;
+// Підсумок тижня по обʼєктах у межах отримувача — як у текстовому зведенні (rec2)
+function weekTotalItem(rows) {
+  const s = totals(rows);
+  return { out: nz(s.dep_fact), in: nz(s.arr_fact) + nz(s.tr_fact), inTr: nz(s.tr_fact), rez: nz(s.arr_rez),
+    f: nz(s.arr_fact) + nz(s.tr_fact), p: s.sites_with_order ? nz(s.order_qty) : null };
+}
+
+// Картинка 1 — за день: обʼєкти, де сьогодні був рух; праворуч — тиждень на сьогодні
+function dayTableSpec(data, ts, target) {
+  const t = txOf(target.lang), it = IMGTX[langOf(target.lang)];
+  const keys = new Set(ts.keys), own = ts.label === "own";
+  const wk = Object.fromEntries(data.weekRows.map((x) => [x.site_key, x]));
+  const g = {};
+  const get = (k) => (g[k] = g[k] || { site: k, coord: coordName(k), out: 0, in: 0, inTr: 0, rez: 0 });
+  bySite(data.deps, keys).forEach((x) => { get(x.site_key).out++; });
+  bySite(data.arrs, keys).forEach((x) => {
+    if (x.status === "rezygnacja") get(x.site_key).rez++;
+    else if (x.kind === "transfer") { get(x.site_key).in++; get(x.site_key).inTr++; }
+    else if (x.status !== "unknown") get(x.site_key).in++;
+  });
+  const items = Object.values(g).map((x) => {
+    const w = wk[x.site] || {};
+    return { ...x, f: nz(w.arr_fact) + nz(w.tr_fact), p: w.order_qty == null ? null : Number(w.order_qty) };
+  });
+  if (!items.length) return null;
+  const sum = (k) => items.reduce((a, x) => a + x[k], 0);
+  const wt = weekTotalItem(data.weekRows.filter((x) => keys.has(x.site_key)));
+  const dow = new Date(data.day + "T00:00:00Z").getUTCDay();
+  return {
+    title: it.dayTitle(`${t.days[dow]} ${dd(data.day)}`), sub: `${scopeText(t, ts)} · ${it.daySub}`,
+    ...moveCols(it, own, [it.gToday, it.gWtd]),
+    rows: moveRows(items, own, data.pace),
+    total: moveTotal(it, own, { out: sum("out"), in: sum("in"), inTr: sum("inTr"), rez: sum("rez"), f: wt.f, p: wt.p }, data.pace),
+    legend: [{ tone: "red", text: it.lag(data.pace) }], note: it.note, footRight: stamp(data.day),
+  };
+}
+// Картинка тижня: з понеділка по сьогодні (або весь минулий тиждень — у понеділковому звіті)
+function weekTableSpec(weekRows, ts, target, o) {
+  const it = IMGTX[langOf(target.lang)];
+  const keys = new Set(ts.keys), own = ts.label === "own";
+  const wr = weekRows.filter((x) => keys.has(x.site_key));
+  const items = wr
+    .filter((x) => x.order_qty != null || nz(x.dep_fact) + nz(x.arr_fact) + nz(x.tr_fact) + nz(x.arr_rez) + nz(x.arr_unconf) > 0)
+    .map((x) => ({
+      site: x.site_key, coord: coordName(x.site_key), out: nz(x.dep_fact), in: nz(x.arr_fact) + nz(x.tr_fact), inTr: nz(x.tr_fact),
+      rez: nz(x.arr_rez), f: nz(x.arr_fact) + nz(x.tr_fact), p: x.order_qty == null ? null : Number(x.order_qty),
+    }));
+  return {
+    title: o.title, sub: o.sub, ...moveCols(it, own, o.groups),
+    rows: moveRows(items, own, o.pace), total: moveTotal(it, own, weekTotalItem(wr), o.pace),
+    empty: o.empty, legend: [{ tone: "red", text: o.legend }], note: it.note, footRight: stamp(o.day),
+  };
+}
+function wtdTableSpec(data, ts, target) {
+  const t = txOf(target.lang), it = IMGTX[langOf(target.lang)];
+  return weekTableSpec(data.weekRows, ts, target, {
+    title: it.weekTitle(dd(data.week), dd(data.day)), sub: `${scopeText(t, ts)} · ${it.wtdSub}`,
+    groups: [it.gSince, it.gPlan], pace: data.pace, legend: it.lag(data.pace), empty: t.wNothing, day: data.day,
+  });
+}
+// План набору: обʼєкт × 3 тижні + стан підтвердження
+function ordersSpec(od, ts, target, today) {
+  const t = txOf(target.lang), it = IMGTX[langOf(target.lang)];
+  const own = ts.label === "own";
+  const order = { miss: 0, unc: 1, ok: 2 };
+  // спершу не введені, далі не підтверджені, далі готові; усередині — за координатором (без координатора — у кінці)
+  const rows = od.rows.slice().sort((a, b) => order[a.status] - order[b.status]
+    || (a.coordinator_name == null) - (b.coordinator_name == null)
+    || (a.coordinator_name || "").localeCompare(b.coordinator_name || "") || a.site_key.localeCompare(b.site_key));
+  const label = { ok: it.oOk, unc: it.oUnc, miss: it.oMiss };
+  const cols = [{ label: it.site, kind: "site", align: "left" }];
+  if (!own) cols.push({ label: it.coord, kind: "muted", align: "left" });
+  od.weeks.forEach((w, i) => cols.push({ label: dd(w), kind: "num", sep: i === 0 }));
+  cols.push({ label: it.oStatus, kind: "status", align: "left", sep: true });
+  const mk = (x) => {
+    const cells = [x.site_key];
+    if (!own) cells.push(x.coordinator_name || "—");
+    x.q.forEach((v) => cells.push(v));
+    cells.push(label[x.status]);
+    return { cells, tone: x.status === "miss" ? "red" : x.status === "unc" ? "amber" : null };
+  };
+  const sums = od.weeks.map((_, i) => od.rows.reduce((a, x) => a + (x.q[i] || 0), 0));
+  const total = { cells: [it.total, ...(own ? [] : [""]), ...sums, ""] };
+  return {
+    title: it.oTitle, sub: `${scopeText(t, ts)} · ${it.oSub(dd(today))}`, cols, lead: own ? 1 : 2,
+    groups: [{ label: it.oWeeks, span: 3 }],
+    rows: rows.map(mk), total,
+    legend: [{ tone: "red", text: it.oLegRed }, { tone: "amber", text: it.oLegAmber }], footRight: stamp(today),
+  };
+}
+
+// ── Відправка картинок ────────────────────────────────────────────────
+const CAPTION_MAX = 1000;   // ліміт Telegram — 1024 символи підпису
+let IMG_ERRORS = 0;
+function renderSafe(spec) {
+  try {
+    return IMG.render(spec);
+  } catch (e) {
+    if (IMG_ERRORS++ % 50 === 0) {
+      console.error("[flow] картинка не вийшла — шлемо текстом:", e.message,
+        "| потрібно: npm install @resvg/resvg-js@2.6.2 opentype.js@1.3.4 і шрифти в assets/fonts");
+    }
+    return null;
+  }
+}
+async function sendPhotos(chatId, pngs, caption) {
+  if (!BOT || !chatId || !pngs.length) return false;
+  for (let i = 0; i < pngs.length; i += 10) {
+    const part = pngs.slice(i, i + 10);
+    const cap = i === 0 && caption ? { caption, parse_mode: "HTML" } : {};
+    let ok = false;
+    for (let attempt = 0; attempt < 2 && !ok; attempt++) {
+      try {
+        if (attempt) await new Promise((r) => setTimeout(r, 3000));
+        if (part.length === 1) await BOT.telegram.sendPhoto(chatId, { source: part[0], filename: "tabela.png" }, cap);
+        else {
+          await BOT.telegram.sendMediaGroup(chatId, part.map((b, k) => ({
+            type: "photo", media: { source: b, filename: `tabela_${i + k + 1}.png` }, ...(k === 0 ? cap : {}),
+          })));
+        }
+        ok = true;
+      } catch (e) {
+        console.error("[flow] telegram photo", chatId, e.message);
+      }
+    }
+    if (!ok) return false;
+  }
+  return true;
+}
+// Картинка(и) з підписом. Довгий текст: у підписі — заголовок (до першого порожнього рядка), решта — окремим повідомленням.
+// Telegram не прийняв картинку — шлемо fallback (той самий зміст текстом).
+async function sendCard(chatId, pngs, text, fallback) {
+  let caption = text, rest = "";
+  if (text.length > CAPTION_MAX) {
+    const lines = text.split("\n");
+    const cut = lines.indexOf("");
+    caption = (cut > 0 ? lines.slice(0, cut) : lines.slice(0, 2)).join("\n");
+    rest = (cut > 0 ? lines.slice(cut + 1) : lines.slice(2)).join("\n").trim();
+    if (caption.length > CAPTION_MAX) { caption = ""; rest = text; }
+  }
+  if (!(await sendPhotos(chatId, pngs, caption))) return fallback ? sendLong(chatId, fallback) : false;
+  return !rest || sendLong(chatId, rest);
+}
+
+// Щоденне: 1) за день, 2) тиждень з понеділка. Форма — текст або картинки (якщо картинка не вийшла — текст).
+async function deliverDaily(t, data, ts, prefix = "") {
+  if (t.format === "image") {
+    const daySpec = dayTableSpec(data, ts, t);
+    const dayPng = daySpec ? renderSafe(daySpec) : [];
+    const weekPng = dayPng ? renderSafe(wtdTableSpec(data, ts, t)) : null;
+    if (dayPng && weekPng) {
+      // за день: у підписі прізвища (координатор, регіон) або переведення, без статусу, дописано (фірма)
+      const dayText = prefix + buildDaily(data, ts, t);
+      const ok1 = dayPng.length ? await sendCard(t.chat, dayPng, prefix + buildDaily(data, ts, t, { image: true }), dayText)
+        : await sendLong(t.chat, dayText);
+      const ok2 = await sendCard(t.chat, weekPng, prefix + buildWeekCaption(data, ts, t), prefix + buildWeekToDate(data, ts, t));
+      return ok1 && ok2;
+    }
+  }
+  const ok1 = await sendLong(t.chat, prefix + buildDaily(data, ts, t));
+  const ok2 = await sendLong(t.chat, prefix + buildWeekToDate(data, ts, t));
+  return ok1 && ok2;
+}
+// Понеділок: план набору (таблиця обʼєкт × 3 тижні) і план–факт минулого тижня
+async function deliverMonday(t, today, prefix = "") {
+  if (t.format === "image") {
+    SITES_CACHE = SITES_CACHE || (await allSites());
+    const ts = await targetSites(t);
+    const tx = txOf(t.lang), it = IMGTX[langOf(t.lang)];
+    const cards = [];
+    if (t.orders) {
+      const od = await ordersData(ts, today);
+      const png = renderSafe(ordersSpec(od, ts, t, today));
+      if (png) {
+        cards.push([png, [tx.monday(dd(today)), scopeLine(tx, ts), "", od.missing.length ? tx.missing(od.missing.length) : tx.allIn].join("\n"), "orders"]);
+      } else cards.push(null);
+    }
+    if (t.weekly) {
+      const prev = addDays(mondayOf(today), -7);
+      const wk = await weekData(prev, ts.keys, today);
+      const png = renderSafe(weekTableSpec(wk.rows, ts, t, {
+        title: it.weekTitle(dd(prev), dd(addDays(prev, 6))), sub: `${scopeText(tx, ts)} · ${it.prevSub}`,
+        groups: [it.gFull, it.gPlan], pace: 100, legend: it.lagFull, empty: it.prevEmpty, day: today,
+      }));
+      if (png) {
+        const s = totals(wk.rows);
+        // як у таблиці: набір разом із переведеннями
+        cards.push([png, [tx.prev(dd(prev), dd(addDays(prev, 6))), scopeLine(tx, ts), "",
+          tx.rec2(nz(s.arr_fact) + nz(s.tr_fact), s.sites_with_order ? nz(s.order_qty) : null),
+          ...(nz(s.tr_fact) ? [tx.recTr(nz(s.tr_fact))] : []),
+          tx.dep2(nz(s.dep_fact), wk.fixed ? nz(s.dep_plan) : null, wk.fixed ? nz(s.dep_unplanned) : 0),
+          tx.net(nz(s.arr_fact) + nz(s.tr_fact) - nz(s.dep_fact))].join("\n"), "weekly"]);
+      } else cards.push(null);
+    }
+    if (cards.length && cards.every(Boolean)) {
+      let ok = true;
+      for (let i = 0; i < cards.length; i++) {
+        // Telegram не прийняв картинку — ця частина звіту йде текстом
+        const part = cards[i][2] === "orders" ? { ...t, weekly: false } : { ...t, orders: false };
+        const fb = (i === 0 ? prefix : "") + (await buildMonday(part, today));
+        ok = (await sendCard(t.chat, cards[i][0], (i === 0 ? prefix : "") + cards[i][1], fb)) && ok;
+      }
+      return ok;
+    }
+  }
+  return sendLong(t.chat, prefix + (await buildMonday(t, today)));
 }
 
 // ── Неділя: нагадування координатору про план набору ──────────────────
@@ -969,36 +1521,55 @@ async function buildRemind(t, today, force) {
   return [tx.remind(weeks, st.orders_deadline), "", tx.remindSites, ...missing.map((k) => `• ${esc(k)}`), "", tx.where].join("\n");
 }
 
-// ── Понеділок: хто не ввів план + план–факт минулого тижня ────────────
+// ── Понеділок: план набору по обʼєктах + план–факт минулого тижня ─────
+// План на 3 тижні: на понеділок «найближчий» тиждень — уже поточний, тому тижні від сьогодні.
+// Стан обʼєкта: ok — усі 3 тижні збережені після суботи 0:00; unc — цифри є, але не підтверджені; miss — бракує тижня.
+async function ordersData(ts, today) {
+  const cur = mondayOf(today);
+  const weeks = [cur, addDays(cur, 7), addDays(cur, 14)];
+  const r = await db.query(
+    `SELECT s.k AS site_key, to_char(w.w, 'YYYY-MM-DD') AS week, o.qty,
+            COALESCE(o.entered_at >= ($3::date)::timestamp AT TIME ZONE 'Europe/Warsaw', false) AS confirmed
+       FROM unnest($1::text[]) s(k) CROSS JOIN unnest($2::date[]) w(w)
+       LEFT JOIN flow.v_orders o ON o.site_key = s.k AND o.week_start = w.w`,
+    [ts.keys, weeks, confirmFrom(today)]);
+  const by = {};
+  for (const x of r.rows) {
+    const o = (by[x.site_key] = by[x.site_key] || { q: {}, has: 0, conf: 0 });
+    o.q[x.week] = x.qty == null ? null : Number(x.qty);
+    if (x.qty != null) o.has++;
+    if (x.qty != null && x.confirmed) o.conf++;
+  }
+  const rows = ts.keys.map((k) => {
+    const o = by[k] || { q: {}, has: 0, conf: 0 };
+    const s = (ts.sites || []).find((y) => y.site_key === k) || {};
+    return { site_key: k, coordinator_name: s.coordinator_name || null, q: weeks.map((w) => (o.q[w] == null ? null : o.q[w])),
+      status: o.conf >= 3 ? "ok" : o.has >= 3 ? "unc" : "miss" };
+  });
+  return { weeks, rows, missing: rows.filter((x) => x.status !== "ok") };
+}
 async function buildMonday(t, today) {
   const tx = TX[langOf(t.lang)];
   SITES_CACHE = SITES_CACHE || (await allSites());
   const ts = await targetSites(t);
   const L = [tx.monday(dd(today))];
   if (t.orders) {
-    // на понеділок «найближчий» тиждень — уже поточний: перевіряємо тижні від сьогодні
-    const cur = mondayOf(today);
-    const weeks = [cur, addDays(cur, 7), addDays(cur, 14)];
-    const miss = await db.query(
-      `SELECT s.k AS site_key FROM unnest($1::text[]) s(k)
-        WHERE (SELECT count(*) FROM flow.v_orders o WHERE o.site_key = s.k AND o.week_start = ANY($2::date[])
-                AND o.entered_at >= ($3::date)::timestamp AT TIME ZONE 'Europe/Warsaw') < 3 ORDER BY 1`,
-      [ts.keys, weeks, confirmFrom(today)]);
-    const byCoord = {};
-    miss.rows.forEach((x) => {
-      const s = ts.sites.find((y) => y.site_key === x.site_key) || {};
-      const c = s.coordinator_name || tx.noCoord;
-      (byCoord[c] = byCoord[c] || []).push(x.site_key);
-    });
-    L.push("");
-    if (miss.rows.length) {
-      L.push(tx.missing(miss.rows.length));
-      Object.keys(byCoord).sort().forEach((c) => L.push(`• ${esc(c)}: ${byCoord[c].map(esc).join(", ")}`));
-    } else L.push(tx.allIn);
-    const plans = await db.query(
-      `SELECT to_char(week_start, 'YYYY-MM-DD') AS w, sum(qty)::int AS n FROM flow.v_orders
-        WHERE site_key = ANY($1::text[]) AND week_start = ANY($2::date[]) GROUP BY 1 ORDER BY 1`, [ts.keys, weeks]);
-    if (plans.rows.length) L.push(`${tx.plans} ${plans.rows.map((x) => `${dd(x.w)} — ${x.n}`).join(" · ")}`);
+    const od = await ordersData(ts, today);
+    L.push("", od.missing.length ? tx.missing(od.missing.length) : tx.allIn);
+    // по обʼєктах: «• NOTINO — 12 · 10 · 10 ✅», по фірмі й регіону — згруповано за координатором
+    L.push("", tx.plansBy(od.weeks.map(dd).join(" · ")));
+    const icon = { ok: "✅", unc: "⚠️", miss: "❌" };
+    const order = { miss: 0, unc: 1, ok: 2 };
+    const line = (x) => `• ${esc(x.site_key)}: ${x.q.map((v) => (v == null ? "—" : B(v))).join(" · ")} ${icon[x.status]}`;
+    const sorted = od.rows.slice().sort((a, b) => order[a.status] - order[b.status] || a.site_key.localeCompare(b.site_key));
+    if (ts.label === "own") sorted.forEach((x) => L.push(line(x)));
+    else {
+      const g = {};
+      sorted.forEach((x) => { const c = x.coordinator_name || tx.noCoord; (g[c] = g[c] || []).push(x); });
+      Object.keys(g).sort((a, b) => a.localeCompare(b)).forEach((c) => { L.push(`<b>${esc(c)}</b>`); g[c].forEach((x) => L.push(line(x))); });
+    }
+    const sums = od.weeks.map((_, i) => od.rows.reduce((a, x) => a + (x.q[i] || 0), 0));
+    L.push(`${tx.plansTotal}: ${sums.map(B).join(" · ")}`, tx.plansLegend);
   }
   if (t.weekly) {
     const prev = addDays(mondayOf(today), -7);
@@ -1092,7 +1663,8 @@ async function sendDaily(day) {
     const ts = await targetSites(t);
     if (!ts.keys.length) continue;
     if (t.scope === "own" && st.skip_empty === "1" && !dailyHasNews(data, ts)) continue;
-    if (await sendLong(t.chat, buildDaily(data, ts, t))) sent++; else failed++;
+    // 1) за день, 2) тиждень наростаючим підсумком — текстом або картинками (t.format)
+    if (await deliverDaily(t, data, ts)) sent++; else failed++;
   }
   await db.query(`UPDATE flow.summaries SET sent = $2, failed = $3 WHERE day = $1::date`, [day, sent, failed]);
   console.log(`[flow] summary ${day}: sent ${sent}, failed ${failed}`);
@@ -1121,7 +1693,7 @@ async function sendMonday(today) {
     if (t.auto || !(t.orders || t.weekly)) continue;
     const ts = await targetSites(t);
     if (!ts.keys.length) continue;
-    if (await sendLong(t.chat, await buildMonday(t, today))) n++;
+    if (await deliverMonday(t, today)) n++;
   }
   console.log(`[flow] monday report ${today}: ${n}`);
 }
@@ -1213,4 +1785,5 @@ async function onUpdate(u) {
 }
 
 module.exports = { router, schedule, onUpdate, capture, setBot: (b) => { BOT = b; },
-  _test: { dailyData, buildDaily, targetSites, resolveRecipients, buildRemind, buildMonday, sendDaily, tick, weekData, totals, wrapImport, waitImports } };
+  _test: { dailyData, buildDaily, buildWeekToDate, targetSites, resolveRecipients, buildRemind, buildMonday, sendDaily, tick, weekData, totals, wrapImport, waitImports,
+    deliverDaily, deliverMonday, sendMonday, dayTableSpec, wtdTableSpec, ordersSpec, ordersData, buildWeekCaption, paceOf, isLagging } };

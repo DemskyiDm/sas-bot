@@ -66,6 +66,7 @@
         <div class="nav-gh" onclick="toggleNavGroup('system')"><span>Ustawienia</span><span class="n"></span><span class="chev">▾</span></div>
         <div class="nav-gb">
           <div class="nav-item" data-page="settings" onclick="showPage('settings')">⚙️ Ustawienia</div>
+          <div id="hoursReportLink" class="nav-item" onclick="location.href='raport-godzin.html'" style="display: none">⏰ Raport godzin</div>
           <div id="adminLink" class="nav-item" onclick="window.location = '/admin.html'" style="display: none">🛠️ Admin panel</div>
         </div>
       </div>
@@ -1146,6 +1147,10 @@ fetch('/api/flow/me', { headers: { 'x-session': localStorage.getItem('sas_sessio
     .then(function (d) { if (d && d.has_access) document.getElementById('rozmowyLink').style.display = ''; })
     .catch(function () {});
 });
+fetch('/api/hours-report/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (d) { if (d && d.is_admin) document.getElementById('hoursReportLink').style.display = ''; })
+  .catch(function () {});
 </script>
 </body>
 

@@ -1329,8 +1329,10 @@ function weekTableSpec(weekRows, ts, target, o) {
   const it = IMGTX[langOf(target.lang)];
   const keys = new Set(ts.keys), own = ts.label === "own";
   const wr = weekRows.filter((x) => keys.has(x.site_key));
+  // тільки обʼєкти, де був рух (закінчили, почали, не доїхали) — рядків із самими нулями немає;
+  // «Разом» — по всіх обʼєктах отримувача (план теж увесь)
   const items = wr
-    .filter((x) => x.order_qty != null || nz(x.dep_fact) + nz(x.arr_fact) + nz(x.tr_fact) + nz(x.arr_rez) + nz(x.arr_unconf) > 0)
+    .filter((x) => nz(x.dep_fact) + nz(x.arr_fact) + nz(x.tr_fact) + nz(x.arr_rez) > 0)
     .map((x) => ({
       site: x.site_key, coord: coordName(x.site_key), out: nz(x.dep_fact), in: nz(x.arr_fact) + nz(x.tr_fact), inTr: nz(x.tr_fact),
       rez: nz(x.arr_rez), f: nz(x.arr_fact) + nz(x.tr_fact), p: x.order_qty == null ? null : Number(x.order_qty),

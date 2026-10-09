@@ -17,6 +17,7 @@ const { router: adminRoutes } = require("./api/admin");
 const regional = require("./api/regional");
 const care = require("./api/care");
 const board = require("./api/board");
+const hoursReport = require("./bot/hours_report");
 const flow = require("./api/flow");
 const referral = require("./bot/referral");
 
@@ -61,6 +62,7 @@ app.use("/api/regional", regional.router);
 app.use("/api/care", care.router);
 app.use("/api/board", board.router);
 app.use("/api/flow", flow.router);
+app.use("/api/hours-report", hoursReport.router);
 app.use("/api/ref", require("./api/ref").router);
 app.use("/api", apiRoutes);
 app.use("/api", require("./api/reports"));
@@ -218,14 +220,7 @@ function scheduleReminder() {
           await sendTabeleReminders(bot);
         }
       }
-      if (current === "17:00") {
-        const key = `coord_report_${current}`;
-        if (!sentThisMinute.has(key)) {
-          await sendCoordinatorReports(bot);
-          sentThisMinute.add(key);
-          setTimeout(() => sentThisMinute.delete(key), 2 * 60 * 1000);
-        }
-      }
+      
     } catch (e) {
       console.error("[Reminder] Error:", e.message);
     }
@@ -353,6 +348,7 @@ scheduleImport();
 regional.schedule(bot);
 require("./bot/care").schedule(bot);
 flow.schedule(bot);
+hoursReport.schedule(bot);
 referral.schedule(bot);
 
 //new

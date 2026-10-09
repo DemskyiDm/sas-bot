@@ -90,6 +90,7 @@ async function init() {
   }
   if (me.is_admin) document.getElementById("navSettings").style.display = "";
   buildWeekChips();
+  setExportRange();
   document.getElementById("dayDate").value = me.today;
   const h = location.hash.replace("#", "");
   showView(["week", "day", "orders", "settings"].includes(h) ? h : "week");
@@ -132,7 +133,12 @@ function buildWeekChips() {
     return `<button class="chip${w === ST.week ? " active" : ""}" data-w="${w}" onclick="setWeek(this.dataset.w)">${dd(w)}–${dd(addDays(w, 6))}${tag ? `<span class="s">${tag}</span>` : ""}</button>`;
   }).join("");
 }
-function setWeek(w) { ST.week = w; buildWeekChips(); loadWeek(); }
+function setWeek(w) { ST.week = w; buildWeekChips(); setExportRange(); loadWeek(); }
+// Період поіменного експорту — за замовчуванням вибраний тиждень
+function setExportRange() {
+  const f = document.getElementById("expFrom"), t = document.getElementById("expTo");
+  if (f && t) { f.value = ST.week; t.value = addDays(ST.week, 6); }
+}
 
 async function loadWeek() {
   const my = ++ST.seq;
@@ -176,17 +182,7 @@ function renderWeek() {
       <div class="l">${x.l}</div><div class="v">${x.v}</div><div class="s">${x.s}</div></div>`).join("");
 
   // таблиця
-  const q = (document.getElementById("weekSearch").value || "").toLowerCase();
-  const showEmpty = document.getElementById("showEmpty").checked;
-  let rows = r.rows.filter((x) => (!q || x.site_key.toLowerCase().includes(q) || (x.coordinator_name || "").toLowerCase().includes(q)));
-  const active = (x) => x.order_qty != null || x.arr_entered || x.arr_rez || x.tr_entered || x.dep_now || x.dep_plan;
-  const hidden = rows.filter((x) => !active(x)).length;
-  if (!showEmpty) rows = rows.filter(active);
-  const gap = (x) => (x.order_qty || 0) - x.arr_fact;
-  const key = ST.sort.key;
-  rows.sort((a, b) => key
-    ? ((key === "site_key" ? a.site_key.localeCompare(b.site_key) : (Number(a[key]) || 0) - (Number(b[key]) || 0)) * ST.sort.dir)
-    : gap(b) - gap(a) || (b.dep_unplanned || 0) - (a.dep_unplanned || 0) || a.site_key.localeCompare(b.site_key));
+  const { rows, hidden, showEmpty } = weekRowsShown();
   document.getElementById("weekCnt").textContent = `${rows.length}${hidden && !showEmpty ? ` (+${hidden} bez ruchu)` : ""}`;
   if (!rows.length) { document.getElementById("weekTable").innerHTML = `<div class="empty">Brak obiektów</div>`; return; }
 
@@ -228,10 +224,26 @@ function renderWeek() {
     </thead><tbody>${rows.map((x) => line(x, false)).join("")}${line(t, true)}</tbody></table>`;
   document.getElementById("weekNote").innerHTML = `
     <b>Nabór:</b> plan — ile ludzi trzeba zrekrutować (wpisuje koordynator w niedzielę); wpisano — nowi z pierwszym dniem w tym tygodniu,
-    status „pracuje” lub bez statusu; fakt — zaczęli pracę (pierwszy dzień minął, status ustawiony); przeniesienia z innych obiektów liczone osobno.
+    status „pracuje” lub bez statusu; fakt — rozpoczęli pracę (pierwszy dzień minął, status ustawiony); przeniesienia z innych obiektów liczone osobno.
     <b>Wyjazdy</b> — po ostatnim dniu pracy, bez rezygnacji. Plan — co było wpisane na tydzień w poniedziałek o 00:00;
     poza planem — wyjechali, a nie było ich w planie. Przeniesienie to wyjazd dla obiektu, ale nie dla firmy.
     Kliknij liczbę — lista ludzi.`;
+}
+// Рядки таблиці тижня з урахуванням пошуку, «показати без руху» і сортування (і для Excel)
+function weekRowsShown() {
+  const r = ST.wd;
+  const q = (document.getElementById("weekSearch").value || "").toLowerCase();
+  const showEmpty = document.getElementById("showEmpty").checked;
+  let rows = r.rows.filter((x) => (!q || x.site_key.toLowerCase().includes(q) || (x.coordinator_name || "").toLowerCase().includes(q)));
+  const active = (x) => x.order_qty != null || x.arr_entered || x.arr_rez || x.tr_entered || x.dep_now || x.dep_plan;
+  const hidden = rows.filter((x) => !active(x)).length;
+  if (!showEmpty) rows = rows.filter(active);
+  const gap = (x) => (x.order_qty || 0) - x.arr_fact;
+  const key = ST.sort.key;
+  rows.sort((a, b) => key
+    ? ((key === "site_key" ? a.site_key.localeCompare(b.site_key) : (Number(a[key]) || 0) - (Number(b[key]) || 0)) * ST.sort.dir)
+    : gap(b) - gap(a) || (b.dep_unplanned || 0) - (a.dep_unplanned || 0) || a.site_key.localeCompare(b.site_key));
+  return { rows, hidden, showEmpty };
 }
 function sortWeek(k) {
   if (ST.sort.key === k) ST.sort.dir = -ST.sort.dir; else { ST.sort.key = k; ST.sort.dir = k === "site_key" ? 1 : -1; }
@@ -240,10 +252,10 @@ function sortWeek(k) {
 
 // ── Списки людей ──────────────────────────────────────────────────────
 const LIST_TITLE = {
-  arr_entered: "Nowi wpisani na tydzień", arr_fact: "Nowi — zaczęli pracę", arr_unconf: "Nowi bez statusu (niepotwierdzeni)",
+  arr_entered: "Nowi wpisani na tydzień", arr_fact: "Nowi — rozpoczęli pracę", arr_unconf: "Nowi bez statusu (niepotwierdzeni)",
   arr_rez: "Nie dojechali (rezygnacja)", tr_entered: "Przyszli z przeniesienia", arr_all: "Przyjazdy",
   dep_plan: "Wyjazdy w planie (poniedziałek 00:00)", plan_moved: "Z planu nie wyjechali w tym tygodniu",
-  dep_now: "Wyjazdy wpisane na tydzień", dep_fact: "Wyjechali", dep_unplanned: "Wyjazdy poza planem", dep_fact_tr: "Przeniesienia na inne obiekty",
+  dep_now: "Wyjazdy wpisane na tydzień", dep_fact: "Zakończyli pracę", dep_unplanned: "Wyjazdy poza planem", dep_fact_tr: "Przeniesienia na inne obiekty",
 };
 async function openList(kind, site, date) {
   const dw = document.getElementById("drawer");
@@ -315,9 +327,9 @@ async function loadDay() {
   const aRez = arrs.filter((x) => x.status === "rezygnacja");
   const after = deps.filter((x) => x.after_summary).length + arrs.filter((x) => x.after_summary).length;
   const kp = [
-    { l: "Wyjechali", v: out.length, s: "bez przeniesień" },
+    { l: "Zakończyli", v: out.length, s: "bez przeniesień" },
     { l: "Przeniesienia", v: `${trOut.length} / ${aTr.length}`, s: "odeszli / przyszli" },
-    { l: "Nowi zaczęli", v: aNew.length, s: aUnc.length ? `+ ${aUnc.length} bez statusu` : "status ustawiony" },
+    { l: "Rozpoczęli (nowi)", v: aNew.length, s: aUnc.length ? `+ ${aUnc.length} bez statusu` : "status ustawiony" },
     { l: "Nie dojechali", v: aRez.length, s: "rezygnacja" },
     { l: "Wpisane po podsumowaniu", v: `<span class="${after ? "warn" : ""}">${after}</span>`, s: "pójdą w jutrzejszym jako „dopisane”" },
   ];
@@ -453,9 +465,210 @@ async function saveOrders(onlyRow) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
+//  Excel (xlsx-js-style — як у Rozmowy / Raporty)
+// ══════════════════════════════════════════════════════════════════════
+const XL_RED = "F8CBAD", XL_AMBER = "FFF2CC", XL_GREEN = "E2EFDA", XL_TOTAL = "D9E1F2";
+const xDate = (iso) => (iso ? new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10))) : "");
+const xNum = (v) => (v == null || v === "" ? "" : Number(v));
+function xlsxReady() {
+  if (typeof XLSX !== "undefined") return true;
+  alert("Biblioteka Excel nie załadowała się — odśwież stronę.");
+  return false;
+}
+// Arkusz: tytuł, podtytuł, nagłówek (wiersz 3), dane. opts: widths, pct (kolumny %), fill(i, c) → kolor, total (ostatni wiersz = suma)
+function xlsxSheet(title, sub, head, rows, opts) {
+  const o = opts || {};
+  const ws = XLSX.utils.aoa_to_sheet([[title], [sub], head, ...rows], { cellDates: true });
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  const last = range.e.r;
+  for (let R = 0; R <= last; R++) {
+    for (let C = 0; C <= range.e.c; C++) {
+      const c = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+      if (!c) continue;
+      let st = { alignment: { vertical: "top" } };
+      if (R === 0) st.font = { bold: true, sz: 13 };
+      if (R === 1) st.font = { color: { rgb: "666666" } };
+      if (R === 2) {
+        st = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "2F5597" } },
+          alignment: { vertical: "center", horizontal: "center", wrapText: true } };
+      }
+      if (R > 2) {
+        if (c.t === "d") c.z = "dd.mm.yyyy";
+        if ((o.pct || []).includes(C) && c.t === "n") c.z = "0%";
+        const fill = o.total && R === last ? XL_TOTAL : o.fill ? o.fill(R - 3, C) : null;
+        if (fill) st.fill = { patternType: "solid", fgColor: { rgb: fill } };
+        if (o.total && R === last) st.font = { bold: true };
+      }
+      c.s = st;
+    }
+  }
+  ws["!cols"] = (o.widths || head.map(() => 12)).map((w) => ({ wch: w }));
+  ws["!rows"] = [];
+  ws["!rows"][2] = { hpt: 44 };
+  if (last > 2) ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 2, c: 0 }, e: { r: o.total ? last - 1 : last, c: range.e.c } }) };
+  return ws;
+}
+function xlsxSave(file, sheets) {
+  const wb = XLSX.utils.book_new();
+  sheets.forEach(([name, ws]) => XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31)));
+  XLSX.writeFile(wb, file);
+}
+// Podpis filtrów: region / koordynator / szukaj
+function filtersText() {
+  const parts = [];
+  const r = document.getElementById("selRegion"), c = document.getElementById("selCoord");
+  if (ST.me.role !== "coord") {
+    if (r && r.selectedIndex >= 0) parts.push(r.options[r.selectedIndex].text);
+    if (c && c.value) parts.push("koordynator: " + c.options[c.selectedIndex].text);
+  } else parts.push("moje obiekty");
+  return parts.join(" · ");
+}
+const nowText = () => { const d = new Date(); return `${ddy(d.toISOString().slice(0, 10))} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+
+// ── Tydzień: plan i fakt — liczby po obiektach ────────────────────────
+function exportWeek() {
+  if (!ST.wd || !xlsxReady()) return;
+  const r = ST.wd, fut = r.state === "future";
+  const { rows } = weekRowsShown();
+  const q = (document.getElementById("weekSearch").value || "").trim();
+  const head = ["Obiekt", "Koordynator", "Region",
+    "Nabór — plan", "Nabór — wpisano", "Nabór — fakt (nowi)", "Realizacja (fakt / plan)", "Nabór z przeniesieniami", "Bez statusu", "Nie dojechali", "Z przeniesienia",
+    "Wyjazdy — plan (pn 0:00)", "Wyjazdy — wpisano", "Zakończyli (fakt)", "Poza planem", "Przeniesieni na inne obiekty", "Liczebność (+/−)"];
+  const line = (x, tot) => {
+    const f = (v) => (fut ? "" : xNum(v));
+    return [tot ? "Razem" : x.site_key, tot ? "" : x.coordinator_name || "", tot ? "" : x.region_name || "",
+      xNum(x.order_qty), xNum(x.arr_entered), f(x.arr_fact), !fut && x.order_qty ? x.arr_fact / x.order_qty : "",
+      f(x.arr_fact + x.tr_fact), f(x.arr_unconf), xNum(x.arr_rez), xNum(x.tr_entered),
+      fut ? "" : xNum(x.dep_plan), xNum(x.dep_now), f(x.dep_fact), f(x.dep_unplanned), f(x.dep_fact_tr),
+      fut ? "" : x.arr_fact + x.tr_fact - x.dep_fact];
+  };
+  const data = rows.map((x) => line(x, false)).concat([line(r.total, true)]);
+  const real = (i) => { const x = rows[i]; if (!x || !x.order_qty || fut) return null; const p = x.arr_fact / x.order_qty; return p >= 1 ? XL_GREEN : p >= 0.8 ? XL_AMBER : XL_RED; };
+  const ws = xlsxSheet(`Tydzień ${ddy(r.week)} – ${ddy(r.week_end)} — plan i fakt`,
+    `${filtersText()}${q ? ` · szukaj: ${q}` : ""} · stan na ${nowText()}${fut ? " · tydzień jeszcze się nie zaczął" : ""}`,
+    head, data, {
+      pct: [6], total: true,
+      widths: [26, 22, 14, 9, 9, 10, 11, 12, 9, 9, 11, 11, 10, 10, 9, 13, 11],
+      fill: (i, c) => (c === 6 ? real(i) : c === 14 && rows[i] && rows[i].dep_unplanned ? XL_RED : null),
+    });
+  xlsxSave(`wyjazdy_tydzien_${r.week}.xlsx`, [["Tydzień", ws]]);
+}
+
+// ── Plan naboru — liczby po obiektach ─────────────────────────────────
+function exportOrders() {
+  if (!ST.orders || !xlsxReady()) return;
+  const r = ST.orders;
+  const wl = (w) => `${dd(w)}–${dd(addDays(w, 6))}`;
+  const head = ["Obiekt", "Koordynator", "Region", "Pracuje dziś", `Bieżący ${wl(r.current_week)} — plan`];
+  r.weeks.forEach((w) => head.push(`${wl(w)} — plan`, `${wl(w)} — wyjazdy wpisane`, `${wl(w)} — nowi wpisani`));
+  head.push("Stan", "Ostatnia zmiana");
+  const stan = (row) => (row.confirmed ? "potwierdzone" : row.weeks.every((c) => c.qty != null) ? "do potwierdzenia" : "do wpisania");
+  const data = r.rows.map((row) => {
+    const out = [row.site_key, row.coordinator_name || "", row.region_name || "", row.headcount, xNum(row.current.qty)];
+    row.weeks.forEach((c) => out.push(xNum(c.qty), c.dep, c.arr));
+    out.push(stan(row), row.weeks[0].entered_at ? `${dd(row.weeks[0].entered_at)} ${row.weeks[0].entered_at.slice(11)}` : "");
+    return out;
+  });
+  const sum = (f) => r.rows.reduce((a, x) => a + (Number(f(x)) || 0), 0);
+  const tot = ["Razem", "", "", sum((x) => x.headcount), sum((x) => x.current.qty)];
+  r.weeks.forEach((_, j) => tot.push(sum((x) => x.weeks[j].qty), sum((x) => x.weeks[j].dep), sum((x) => x.weeks[j].arr)));
+  tot.push("", "");
+  const stCol = head.length - 2;
+  const ws = xlsxSheet(`Plan naboru — 3 tygodnie od ${ddy(r.weeks[0])}`,
+    `${filtersText()} · stan na ${nowText()} · potwierdzenia liczą się od soboty ${ddy(r.confirm_from)}`,
+    head, data.concat([tot]), {
+      total: true,
+      widths: [26, 22, 14, 9, 11, ...r.weeks.flatMap(() => [10, 10, 10]), 16, 14],
+      fill: (i, c) => {
+        if (i >= r.rows.length) return null;
+        const s = stan(r.rows[i]);
+        if (c === stCol) return s === "potwierdzone" ? XL_GREEN : s === "do potwierdzenia" ? XL_AMBER : XL_RED;
+        return null;
+      },
+    });
+  xlsxSave(`plan_naboru_${r.weeks[0]}.xlsx`, [["Plan naboru", ws]]);
+}
+
+// ── Eksport z nazwiskami za okres ─────────────────────────────────────
+async function exportPeople() {
+  if (!xlsxReady()) return;
+  const from = document.getElementById("expFrom").value, to = document.getElementById("expTo").value;
+  const msg = document.getElementById("expMsg");
+  if (!from || !to) { msg.className = "msg err"; msg.textContent = "Wybierz daty od–do"; return; }
+  msg.className = "msg"; msg.textContent = "Pobieranie…";
+  const r = await api("/export" + qs({ from, to }));
+  if (!r || !r.ok) { msg.className = "msg err"; msg.textContent = (r && r.error) || "Błąd"; return; }
+  const sub = `${filtersText()} · okres ${ddy(r.from)} – ${ddy(r.to)} · stan na ${nowText()}`;
+  const yes = (b) => (b ? "tak" : "");
+  const seen = (x) => (x.baseline ? "przed uruchomieniem dziennika" : x.seen_at ? `${dd(x.seen_at)} ${x.seen_at.slice(11)}` : "");
+  const st = (s) => STATUS_PL[s] || s || "";
+  const started = (x) => x.status !== "rezygnacja" && x.status !== "unknown" && x.date <= r.today;
+  const planTxt = (x) => (!x.week_fixed ? "brak planu tygodnia" : x.planned ? "w planie" : "poza planem");
+
+  // 1) Zakończyli
+  const deps = r.departures;
+  const ws1 = xlsxSheet("Zakończyli pracę (ostatni dzień w okresie)", sub,
+    ["Ostatni dzień", "Tydzień od", "Obiekt", "Koordynator", "Region", "Pracownik", "Login", "Status", "Przeniesienie", "Dokąd",
+      "Plan tygodnia", "Wpisano do tabeli", "Dni przed wyjazdem"],
+    deps.map((x) => [xDate(x.date), xDate(x.week), x.site_key, x.coordinator_name || "", x.region_name || "", x.full_name, x.login || "",
+      st(x.status), yes(x.is_transfer), x.to_site || "", planTxt(x), seen(x), x.notice_days == null ? "" : Number(x.notice_days)]),
+    { widths: [11, 11, 24, 20, 12, 28, 11, 13, 11, 22, 18, 18, 10],
+      fill: (i, c) => (c === 10 && deps[i].week_fixed && !deps[i].planned ? XL_RED : c === 12 && deps[i].notice_days != null && deps[i].notice_days <= 1 ? XL_AMBER : null) });
+
+  // 2) Rozpoczęli / przyjazdy
+  const arrs = r.arrivals;
+  const ws2 = xlsxSheet("Przyjazdy (pierwszy dzień / BHP w okresie)", sub,
+    ["BHP", "Obiekt", "Koordynator", "Region", "Pracownik", "Login", "Rodzaj", "Skąd", "Status", "Rozpoczął pracę", "Wpisano do tabeli"],
+    arrs.map((x) => [xDate(x.date), x.site_key, x.coordinator_name || "", x.region_name || "", x.full_name, x.login || "",
+      x.kind === "transfer" ? "przeniesienie" : "nowy", x.from_site || "",
+      x.status === "rezygnacja" ? "nie dojechał" : st(x.status), started(x) ? "tak" : x.date > r.today ? "jeszcze nie" : "nie", seen(x)]),
+    { widths: [11, 24, 20, 12, 28, 11, 13, 22, 13, 12, 18],
+      fill: (i, c) => (c === 8 && arrs[i].status === "rezygnacja" ? XL_RED : c === 8 && arrs[i].status === "unknown" ? XL_AMBER : null) });
+
+  // 3) Plan wyjazdów (utrwalony w poniedziałek 0:00)
+  const plan = r.plan;
+  const ws3 = xlsxSheet("Plan wyjazdów tygodnia (utrwalony w poniedziałek 0:00)", sub,
+    ["Tydzień od", "Data w planie", "Obiekt", "Koordynator", "Region", "Pracownik", "Login", "Przeniesienie", "Wyjazd teraz", "Wynik"],
+    plan.map((x) => [xDate(x.week), xDate(x.date), x.site_key, x.coordinator_name || "", x.region_name || "", x.full_name, x.login || "",
+      yes(x.is_transfer), x.now_date ? xDate(x.now_date) : "", !x.now_date ? "nie wyjeżdża w tym tygodniu" : x.now_date === x.date ? "zgodnie z planem" : "przesunięty"]),
+    { widths: [11, 12, 24, 20, 12, 28, 11, 12, 12, 24],
+      fill: (i, c) => (c === 9 && !plan[i].now_date ? XL_AMBER : null) });
+
+  // 0) Podsumowanie po obiektach — z tych samych list
+  const S = {};
+  const g = (x) => (S[x.site_key] = S[x.site_key] || { site: x.site_key, co: x.coordinator_name || "", rg: x.region_name || "",
+    out: 0, trOut: 0, unpl: 0, newS: 0, trIn: 0, unc: 0, rez: 0, plan: 0, planNo: 0 });
+  deps.forEach((x) => { const s = g(x); if (x.is_transfer) s.trOut++; else s.out++; if (x.week_fixed && !x.planned && x.date <= r.today) s.unpl++; });
+  arrs.forEach((x) => {
+    const s = g(x);
+    if (x.status === "rezygnacja") s.rez++;
+    else if (x.status === "unknown" && x.date <= r.today) s.unc++;
+    else if (started(x)) { if (x.kind === "transfer") s.trIn++; else s.newS++; }
+  });
+  plan.forEach((x) => { const s = g(x); s.plan++; if (!x.now_date) s.planNo++; });
+  const list = Object.values(S).sort((a, b) => a.site.localeCompare(b.site));
+  const sumK = (k) => list.reduce((a, x) => a + x[k], 0);
+  const keys = ["out", "trOut", "unpl", "plan", "planNo", "newS", "trIn", "unc", "rez"];
+  const ws0 = xlsxSheet("Podsumowanie po obiektach", sub,
+    ["Obiekt", "Koordynator", "Region", "Zakończyli (bez przeniesień)", "Przeniesieni na inne obiekty", "Poza planem",
+      "W planie wyjazdów", "Z planu nie wyjechali", "Rozpoczęli — nowi", "Rozpoczęli — z przeniesienia", "Bez statusu", "Nie dojechali", "Liczebność (+/−)"],
+    list.map((x) => [x.site, x.co, x.rg, ...keys.map((k) => x[k]), x.newS + x.trIn - x.out - x.trOut])
+      .concat([["Razem", "", "", ...keys.map(sumK), sumK("newS") + sumK("trIn") - sumK("out") - sumK("trOut")]]),
+    { total: true, widths: [26, 22, 12, 12, 12, 10, 11, 11, 11, 12, 10, 10, 11],
+      fill: (i, c) => (list[i] && c === 5 && list[i].unpl ? XL_RED : list[i] && c === 11 && list[i].rez ? XL_RED : null) });
+
+  xlsxSave(`wyjazdy_przyjazdy_${r.from}_${r.to}.xlsx`,
+    [["Podsumowanie", ws0], ["Zakończyli", ws1], ["Przyjazdy", ws2], ["Plan wyjazdów", ws3]]);
+  msg.className = "msg ok";
+  msg.textContent = `Pobrano: ${deps.length} zakończyło, ${arrs.length} przyjazdów, ${plan.length} w planie`;
+}
+
+// ══════════════════════════════════════════════════════════════════════
 //  Налаштування (адмін)
 // ══════════════════════════════════════════════════════════════════════
 const SCOPE_PL = { own: "Swoje obiekty", region: "Region", all: "Cała firma" };
+const FORMAT_PL = { text: "Tekst", image: "Obraz (tabela)" };
+const FORMAT_OPTS = (sel) => Object.entries(FORMAT_PL).map(([k, v]) => `<option value="${k}" ${(sel || "text") === k ? "selected" : ""}>${v}</option>`).join("");
 async function loadSettings() {
   const body = document.getElementById("settingsBody");
   body.innerHTML = `<div class="loading">Ładowanie…</div>`;
@@ -478,18 +691,22 @@ async function loadSettings() {
       <span class="k">Godzina podsumowania</span><span><input type="time" id="s_summary_time" value="${esc(S.summary_time)}"/></span>
       <span class="h">Codziennie o tej godzinie: wyjazdy i przyjazdy z dnia. Wpisane później pójdą w następnym jako „dopisane”.</span>
       <span class="k">Dni podsumowania</span><span class="days">${dayBoxes}</span>
-      <span class="h">W dniu bez podsumowania (np. niedziela) jego wyjazdy pójdą w następnym — w głównej części, z datą.</span>
+      <span class="h">Podsumowanie dnia — tylko ten dzień. Dzień bez podsumowania (np. niedziela) widać tylko w liczbach tygodnia (druga wiadomość).</span>
       <span class="k">Import tabeli przed podsumowaniem</span><span><input type="number" id="s_pre_import_min" value="${esc(S.pre_import_min)}" min="0" max="180"/> min wcześniej</span>
       <span class="h">Żeby podsumowanie było ze świeżej tabeli. 0 — nie uruchamiać (zwykły import co 4 godziny działa dalej).</span>
       <span class="k">Szukać dopisanych za</span><span><input type="number" id="s_late_days" value="${esc(S.late_days)}" min="1" max="60"/> dni wstecz</span>
       <span class="k">Koordynatorzy automatycznie</span><span><input type="checkbox" id="s_auto_coords" ${S.auto_coords === "1" ? "checked" : ""}/> każdy koordynator dostaje podsumowanie swoich obiektów i przypomnienie w niedzielę</span>
       <span class="h">${r.auto ? `Koordynatorów z obiektami: ${r.auto.n}${r.auto.no_tg ? `, bez Telegrama: ${r.auto.no_tg} (nic nie dostaną)` : ""}.` : ""}</span>
+      <span class="k">Forma dla koordynatorów</span><span><select id="s_coord_format">${FORMAT_OPTS(S.coord_format)}</select></span>
+      <span class="h">Dla koordynatorów dostających podsumowanie automatycznie. Obraz — tabela po obiektach jako zdjęcie, nazwiska w podpisie. Odbiorcy z listy — forma w ich wierszu.</span>
       <span class="k">Pomijać puste</span><span><input type="checkbox" id="s_skip_empty" ${S.skip_empty === "1" ? "checked" : ""}/> nie wysyłać koordynatorowi, jeśli na jego obiektach nic się nie stało</span>
+      <span class="k">Tempo naboru</span><span><input type="text" class="inp" id="s_pace" value="${esc(S.pace || "20,40,60,80,100")}" style="width:140px"/> % planu tygodnia na koniec pn, wt, śr, czw, pt</span>
+      <span class="h">Obiekt na czerwono (tabela) / 🔴 (tekst), jeśli nabór od poniedziałku jest mniejszy niż plan tygodnia × tempo dnia. Sobota i niedziela — 100%.</span>
       <span class="k">Przypomnienie o planie naboru</span><span><input type="text" class="inp" id="s_orders_remind" value="${esc(S.orders_remind)}" style="width:140px"/> w niedzielę</span>
       <span class="h">Godziny po przecinku, np. 12:00,18:00. Idzie tylko do tych, kto jeszcze nie wpisał planu.</span>
       <span class="k">Termin planu naboru</span><span>niedziela <input type="time" id="s_orders_deadline" value="${esc(S.orders_deadline)}"/></span>
       <span class="k">Raport poniedziałkowy</span><span><input type="time" id="s_monday_time" value="${esc(S.monday_time)}"/></span>
-      <span class="h">Kto nie wpisał planu naboru i plan–fakt poprzedniego tygodnia — dla odbiorców z zaznaczonym „Plan naboru” / „Tydzień”.</span>
+      <span class="h">Plan naboru po obiektach (3 tygodnie i stan potwierdzenia) oraz plan–fakt poprzedniego tygodnia — dla odbiorców z zaznaczonym „Plan naboru” / „Tydzień”.</span>
     </div>
     <div class="actions">
       <button class="btn btn-primary btn-sm" onclick="saveSettings()">Zapisz ustawienia</button><span class="msg" id="setMsg"></span>
@@ -500,6 +717,7 @@ async function loadSettings() {
   <div class="section">
     <div class="section-head">Odbiorcy <span class="cnt">${r.recipients.length}</span>
       <span class="spacer"></span>
+      <select id="testFormat" title="Forma testu do mnie">${FORMAT_OPTS("text")}</select>
       <button class="btn btn-ghost btn-sm" onclick="testSend('daily')">🧪 Podsumowanie do mnie</button>
       <button class="btn btn-ghost btn-sm" onclick="testSend('remind')">🧪 Przypomnienie do mnie</button>
       <button class="btn btn-ghost btn-sm" onclick="testSend('monday')">🧪 Raport pn do mnie</button>
@@ -537,21 +755,23 @@ function renderRecipients() {
     <td class="chk"><input type="checkbox" class="r_orders" ${x.orders ? "checked" : ""}/></td>
     <td class="chk"><input type="checkbox" class="r_weekly" ${x.weekly ? "checked" : ""}/></td>
     <td class="l"><select class="r_lang">${["uk", "ru", "pl"].map((l) => `<option ${x.lang === l ? "selected" : ""}>${l}</option>`).join("")}</select></td>
+    <td class="l"><select class="r_format">${FORMAT_OPTS(x.format)}</select></td>
     <td class="chk"><input type="checkbox" class="r_active" ${x.is_active !== false ? "checked" : ""}/></td>
     <td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="saveRecipient(${i})">Zapisz</button>
-      ${x.id ? `<button class="btn btn-ghost btn-sm" onclick="testSend('daily', ${x.id})" title="Wyślij temu odbiorcy test podsumowania">🧪</button>
+      ${x.id ? `<button class="btn btn-ghost btn-sm" onclick="testRecipient(${i}, ${x.id})" title="Wyślij temu odbiorcy test — to, co zaznaczone: Dzień / Plan naboru / Tydzień">🧪</button>
       <button class="btn btn-ghost btn-sm" onclick="delRecipient(${x.id})" title="Usuń">✕</button>` : ""}</td></tr>`;
   const list = r.recipients.concat(r._new ? [r._new] : []);
   document.getElementById("recTable").innerHTML = `<table class="fl"><thead><tr>
       <th class="l">Koordynator</th><th class="l">albo chat ID</th><th class="l">Zakres</th>
       <th title="Podsumowanie dzienne">Dzień</th><th title="Poniedziałek: kto nie wpisał planu naboru">Plan<br>naboru</th>
-      <th title="Poniedziałek: plan–fakt poprzedniego tygodnia">Tydzień</th><th class="l">Język</th><th>Aktywny</th><th></th></tr></thead>
+      <th title="Poniedziałek: plan–fakt poprzedniego tygodnia">Tydzień</th><th class="l">Język</th>
+      <th class="l" title="Tekst — wiadomości jak dotąd; Obraz — tabela po obiektach jako zdjęcie">Forma</th><th>Aktywny</th><th></th></tr></thead>
     <tbody>${list.map(row).join("")}</tbody></table>
     <div class="actions"><button class="btn btn-ghost btn-sm" onclick="newRecipient()">+ Odbiorca</button><span class="msg" id="recMsg"></span></div>`;
 }
 function newRecipient(chat, title) {
   ST.settings._new = { id: null, coordinator_id: null, chat_id: chat || "", chat_title: title || "", scope: "all", region_id: null,
-    daily: true, orders: false, weekly: true, lang: "uk", is_active: true };
+    daily: true, orders: false, weekly: true, lang: "uk", format: "text", is_active: true };
   renderRecipients();
 }
 function addGroup(chat, title) { newRecipient(chat, title); document.getElementById("recTable").scrollIntoView({ behavior: "smooth" }); }
@@ -564,7 +784,7 @@ async function saveRecipient(i) {
     coordinator_id: g(".r_coord").value || null, chat_id: g(".r_chat").value.trim() || null,
     scope: g(".r_scope").value, region_id: g(".r_region").value || null,
     daily: g(".r_daily").checked, orders: g(".r_orders").checked, weekly: g(".r_weekly").checked,
-    lang: g(".r_lang").value, is_active: g(".r_active").checked,
+    lang: g(".r_lang").value, format: g(".r_format").value, is_active: g(".r_active").checked,
   };
   const res = x.id ? await api(`/recipients/${x.id}`, { method: "PATCH", body }) : await api("/recipients", { method: "POST", body });
   const msg = document.getElementById("recMsg");
@@ -586,15 +806,30 @@ async function saveSettings() {
     enabled: c("s_enabled"), summary_time: v("s_summary_time"), summary_days: days, pre_import_min: v("s_pre_import_min") || "0",
     late_days: v("s_late_days"), auto_coords: c("s_auto_coords"), skip_empty: c("s_skip_empty"),
     orders_remind: v("s_orders_remind"), orders_deadline: v("s_orders_deadline"), monday_time: v("s_monday_time"),
+    coord_format: v("s_coord_format"), pace: v("s_pace"),
   };
   const res = await api("/settings", { method: "PATCH", body });
   if (!res || !res.ok) { msg.className = "msg err"; msg.textContent = (res && res.error) || "Błąd"; return; }
   msg.className = "msg ok"; msg.textContent = "Zapisano";
 }
+// 🧪 w wierszu odbiorcy: wysyła to, co zaznaczone w tym wierszu (także jeszcze niezapisane)
+async function testRecipient(i, id) {
+  const tr = document.querySelector(`#recTable tr[data-i="${i}"]`);
+  const g = (c) => tr.querySelector(c).checked;
+  const msg = document.getElementById("recMsg");
+  msg.className = "msg"; msg.textContent = "Wysyłanie…";
+  const res = await api("/test", { method: "POST", body: { kind: "recipient", recipient_id: id,
+    daily: g(".r_daily"), orders: g(".r_orders"), weekly: g(".r_weekly"), format: tr.querySelector(".r_format").value } });
+  if (!res || !res.ok) { msg.className = "msg err"; msg.textContent = (res && res.error) || "Błąd"; return; }
+  const names = { daily: "podsumowanie dnia", monday: "raport poniedziałkowy" };
+  msg.className = "msg ok";
+  msg.textContent = res.sent ? `Wysłano: ${res.parts.map((p) => names[p]).join(" + ")} — sprawdź Telegram` : "Nie wysłano (brak Telegrama?)";
+}
 async function testSend(kind, recipientId) {
   const msg = document.getElementById("testMsg");
   msg.className = "msg"; msg.textContent = "Wysyłanie…";
-  const res = await api("/test", { method: "POST", body: { kind, recipient_id: recipientId || null } });
+  const fmt = document.getElementById("testFormat");
+  const res = await api("/test", { method: "POST", body: { kind, recipient_id: recipientId || null, format: fmt ? fmt.value : "text" } });
   if (!res || !res.ok) { msg.className = "msg err"; msg.textContent = (res && res.error) || "Błąd"; return; }
   msg.className = "msg ok"; msg.textContent = res.sent ? "Wysłano — sprawdź Telegram" : "Nie wysłano (brak Telegrama?)";
 }

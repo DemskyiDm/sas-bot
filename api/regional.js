@@ -13,6 +13,8 @@ const STATUS_ORDER = { R: 0, A: 1, G: 2, S: 3, N: 4 };
 
 // ── Доступ ────────────────────────────────────────────────────────────
 // Адмін бачить усе. Регіональний — тільки регіони, де він призначений.
+// Координатор об'єкта (role = 'coord') — тільки перегляд: свої об'єкти (поточна прив'язка
+// в reg.site_owner) і об'єкти, де він відповідальний за відкриту картку. Може додавати нотатки.
 async function getScope(coordinator) {
   const r = await db.query(
     `SELECT r.id, r.name,
@@ -27,13 +29,30 @@ async function getScope(coordinator) {
       ORDER BY r.name`,
     [!!coordinator.is_admin, coordinator.coordinator_id],
   );
-  return { isAdmin: !!coordinator.is_admin, regions: r.rows, regionIds: r.rows.map((x) => x.id) };
+  const isAdmin = !!coordinator.is_admin;
+  const regionIds = r.rows.map((x) => x.id);
+  let siteKeys = [];
+  if (!isAdmin && regionIds.length === 0) {
+    const s = await db.query(
+      `SELECT site_key FROM reg.site_owner WHERE valid_to IS NULL AND coordinator_id = $1
+       UNION
+       SELECT site_key FROM reg.red_cards WHERE status <> 'closed' AND owner_coordinator_id = $1
+       ORDER BY 1`,
+      [coordinator.coordinator_id],
+    );
+    siteKeys = s.rows.map((x) => x.site_key);
+  }
+  const role = isAdmin ? "admin" : regionIds.length ? "lead" : siteKeys.length ? "coord" : "none";
+  return {
+    isAdmin, role, me: coordinator.coordinator_id,
+    regions: role === "coord" ? [] : r.rows, regionIds, siteKeys,
+  };
 }
 
 async function requireRegional(req, res, next) {
   try {
     req.scope = await getScope(req.coordinator);
-    if (!req.scope.isAdmin && req.scope.regionIds.length === 0)
+    if (req.scope.role === "none")
       return res.status(403).json({ ok: false, error: "Brak dostępu do sekcji Region" });
     next();
   } catch (e) {
@@ -41,13 +60,26 @@ async function requireRegional(req, res, next) {
   }
 }
 
+// Адмін і регіональні: заповнення карток, порівняння координаторів
+function requireManager(req, res, next) {
+  if (req.scope.role === "coord")
+    return res.status(403).json({ ok: false, error: "Dostępne dla koordynatorów regionalnych" });
+  next();
+}
+
 function requireAdminOnly(req, res, next) {
   if (!req.coordinator.is_admin) return res.status(403).json({ ok: false, error: "Admin only" });
   next();
 }
 
-// region=all | none | <id>  →  { sql, params } для умови по region_id
-function regionClause(scope, region, col, params) {
+// region=all | none | <id>  →  { sql, params } для умови по region_id.
+// Для координатора об'єкта — умова по об'єктах (siteCol); без siteCol він не бачить нічого.
+function regionClause(scope, region, col, params, siteCol) {
+  if (scope.role === "coord") {
+    if (!siteCol) return "false";
+    params.push(scope.siteKeys);
+    return `${siteCol} = ANY($${params.length}::text[])`;
+  }
   if (region === "none") {
     if (!scope.isAdmin) return "false";
     return `${col} IS NULL`;
@@ -63,6 +95,19 @@ function regionClause(scope, region, col, params) {
   return `${col} = ANY($${params.length}::int[])`;
 }
 
+// Довільний період «від–до» (?from=&to=), не довший за 2 роки. Інакше — null (режим тижня).
+function periodOf(q) {
+  if (!isDate(q.from) || !isDate(q.to) || q.from > q.to) return null;
+  const days = (Date.parse(q.to) - Date.parse(q.from)) / 86400000 + 1;
+  if (!(days >= 1 && days <= 731)) return null;
+  return { from: q.from, to: q.to, days };
+}
+// Останній перерахований тиждень, не пізніший за дату
+async function weekAtOrBefore(d) {
+  const r = await db.query(`SELECT to_char(MAX(week_end), 'YYYY-MM-DD') AS w FROM reg.v_snap WHERE week_end <= $1::date`, [d]);
+  return r.rows[0].w;
+}
+
 async function latestWeek() {
   const r = await db.query(`SELECT to_char(MAX(week_end), 'YYYY-MM-DD') AS w FROM reg.v_snap`);
   return r.rows[0].w;
@@ -71,10 +116,18 @@ async function latestWeek() {
 function isDate(s) {
   return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
+// 'YYYY-MM-DD' ± n днів (null → null)
+function addDays(iso, n) {
+  if (!iso) return null;
+  const d = new Date(iso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
 
 // Доступ до конкретного об'єкта: регіон зі знімку тижня або поточна прив'язка
 async function siteAllowed(scope, siteKey) {
   if (scope.isAdmin) return true;
+  if (scope.role === "coord") return scope.siteKeys.includes(siteKey);
   const r = await db.query(
     `SELECT 1 FROM reg.site_owner
       WHERE site_key = $1 AND valid_to IS NULL AND region_id = ANY($2::int[])
@@ -114,7 +167,10 @@ router.use(requireAuth);
 router.get("/me", async (req, res) => {
   try {
     const scope = await getScope(req.coordinator);
-    res.json({ ok: true, is_admin: scope.isAdmin, regions: scope.regions, has_access: scope.isAdmin || scope.regionIds.length > 0 });
+    res.json({
+      ok: true, is_admin: scope.isAdmin, role: scope.role, me: scope.me,
+      regions: scope.regions, sites: scope.siteKeys.length, has_access: scope.role !== "none",
+    });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -142,7 +198,7 @@ router.get("/reasons", async (req, res) => {
   }
 });
 
-router.get("/coordinators-list", async (req, res) => {
+router.get("/coordinators-list", requireManager, async (req, res) => {
   try {
     const r = await db.query(
       `SELECT id, full_name FROM public.coordinators
@@ -157,10 +213,12 @@ router.get("/coordinators-list", async (req, res) => {
 // ── Дошка: об'єкти тижня + показники регіону ─────────────────────────
 router.get("/board", async (req, res) => {
   try {
+    const per = periodOf(req.query);
+    if (per) return boardPeriod(req, res, per);
     const week = isDate(req.query.week) ? req.query.week : await latestWeek();
     if (!week) return res.json({ ok: true, week: null, sites: [], kpi: null });
     const params = [week];
-    const where = regionClause(req.scope, req.query.region, "s.region_id", params);
+    const where = regionClause(req.scope, req.query.region, "s.region_id", params, "s.site_key");
 
     const sites = await db.query(
       `SELECT s.site_key, s.region_id, rg.name AS region_name,
@@ -173,7 +231,7 @@ router.get("/board", async (req, res) => {
               (SELECT json_agg(json_build_object('w', to_char(h.week_end,'YYYY-MM-DD'), 's', h.status) ORDER BY h.week_end)
                  FROM reg.v_snap h
                 WHERE h.site_key = s.site_key AND h.week_end BETWEEN $1::date - 49 AND $1::date) AS trend,
-              card.id AS card_id, card.status AS card_status,
+              card.id AS card_id, card.status AS card_status, card.owner_coordinator_id AS card_owner_id,
               to_char(card.due_at, 'YYYY-MM-DD HH24:MI') AS card_due,
               (card.status = 'open' AND card.due_at < now()) AS card_overdue
          FROM reg.v_snap s
@@ -195,8 +253,8 @@ router.get("/board", async (req, res) => {
 
     // ── Показники регіону (квартал тижня) ──
     const kp = [week];
-    const kWhere = regionClause(req.scope, req.query.region, "s.region_id", kp);
-    const kWhereCards = kWhere.replace(/s\.region_id/g, "c.region_id");
+    const kWhere = regionClause(req.scope, req.query.region, "s.region_id", kp, "s.site_key");
+    const kWhereCards = kWhere.replace(/s\.region_id/g, "c.region_id").replace(/s\.site_key/g, "c.site_key");
     const kpi = await db.query(
       `WITH q AS (SELECT date_trunc('quarter', $1::date)::date AS qs),
        wk AS (
@@ -254,15 +312,118 @@ router.get("/board", async (req, res) => {
   }
 });
 
+// ── Дошка за довільний період: статус за весь період (без правила виходу з червоного) ─
+async function boardPeriod(req, res, per) {
+  try {
+    const params = [per.from, per.to];
+    const where = regionClause(req.scope, req.query.region, "o.region_id", params, "r.site_key");
+    const sites = await db.query(
+      `WITH r AS (SELECT * FROM reg.rag_period($1::date, $2::date))
+       SELECT r.site_key, o.region_id, rg.name AS region_name,
+              o.coordinator_id, c.full_name AS coordinator_name,
+              r.window_days, r.headcount_start, r.headcount_end, r.headcount_avg::float8 AS headcount_avg,
+              r.departures, r.rotation::float8 AS rotation,
+              r.ret_possible, r.ret_achieved, r.retention::float8 AS retention,
+              r.abs_nn, r.abs_base, r.absence::float8 AS absence,
+              r.st_rot, r.st_ret, r.st_abs, r.raw_status, r.raw_status AS status,
+              (SELECT COUNT(*) FROM reg.v_snap h WHERE h.site_key = r.site_key
+                  AND h.week_end BETWEEN $1::date AND $2::date AND h.status = 'R')::int AS red_weeks,
+              (SELECT COUNT(*) FROM reg.v_snap h WHERE h.site_key = r.site_key
+                  AND h.week_end BETWEEN $1::date AND $2::date)::int AS weeks_n,
+              (SELECT json_agg(json_build_object('w', x.w, 's', x.s) ORDER BY x.w)
+                 FROM (SELECT to_char(h.week_end, 'YYYY-MM-DD') AS w, h.status AS s FROM reg.v_snap h
+                        WHERE h.site_key = r.site_key AND h.week_end BETWEEN $1::date AND $2::date
+                        ORDER BY h.week_end DESC LIMIT 26) x) AS trend,
+              card.id AS card_id, card.status AS card_status, card.owner_coordinator_id AS card_owner_id,
+              to_char(card.due_at, 'YYYY-MM-DD HH24:MI') AS card_due,
+              (card.status = 'open' AND card.due_at < now()) AS card_overdue
+         FROM r
+         LEFT JOIN reg.site_owner o ON o.site_key = r.site_key AND o.valid_to IS NULL
+         LEFT JOIN reg.regions rg ON rg.id = o.region_id
+         LEFT JOIN public.coordinators c ON c.id = o.coordinator_id
+         LEFT JOIN LATERAL (
+           SELECT * FROM reg.red_cards rc
+            WHERE rc.site_key = r.site_key AND rc.status <> 'closed'
+            ORDER BY rc.opened_at DESC LIMIT 1) card ON true
+        WHERE ${where}`,
+      params,
+    );
+    const rows = sites.rows.sort(
+      (a, b) =>
+        STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
+        b.red_weeks - a.red_weeks ||
+        b.headcount_end - a.headcount_end,
+    );
+
+    // Показники за період: частка людей у червоних — із тижневих знімків усередині періоду
+    const kp = [per.from, per.to];
+    const kWhere = regionClause(req.scope, req.query.region, "s.region_id", kp, "s.site_key");
+    const kWhereCards = kWhere.replace(/s\.region_id/g, "c.region_id").replace(/s\.site_key/g, "c.site_key");
+    const kpi = await db.query(
+      `WITH wk AS (
+         SELECT s.week_end,
+                SUM(s.headcount_end) FILTER (WHERE s.status IN ('G','A','R')) AS hc,
+                SUM(s.headcount_end) FILTER (WHERE s.status = 'R')            AS hc_red
+           FROM reg.v_snap s
+          WHERE s.week_end BETWEEN $1::date AND $2::date AND ${kWhere}
+          GROUP BY s.week_end),
+       fw AS (SELECT MIN(week_end) AS a, MAX(week_end) AS b FROM wk),
+       red_start AS (SELECT s.site_key FROM reg.v_snap s, fw WHERE s.week_end = fw.a AND s.status = 'R' AND ${kWhere}),
+       end_w AS (SELECT s.site_key, s.status FROM reg.v_snap s, fw WHERE s.week_end = fw.b AND ${kWhere}),
+       cards AS (SELECT c.* FROM reg.red_cards c
+                  WHERE c.opened_at >= $1::date AND c.opened_at < $2::date + 1 AND ${kWhereCards})
+       SELECT (SELECT AVG(hc_red::numeric / NULLIF(hc, 0)) FROM wk)::float8 AS share_red_quarter,
+              (SELECT COUNT(*) FROM wk) AS weeks_in_quarter,
+              (SELECT COUNT(*) FROM red_start) AS red_at_start,
+              (SELECT COUNT(*) FROM red_start rs JOIN end_w e USING (site_key) WHERE e.status <> 'R') AS red_exited,
+              (SELECT COUNT(*) FROM cards WHERE filled_at IS NOT NULL OR due_at < now()) AS cards_due,
+              (SELECT COUNT(*) FROM cards WHERE filled_at IS NOT NULL AND filled_at <= due_at) AS cards_on_time,
+              (SELECT COUNT(*) FROM cards WHERE status = 'open' AND due_at < now()) AS cards_overdue`,
+      kp,
+    );
+    const k = kpi.rows[0];
+    ["weeks_in_quarter", "red_at_start", "red_exited", "cards_due", "cards_on_time", "cards_overdue"].forEach(
+      (f) => (k[f] = parseInt(k[f] || 0, 10)),
+    );
+    const cnt = (st) => rows.filter((x) => x.status === st).length;
+    k.quarter_start = per.from;
+    k.sites_red = cnt("R"); k.sites_amber = cnt("A"); k.sites_green = cnt("G");
+    k.sites_other = rows.length - k.sites_red - k.sites_amber - k.sites_green;
+    k.hc = rows.filter((x) => ["G", "A", "R"].includes(x.status)).reduce((a, x) => a + x.headcount_end, 0);
+    k.hc_red = rows.filter((x) => x.status === "R").reduce((a, x) => a + x.headcount_end, 0);
+    k.share_red = k.hc ? k.hc_red / k.hc : null;
+
+    const settings = await db.query(`SELECT key, value::float8 AS value FROM reg.settings`);
+    res.json({
+      ok: true,
+      mode: "period",
+      period: per,
+      week: await weekAtOrBefore(per.to),
+      sites: rows,
+      kpi: k,
+      settings: Object.fromEntries(settings.rows.map((x) => [x.key, x.value])),
+    });
+  } catch (e) {
+    console.error("[regional/board period]", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
 // ── Картка об'єкта: показники, історія, поіменні списки, червона картка ─
 router.get("/site", async (req, res) => {
   try {
     const key = req.query.key;
     if (!key) return res.status(400).json({ ok: false, error: "key required" });
     if (!(await siteAllowed(req.scope, key))) return res.status(403).json({ ok: false, error: "Forbidden" });
-    const week = isDate(req.query.week) ? req.query.week : await latestWeek();
+    // ?from=&to= — показники, звільнення і NN за весь період; історія і картка — тижневі
+    const per = periodOf(req.query);
+    const week = isDate(req.query.week) ? req.query.week
+      : isDate(req.query.to) ? ((await weekAtOrBefore(req.query.to)) || (await latestWeek()))
+      : await latestWeek();
+    // історія: 12 тижнів, а для довшого періоду — весь період (до 26 тижнів)
+    const histFrom = per && per.from < addDays(week, -77) ? per.from : addDays(week, -77);
 
-    const [snap, hist, owner, card] = await Promise.all([
+    const [snap, hist, owner, card, pstat] = await Promise.all([
       db.query(
         `SELECT s.*, to_char(s.week_end,'YYYY-MM-DD') AS week_end,
                 s.rotation::float8 AS rotation, s.retention::float8 AS retention,
@@ -275,13 +436,15 @@ router.get("/site", async (req, res) => {
         [key, week],
       ),
       db.query(
-        `SELECT to_char(week_end,'YYYY-MM-DD') AS w, status, raw_status,
-                rotation::float8 AS rotation, retention::float8 AS retention, absence::float8 AS absence,
-                headcount_end
-           FROM reg.v_snap
-          WHERE site_key = $1 AND week_end BETWEEN $2::date - 77 AND $2::date
-          ORDER BY week_end`,
-        [key, week],
+        `SELECT * FROM (
+           SELECT to_char(week_end,'YYYY-MM-DD') AS w, status, raw_status,
+                  rotation::float8 AS rotation, retention::float8 AS retention, absence::float8 AS absence,
+                  headcount_end
+             FROM reg.v_snap
+            WHERE site_key = $1 AND week_end BETWEEN $3::date AND $2::date
+            ORDER BY week_end DESC LIMIT 26) h
+          ORDER BY w`,
+        [key, week, histFrom],
       ),
       db.query(
         `SELECT so.region_id, rg.name AS region_name, so.coordinator_id, c.full_name AS coordinator_name,
@@ -310,10 +473,26 @@ router.get("/site", async (req, res) => {
           LIMIT 1`,
         [key],
       ),
+      per
+        ? db.query(
+          `SELECT r.window_days, r.headcount_start, r.headcount_end, r.headcount_avg::float8 AS headcount_avg,
+                  r.departures, r.rotation::float8 AS rotation,
+                  r.ret_possible, r.ret_achieved, r.retention::float8 AS retention,
+                  r.abs_nn, r.abs_base, r.absence::float8 AS absence,
+                  r.st_rot, r.st_ret, r.st_abs, r.raw_status AS status
+             FROM reg.rag_period($2::date, $3::date) r
+            WHERE r.site_key = $1`,
+          [key, per.from, per.to],
+        )
+        : null,
     ]);
 
     const s = snap.rows[0];
     const win = s ? s.window_days : 28;
+    // межі списків звільнень і NN: вікно тижневого знімка або вибраний період
+    const listFrom = per ? addDays(per.from, -1) : addDays(week, -win);
+    const listTo = per ? per.to : week;
+    const anchor = per ? per.to : week;
     const k1 = await db.query(`SELECT reg.setting('ret_days_1')::int AS k1, reg.setting('ret_days_2')::int AS k2`);
     const { k1: d1, k2: d2 } = k1.rows[0];
 
@@ -331,9 +510,9 @@ router.get("/site", async (req, res) => {
             AND (p.last_work_date IS NULL OR p.last_work_date > $2::date)
             AND p.bhp_date + t.k > $2::date AND p.bhp_date + t.k <= $2::date + 14
           ORDER BY t.k DESC, p.bhp_date + t.k`,
-        [key, week, d1, d2],
+        [key, anchor, d1, d2],
       ),
-      // звільнення у вікні знімка, зі стажем на виході
+      // звільнення у вікні знімка (або у вибраному періоді), зі стажем на виході
       db.query(
         `SELECT w.full_name, w.login, f.name AS facility, p.status,
                 to_char(p.bhp_date,'YYYY-MM-DD') AS bhp, to_char(p.last_work_date,'YYYY-MM-DD') AS last_day,
@@ -342,11 +521,11 @@ router.get("/site", async (req, res) => {
            JOIN public.workers w ON w.id = p.worker_id
            JOIN public.facilities f ON f.id = p.facility_id
           WHERE p.site_key = $1 AND p.status <> 'przeniesiony'
-            AND p.last_work_date > $2::date - $3::int AND p.last_work_date <= $2::date
+            AND p.last_work_date > $2::date AND p.last_work_date <= $3::date
           ORDER BY p.last_work_date - p.bhp_date, p.last_work_date DESC`,
-        [key, week, win],
+        [key, listFrom, listTo],
       ),
-      // неявки без причини (NN) у вікні
+      // неявки без причини (NN) у вікні або періоді
       db.query(
         `SELECT w.full_name, w.login, COUNT(*)::int AS nn,
                 string_agg(to_char(hl.work_date,'DD.MM'), ', ' ORDER BY hl.work_date) AS days
@@ -356,17 +535,20 @@ router.get("/site", async (req, res) => {
                                AND (p.last_work_date IS NULL OR hl.work_date <= p.last_work_date)
            JOIN public.workers w ON w.id = hl.worker_id
           WHERE p.site_key = $1 AND hl.absence_type::text = 'NN'
-            AND hl.work_date > $2::date - $3::int AND hl.work_date <= $2::date
+            AND hl.work_date > $2::date AND hl.work_date <= $3::date
           GROUP BY w.full_name, w.login
           ORDER BY nn DESC, w.full_name
           LIMIT 50`,
-        [key, week, win],
+        [key, listFrom, listTo],
       ),
     ]);
 
     res.json({
       ok: true,
       week,
+      mode: per ? "period" : "week",
+      period: per,
+      pstat: per ? pstat.rows[0] || null : null,
       site_key: key,
       snapshot: s || null,
       history: hist.rows,
@@ -384,8 +566,35 @@ router.get("/site", async (req, res) => {
 });
 
 // ── Координатори регіону ──────────────────────────────────────────────
-router.get("/coordinators", async (req, res) => {
+router.get("/coordinators", requireManager, async (req, res) => {
   try {
+    const per = periodOf(req.query);
+    if (per) {
+      const params = [per.from, per.to];
+      const where = regionClause(req.scope, req.query.region, "o.region_id", params);
+      const r = await db.query(
+        `WITH s AS (SELECT r.*, o.region_id, o.coordinator_id FROM reg.rag_period($1::date, $2::date) r
+                     LEFT JOIN reg.site_owner o ON o.site_key = r.site_key AND o.valid_to IS NULL
+                    WHERE ${where})
+         SELECT s.coordinator_id, COALESCE(c.full_name, '— bez koordynatora —') AS coordinator_name,
+                COUNT(*)::int AS sites,
+                COUNT(*) FILTER (WHERE s.raw_status = 'R')::int AS red,
+                COUNT(*) FILTER (WHERE s.raw_status = 'A')::int AS amber,
+                COUNT(*) FILTER (WHERE s.raw_status = 'G')::int AS green,
+                SUM(s.headcount_end)::int AS headcount,
+                SUM(s.headcount_end) FILTER (WHERE s.raw_status = 'R')::int AS headcount_red,
+                (SUM(s.departures * 28.0 / s.window_days) / NULLIF(SUM(s.headcount_avg), 0))::float8 AS rotation,
+                (SUM(s.ret_achieved)::numeric / NULLIF(SUM(s.ret_possible), 0))::float8 AS retention,
+                (SUM(s.abs_nn)::numeric / NULLIF(SUM(s.abs_base), 0))::float8 AS absence,
+                json_agg(json_build_object('site', s.site_key, 'status', s.raw_status) ORDER BY s.site_key) AS site_list
+           FROM s LEFT JOIN public.coordinators c ON c.id = s.coordinator_id
+          GROUP BY s.coordinator_id, c.full_name
+          ORDER BY (SUM(s.headcount_end) FILTER (WHERE s.raw_status = 'R'))::numeric
+                   / NULLIF(SUM(s.headcount_end), 0) DESC NULLS LAST, coordinator_name`,
+        params,
+      );
+      return res.json({ ok: true, mode: "period", period: per, data: r.rows });
+    }
     const week = isDate(req.query.week) ? req.query.week : await latestWeek();
     if (!week) return res.json({ ok: true, data: [] });
     const params = [week];
@@ -420,7 +629,7 @@ router.get("/coordinators", async (req, res) => {
 router.get("/cards", async (req, res) => {
   try {
     const params = [];
-    const where = regionClause(req.scope, req.query.region, "rc.region_id", params);
+    const where = regionClause(req.scope, req.query.region, "rc.region_id", params, "rc.site_key");
     const st = req.query.status || "active";
     const stWhere = {
       active: `rc.status <> 'closed'`,
@@ -429,7 +638,7 @@ router.get("/cards", async (req, res) => {
       all: `true`,
     }[st] || `rc.status <> 'closed'`;
     const r = await db.query(
-      `SELECT rc.id, rc.site_key, rc.status, rg.name AS region_name,
+      `SELECT rc.id, rc.site_key, rc.status, rg.name AS region_name, rc.owner_coordinator_id,
               to_char(rc.opened_week,'YYYY-MM-DD') AS opened_week,
               to_char(rc.due_at,'YYYY-MM-DD HH24:MI') AS due_at,
               to_char(rc.filled_at,'YYYY-MM-DD HH24:MI') AS filled_at,
@@ -460,11 +669,12 @@ async function cardInScope(scope, id) {
   const r = await db.query(`SELECT * FROM reg.red_cards WHERE id = $1`, [id]);
   const card = r.rows[0];
   if (!card) return { error: 404 };
+  if (scope.role === "coord") return scope.siteKeys.includes(card.site_key) ? { card } : { error: 403 };
   if (!scope.isAdmin && !scope.regionIds.includes(card.region_id)) return { error: 403 };
   return { card };
 }
 
-router.patch("/cards/:id", async (req, res) => {
+router.patch("/cards/:id", requireManager, async (req, res) => {
   try {
     const { card, error } = await cardInScope(req.scope, req.params.id);
     if (error) return res.status(error).json({ ok: false, error: error === 404 ? "Not found" : "Forbidden" });
@@ -478,16 +688,31 @@ router.patch("/cards/:id", async (req, res) => {
     if (!owner_coordinator_id) missing.push("odpowiedzialny");
     if (missing.length) return res.status(400).json({ ok: false, error: "Uzupełnij: " + missing.join(", ") });
 
+    const owner = parseInt(owner_coordinator_id, 10);
+    const plan = String(action_plan).trim();
+    const prev = await db.query(
+      `SELECT owner_coordinator_id, status, reason_code, action_plan,
+              to_char(action_due, 'YYYY-MM-DD') AS action_due
+         FROM reg.red_cards WHERE id = $1`,
+      [card.id],
+    );
+    const p = prev.rows[0];
     const r = await db.query(
       `UPDATE reg.red_cards SET
           reason_code = $2, reason_note = NULLIF($3, ''), action_plan = $4, action_due = $5::date,
           owner_coordinator_id = $6, status = 'filled',
           filled_at = COALESCE(filled_at, now()), filled_by = COALESCE(filled_by, $7)
         WHERE id = $1 RETURNING id, status, to_char(filled_at,'YYYY-MM-DD HH24:MI') AS filled_at`,
-      [card.id, reason_code, reason_note || "", String(action_plan).trim(), action_due,
-        parseInt(owner_coordinator_id, 10), req.coordinator.coordinator_id],
+      [card.id, reason_code, reason_note || "", plan, action_due, owner, req.coordinator.coordinator_id],
     );
     res.json({ ok: true, data: r.rows[0] });
+
+    // Telegram відповідальному: призначили або змінили причину / план / термін (себе не повідомляємо)
+    const assigned = p.owner_coordinator_id !== owner || p.status === "open";
+    const changed = p.reason_code !== reason_code || p.action_plan !== plan || p.action_due !== action_due;
+    if (owner !== req.coordinator.coordinator_id && (assigned || changed))
+      notifyCardOwner(card.id, assigned ? "assigned" : "updated", req.coordinator.coordinator_id)
+        .catch((e) => console.error("[regional] notify owner", e.message));
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -503,6 +728,10 @@ router.post("/cards/:id/notes", async (req, res) => {
       card.id, req.coordinator.coordinator_id, text.slice(0, 2000),
     ]);
     res.json({ ok: true });
+    // нотатку координатора об'єкта бачить регіональний — і в Telegram
+    if (req.scope.role === "coord")
+      notifyLeadsNote(card, req.coordinator.coordinator_id, text.slice(0, 2000))
+        .catch((e) => console.error("[regional] notify note", e.message));
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -513,7 +742,7 @@ router.post("/cards/:id/notes", async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════
 router.get("/admin/config", requireAdminOnly, async (req, res) => {
   try {
-    const [regions, sites, settings, flags] = await Promise.all([
+    const [regions, sites, settings, flags, archive] = await Promise.all([
       db.query(
         `SELECT r.id, r.name, r.is_active,
                 COALESCE((SELECT json_agg(json_build_object('id', c.id, 'name', c.full_name) ORDER BY c.full_name)
@@ -529,15 +758,17 @@ router.get("/admin/config", requireAdminOnly, async (req, res) => {
             WHERE is_active AND name <> 'test'
            UNION SELECT site_key FROM reg.site_owner WHERE valid_to IS NULL),
          hc AS (
-           SELECT site_key, COUNT(DISTINCT worker_id)::int AS n FROM reg.v_periods
-            WHERE last_work_date IS NULL OR last_work_date > CURRENT_DATE GROUP BY site_key)
-         SELECT k.site_key, COALESCE(hc.n, 0) AS headcount,
+           SELECT site_key, COUNT(DISTINCT worker_id) FILTER (WHERE last_work_date IS NULL OR last_work_date > CURRENT_DATE)::int AS n,
+                  CASE WHEN bool_or(last_work_date IS NULL) THEN NULL ELSE to_char(MAX(last_work_date), 'YYYY-MM-DD') END AS last_work
+             FROM reg.v_periods GROUP BY site_key)
+         SELECT k.site_key, COALESCE(hc.n, 0) AS headcount, hc.last_work,
                 so.region_id, so.coordinator_id, to_char(so.valid_from,'YYYY-MM-DD') AS valid_from,
                 (SELECT string_agg(f.name, ', ' ORDER BY f.name) FROM public.facilities f
                   WHERE reg.site_key(f.group_name, f.name) = k.site_key) AS facilities
            FROM keys k
            LEFT JOIN hc ON hc.site_key = k.site_key
            LEFT JOIN reg.site_owner so ON so.site_key = k.site_key AND so.valid_to IS NULL
+          WHERE NOT reg.archived(k.site_key)                 -- архівні — окремим списком нижче
           ORDER BY (so.region_id IS NULL) DESC, k.site_key`,
       ),
       db.query(`SELECT key, value::float8 AS value, note FROM reg.settings ORDER BY key`),
@@ -546,8 +777,19 @@ router.get("/admin/config", requireAdminOnly, async (req, res) => {
                 to_char(date_to,'YYYY-MM-DD') AS date_to, note
            FROM reg.site_flags ORDER BY (date_to IS NULL) DESC, date_from DESC`,
       ),
+      db.query(
+        `SELECT a.site_key, to_char(a.archived_at AT TIME ZONE 'Europe/Warsaw', 'YYYY-MM-DD') AS archived_at, a.note,
+                c.full_name AS archived_by_name, rg.name AS prev_region, pc.full_name AS prev_coordinator,
+                (SELECT COUNT(DISTINCT p.worker_id)::int FROM reg.v_periods p
+                  WHERE p.site_key = a.site_key AND (p.last_work_date IS NULL OR p.last_work_date > CURRENT_DATE)) AS headcount
+           FROM reg.site_archive a
+           LEFT JOIN public.coordinators c  ON c.id = a.archived_by
+           LEFT JOIN public.coordinators pc ON pc.id = a.prev_coordinator_id
+           LEFT JOIN reg.regions rg         ON rg.id = a.prev_region_id
+          ORDER BY a.site_key`,
+      ),
     ]);
-    res.json({ ok: true, regions: regions.rows, sites: sites.rows, settings: settings.rows, flags: flags.rows });
+    res.json({ ok: true, regions: regions.rows, sites: sites.rows, settings: settings.rows, flags: flags.rows, archive: archive.rows });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -652,6 +894,75 @@ router.put("/admin/sites", requireAdminOnly, async (req, res) => {
   }
 });
 
+// ── Архів об'єктів: більше не працюємо — зникає з Wyjazdy, Region, Tablica, Rozmowy, Poleć znajomego.
+// Прив'язка до регіону / координатора закривається і запам'ятовується; «Przywróć» її повертає.
+router.post("/admin/archive", requireAdminOnly, async (req, res) => {
+  const site = String((req.body && req.body.site_key) || "").trim();
+  const note = String((req.body && req.body.note) || "").trim().slice(0, 300);
+  if (!site) return res.status(400).json({ ok: false, error: "site_key required" });
+  const client = await db.pool.connect();
+  let cards = 0;
+  try {
+    await client.query("BEGIN");
+    const ins = await client.query(
+      `INSERT INTO reg.site_archive (site_key, archived_by, note, prev_region_id, prev_coordinator_id)
+       SELECT $1, $2, NULLIF($3, ''), o.region_id, o.coordinator_id
+         FROM (SELECT 1) x LEFT JOIN reg.site_owner o ON o.site_key = $1 AND o.valid_to IS NULL
+       ON CONFLICT (site_key) DO NOTHING RETURNING site_key`,
+      [site, req.coordinator.coordinator_id, note],
+    );
+    if (!ins.rows.length) { await client.query("ROLLBACK"); return res.status(400).json({ ok: false, error: "Obiekt jest już w archiwum" }); }
+    await client.query(
+      `UPDATE reg.site_owner SET valid_to = GREATEST(valid_from, (now() AT TIME ZONE 'Europe/Warsaw')::date - 1)
+        WHERE site_key = $1 AND valid_to IS NULL`,
+      [site],
+    );
+    const c = await client.query(
+      `UPDATE reg.red_cards SET status = 'closed', closed_at = now(), close_reason = 'archived'
+        WHERE site_key = $1 AND status <> 'closed'`,
+      [site],
+    );
+    cards = c.rowCount;
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    return res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    client.release();
+  }
+  // Rozmowy: відкриті розмови й заплановані анкети людей цього об'єкта
+  let tasks = 0;
+  try { tasks = await require("../bot/care").cancelForSite(site); } catch (e) { console.error("[region] archive care", e.message); }
+  res.json({ ok: true, cards_closed: cards, tasks_cancelled: tasks });
+});
+router.post("/admin/unarchive", requireAdminOnly, async (req, res) => {
+  const site = String((req.body && req.body.site_key) || "").trim();
+  if (!site) return res.status(400).json({ ok: false, error: "site_key required" });
+  const client = await db.pool.connect();
+  try {
+    await client.query("BEGIN");
+    const del = await client.query(`DELETE FROM reg.site_archive WHERE site_key = $1 RETURNING prev_region_id, prev_coordinator_id`, [site]);
+    if (!del.rows.length) { await client.query("ROLLBACK"); return res.status(404).json({ ok: false, error: "Nie ma w archiwum" }); }
+    const p = del.rows[0];
+    // poprzednie przypisanie wraca od dziś (jeśli w międzyczasie nikt nie przypisał inaczej)
+    if (p.prev_region_id || p.prev_coordinator_id) {
+      await client.query(
+        `INSERT INTO reg.site_owner (site_key, region_id, coordinator_id, valid_from, created_by)
+         SELECT $1, $2, $3, (now() AT TIME ZONE 'Europe/Warsaw')::date, $4
+          WHERE NOT EXISTS (SELECT 1 FROM reg.site_owner WHERE site_key = $1 AND valid_to IS NULL)`,
+        [site, p.prev_region_id, p.prev_coordinator_id, req.coordinator.coordinator_id],
+      );
+    }
+    await client.query("COMMIT");
+    res.json({ ok: true });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
 router.patch("/admin/settings", requireAdminOnly, async (req, res) => {
   try {
     const body = req.body || {};
@@ -734,6 +1045,54 @@ async function safeSend(bot, chatId, text) {
     console.error("[regional] telegram", chatId, e.message);
     return false;
   }
+}
+
+// Бот для повідомлень одразу після дії в панелі (задається в schedule / setBot)
+let BOT = null;
+function setBot(bot) { BOT = bot; }
+
+// Відповідальному за картку: призначили або змінили причину / план / термін
+async function notifyCardOwner(cardId, kind, byId) {
+  if (!BOT) return;
+  const r = await db.query(
+    `SELECT rc.site_key, rc.action_plan, rc.reason_note, to_char(rc.action_due, 'DD.MM.YYYY') AS due,
+            rs.label AS reason, o.telegram_chat_id AS chat, b.full_name AS by_name
+       FROM reg.red_cards rc
+       JOIN public.coordinators o ON o.id = rc.owner_coordinator_id AND o.is_active
+       LEFT JOIN reg.reasons rs ON rs.code = rc.reason_code
+       LEFT JOIN public.coordinators b ON b.id = $2
+      WHERE rc.id = $1`,
+    [cardId, byId],
+  );
+  const x = r.rows[0];
+  if (!x || !x.chat) return;
+  const lines = [
+    kind === "assigned"
+      ? `📋 Вас призначено відповідальним за червоний об'єкт ${x.site_key}.`
+      : `📋 Оновлено картку червоного об'єкта ${x.site_key}, де ви відповідальний.`,
+    "",
+    `Причина: ${x.reason || "—"}${x.reason_note ? " — " + x.reason_note : ""}`,
+    `План: ${x.action_plan || "—"}`,
+    `Термін: ${x.due || "—"}`,
+  ];
+  if (x.by_name) lines.push(`${kind === "assigned" ? "Призначив" : "Оновив"}: ${x.by_name}`);
+  lines.push("", "Показники, люди під ризиком і нотатки про хід роботи — у панелі: 🚦 Region → об'єкт.");
+  await safeSend(BOT, x.chat, lines.join("\n"));
+}
+
+// Регіональним: координатор об'єкта додав нотатку до картки
+async function notifyLeadsNote(card, byId, text) {
+  if (!BOT || !card.region_id) return;
+  const r = await db.query(
+    `SELECT c.telegram_chat_id AS chat,
+            (SELECT full_name FROM public.coordinators WHERE id = $2) AS author
+       FROM reg.region_leads rl
+       JOIN public.coordinators c ON c.id = rl.coordinator_id AND c.is_active
+      WHERE rl.region_id = $1 AND c.telegram_chat_id IS NOT NULL AND c.id <> $2`,
+    [card.region_id, byId],
+  );
+  for (const x of r.rows)
+    await safeSend(BOT, x.chat, `💬 ${x.author || "Координатор"} — нотатка по об'єкту ${card.site_key}:\n${text}`);
 }
 
 async function adminChats() {
@@ -819,6 +1178,7 @@ async function sendCardReminders(bot) {
 
 // Планувальник: пн 06:00 — знімок минулого тижня; пн–пт 09:00 — нагадування
 function schedule(bot) {
+  setBot(bot);
   const done = new Set();
   setInterval(async () => {
     const now = new Date();
@@ -844,4 +1204,4 @@ function schedule(bot) {
   }, 30 * 1000);
 }
 
-module.exports = { router, schedule, takeSnapshot, sendCardReminders, notifyNewRed };
+module.exports = { router, schedule, setBot, takeSnapshot, sendCardReminders, notifyNewRed };

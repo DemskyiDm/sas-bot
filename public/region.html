@@ -10,6 +10,10 @@
     :root { --rag-r: var(--red); --rag-a: var(--accent2); --rag-g: var(--green); --rag-s: #64748b; }
     .rg-toolbar { display: flex; gap: 8px; align-items: center; }
     .rg-toolbar label { font-size: 11px; color: var(--text2); }
+    .rg-toolbar .grp { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .rg-toolbar input[type="date"] { background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+      font-size: 12px; padding: 5px 8px; border-radius: 5px; color-scheme: dark; }
+    .per-msg { font-size: 11px; color: var(--red); }
     .rg-view { display: none; }
     .rg-view.active { display: block; }
     .nav-badge { margin-left: auto; background: var(--red); color: #fff; font-size: 10px; font-weight: 700;
@@ -90,6 +94,7 @@
     .hist div i.R { background: var(--rag-r); } .hist div i.A { background: var(--rag-a); }
     .hist div i.G { background: var(--rag-g); } .hist div i.S { background: var(--rag-s); }
     .hist div.cur { color: var(--text); font-weight: 700; }
+    .hist div.out { opacity: .35; }
     .h3 { font-size: 12px; font-weight: 600; color: var(--text); margin: 18px 0 8px; display: flex; gap: 8px; align-items: baseline; }
     .h3 .c { font-weight: 400; color: var(--text3); font-size: 11px; }
 
@@ -99,6 +104,10 @@
     .redcard .top b { font-size: 13px; }
     .form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .form .full { grid-column: 1 / -1; }
+    .form .ro { font-size: 13px; line-height: 1.5; white-space: pre-wrap; padding: 7px 10px; background: var(--surface2);
+      border: 1px solid var(--border); border-radius: 6px; min-height: 32px; }
+    .redcard.mine { box-shadow: 0 0 0 1px var(--accent) inset; }
+    .card-tag.mine { color: var(--accent); font-weight: 600; }
     .form label { display: block; font-size: 11px; color: var(--text2); margin-bottom: 4px; }
     .form select, .form input, .form textarea { width: 100%; }
     textarea, input[type="date"], input[type="number"] { background: var(--surface2); border: 1px solid var(--border);
@@ -156,6 +165,7 @@
       <div class="nav-item" data-view="coords" onclick="showView('coords')">👥 Koordynatorzy</div>
       <div class="nav-item" data-view="cards" onclick="showView('cards')">🗂️ Karty <span class="nav-badge" id="badgeCards"></span></div>
       <div class="nav-item" data-view="settings" id="navSettings" onclick="showView('settings')" style="display:none">⚙️ Ustawienia</div>
+      <div class="nav-item" onclick="location.href='rozmowy.html'">📞 Rozmowy</div>
     </div>
   </div>
 
@@ -165,8 +175,17 @@
       <div class="rg-toolbar">
         <label for="selRegion">Region</label>
         <select id="selRegion" onchange="onFilterChange()"></select>
-        <label for="selWeek">Tydzień do</label>
-        <select id="selWeek" onchange="onFilterChange()"></select>
+        <div class="chips" id="modeChips">
+          <button class="chip active" data-m="week" onclick="setMode('week')">Tydzień</button>
+          <button class="chip" data-m="period" onclick="setMode('period')">Okres od–do</button>
+        </div>
+        <span class="grp" id="weekBox"><label for="selWeek">Tydzień do</label>
+          <select id="selWeek" onchange="onFilterChange()"></select></span>
+        <span class="grp" id="periodBox" style="display:none">
+          <label for="perFrom">od</label><input type="date" id="perFrom" onchange="onPeriodChange()" />
+          <label for="perTo">do</label><input type="date" id="perTo" onchange="onPeriodChange()" />
+          <span class="per-msg" id="perMsg"></span>
+        </span>
       </div>
       <div class="topbar-right">
         <span id="userName" style="font-size: 12px; color: var(--text2)"></span>

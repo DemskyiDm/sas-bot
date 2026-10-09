@@ -15,6 +15,11 @@ const ST = {
   coordinators: [],
   config: null,
   siteKey: null,
+  mode: "week",      // week | period (od–do)
+};
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* prywatne okno */ } },
 };
 const STATUS_LABEL = { R: "Czerwony", A: "Żółty", G: "Zielony", S: "Strukturalny", N: "Brak danych" };
 const CLOSE_LABEL = { left_red: "wyszedł z czerwonego", structural: "przypadek strukturalny" };
@@ -32,7 +37,7 @@ function dd(iso) { return iso ? iso.substring(8, 10) + "." + iso.substring(5, 7)
 // дата з роком, якщо рік інший, ніж у вибраному тижні
 function ddr(iso) {
   if (!iso) return "";
-  const wy = (document.getElementById("selWeek").value || "").substring(0, 4);
+  const wy = (ST.mode === "period" ? document.getElementById("perTo").value : document.getElementById("selWeek").value || "").substring(0, 4);
   return iso.substring(0, 4) === wy ? dd(iso) : dd(iso) + "." + iso.substring(2, 4);
 }
 function ddy(iso) { return iso ? dd(iso) + "." + iso.substring(0, 4) : ""; }
@@ -57,9 +62,14 @@ async function api(path, opts) {
 function qs(extra) {
   const p = new URLSearchParams();
   const reg = document.getElementById("selRegion").value;
-  const week = document.getElementById("selWeek").value;
   if (reg) p.set("region", reg);
-  if (week) p.set("week", week);
+  if (ST.mode === "period") {
+    p.set("from", document.getElementById("perFrom").value);
+    p.set("to", document.getElementById("perTo").value);
+  } else {
+    const week = document.getElementById("selWeek").value;
+    if (week) p.set("week", week);
+  }
   Object.entries(extra || {}).forEach(([k, v]) => p.set(k, v));
   return "?" + p.toString();
 }
@@ -76,13 +86,20 @@ async function init() {
     document.querySelector(".rg-toolbar").style.display = "none";
     document.querySelectorAll(".nav-item[data-view]").forEach((el) => (el.style.display = "none"));
     document.getElementById("content").innerHTML =
-      `<div class="noaccess">🚦 Sekcja <b>Region</b> jest dostępna dla koordynatorów regionalnych.<br>
-       Jeśli prowadzisz region, poproś kierownika działu o przypisanie w ustawieniach sekcji.</div>`;
+      `<div class="noaccess">🚦 Sekcja <b>Region</b> jest dostępna dla koordynatorów regionalnych
+       i koordynatorów przypisanych do obiektów.<br>
+       Jeśli prowadzisz region lub obiekt, poproś kierownika działu o przypisanie w ustawieniach sekcji.</div>`;
     return;
   }
+  // koordynator obiektu: tylko podgląd swoich obiektów + notatki do kart
+  ST.ro = me.role === "coord";
   const selR = document.getElementById("selRegion");
   const opts = [];
-  if (me.is_admin) {
+  if (ST.ro) {
+    opts.push(`<option value="all">Moje obiekty</option>`);
+    selR.disabled = true;
+    document.querySelector('.nav-item[data-view="coords"]').style.display = "none";
+  } else if (me.is_admin) {
     opts.push(`<option value="all">Wszystkie regiony</option>`);
     opts.push(`<option value="none">Bez regionu</option>`);
   } else if (me.regions.length > 1) {
@@ -97,7 +114,7 @@ async function init() {
   if (savedRegion && [...selR.options].some((o) => o.value === savedRegion)) selR.value = savedRegion;
   if (me.is_admin) document.getElementById("navSettings").style.display = "";
 
-  const [weeks, reasons, coords] = await Promise.all([api("/weeks"), api("/reasons"), api("/coordinators-list")]);
+  const [weeks, reasons, coords] = await Promise.all([api("/weeks"), api("/reasons"), ST.ro ? null : api("/coordinators-list")]);
   ST.reasons = (reasons && reasons.data) || [];
   ST.coordinators = (coords && coords.data) || [];
   const selW = document.getElementById("selWeek");
@@ -105,6 +122,13 @@ async function init() {
   selW.innerHTML = wl.length
     ? wl.map((w) => `<option value="${w}">${ddy(w)}</option>`).join("")
     : `<option value="">— brak danych —</option>`;
+
+  // okres od–do: domyślnie od początku kwartału do ostatniego przeliczonego tygodnia
+  const last = wl[0] || new Date().toISOString().slice(0, 10);
+  const qStart = last.slice(0, 5) + String(Math.floor((Number(last.slice(5, 7)) - 1) / 3) * 3 + 1).padStart(2, "0") + "-01";
+  document.getElementById("perFrom").value = store.get("sas_region_from") || qStart;
+  document.getElementById("perTo").value = store.get("sas_region_to") || last;
+  if (store.get("sas_region_mode") === "period") applyMode("period");
 
   if (!wl.length) {
     document.getElementById("kpis").innerHTML = "";
@@ -115,22 +139,80 @@ async function init() {
     return;
   }
   const h = location.hash.replace("#", "");
+  // region.html#site=<obiekt>[&week=<data>|last][&from=&to=] — odnośnik z pulpitu kierownika:
+  // od razu karta obiektu, z tym samym okresem co na pulpicie
+  if (h.startsWith("site=")) {
+    openFromLink(new URLSearchParams(h), wl);
+    return;
+  }
   showView(["board", "coords", "cards", "settings"].includes(h) ? h : "board");
 }
 
+// Tydzień, jeśli jest przeliczony; inaczej okres od–do. Wybór z odnośnika nie nadpisuje zapisanych ustawień.
+function openFromLink(hp, weeks) {
+  const key = hp.get("site") || "";
+  const w = hp.get("week"), f = hp.get("from"), t = hp.get("to");
+  const iso = (x) => /^\d{4}-\d{2}-\d{2}$/.test(x || "");
+  const wk = w === "last" ? weeks[0] : weeks.includes(w) ? w : null;
+  if (wk) {
+    document.getElementById("selWeek").value = wk;
+    applyMode("week");
+  } else if (iso(f) && iso(t)) {
+    document.getElementById("perFrom").value = f;
+    document.getElementById("perTo").value = t;
+    applyMode("period");
+    if (!periodValid()) applyMode("week");
+  }
+  showView("board");
+  if (key) openSite(encodeURIComponent(key));
+}
+
 function onFilterChange() {
-  localStorage.setItem("sas_region_sel", document.getElementById("selRegion").value);
+  store.set("sas_region_sel", document.getElementById("selRegion").value);
   loadView();
 }
 
+// ── Tydzień / okres od–do ──
+function applyMode(m) {
+  ST.mode = m;
+  document.querySelectorAll("#modeChips .chip").forEach((c) => c.classList.toggle("active", c.dataset.m === m));
+  document.getElementById("weekBox").style.display = m === "week" ? "" : "none";
+  document.getElementById("periodBox").style.display = m === "period" ? "" : "none";
+}
+function setMode(m) {
+  applyMode(m);
+  store.set("sas_region_mode", m);
+  if (m === "period" && !periodValid()) return;
+  loadView();
+}
+function periodValid() {
+  const f = document.getElementById("perFrom").value, t = document.getElementById("perTo").value;
+  const msg = document.getElementById("perMsg");
+  let err = "";
+  if (!f || !t) err = "podaj obie daty";
+  else if (f > t) err = "„od” jest późniejsze niż „do”";
+  else if ((Date.parse(t) - Date.parse(f)) / 86400000 + 1 > 731) err = "maksymalnie 2 lata";
+  msg.textContent = err;
+  return !err;
+}
+function onPeriodChange() {
+  if (!periodValid()) return;
+  store.set("sas_region_from", document.getElementById("perFrom").value);
+  store.set("sas_region_to", document.getElementById("perTo").value);
+  loadView();
+}
+const isPeriod = () => ST.board && ST.board.mode === "period";
+
 function showView(v) {
   if (v === "settings" && !(ST.me && ST.me.is_admin)) v = "board";
+  if (v === "coords" && ST.ro) v = "board";
   ST.view = v;
   location.hash = v;
   document.querySelectorAll(".rg-view").forEach((el) => el.classList.toggle("active", el.id === "view-" + v));
   document.querySelectorAll(".nav-item[data-view]").forEach((el) => el.classList.toggle("active", el.dataset.view === v));
-  document.getElementById("topTitle").textContent =
-    { board: "Region — tablica", coords: "Region — koordynatorzy", cards: "Region — karty", settings: "Region — ustawienia" }[v];
+  document.getElementById("topTitle").textContent = (ST.ro
+    ? { board: "Moje obiekty", cards: "Moje obiekty — karty" }
+    : { board: "Region — tablica", coords: "Region — koordynatorzy", cards: "Region — karty", settings: "Region — ustawienia" })[v];
   loadView();
 }
 
@@ -170,16 +252,16 @@ function renderKpis() {
   document.getElementById("kpis").innerHTML = `
     <div class="kpi"><div class="l">Ludzie w czerwonych obiektach</div>
       <div class="v" style="color:${k.share_red > 0.3 ? "var(--rag-r)" : k.share_red > 0.1 ? "var(--rag-a)" : "var(--rag-g)"}">${pct(k.share_red)}</div>
-      <div class="s">${k.hc_red || 0} z ${k.hc || 0} osób, tydzień do ${ddy(ST.board.week)}</div></div>
-    <div class="kpi"><div class="l">Średnio w kwartale</div>
+      <div class="s">${k.hc_red || 0} z ${k.hc || 0} osób, ${isPeriod() ? `status za okres ${dd(ST.board.period.from)}–${ddy(ST.board.period.to)}` : `tydzień do ${ddy(ST.board.week)}`}</div></div>
+    <div class="kpi"><div class="l">${isPeriod() ? "Średnio w okresie" : "Średnio w kwartale"}</div>
       <div class="v">${pct(k.share_red_quarter)}</div>
-      <div class="s">od ${ddy(k.quarter_start)}, ${k.weeks_in_quarter} tyg.</div></div>
+      <div class="s">${isPeriod() ? `${k.weeks_in_quarter} tyg. w okresie (z cotygodniowych przeliczeń)` : `od ${ddy(k.quarter_start)}, ${k.weeks_in_quarter} tyg.`}</div></div>
     <div class="kpi"><div class="l">Obiekty: czerwone / żółte / zielone</div>
       <div class="v"><span class="r">${k.sites_red}</span><span class="sep">/</span><span class="a">${k.sites_amber}</span><span class="sep">/</span><span class="g">${k.sites_green}</span></div>
       <div class="s">${k.sites_other ? k.sites_other + " bez oceny (strukturalne / brak danych)" : "wszystkie ocenione"}</div></div>
-    <div class="kpi"><div class="l">Wyszły z czerwonego w kwartale</div>
+    <div class="kpi"><div class="l">Wyszły z czerwonego w ${isPeriod() ? "okresie" : "kwartale"}</div>
       <div class="v">${k.red_exited}<span class="sep">z</span>${k.red_at_start}</div>
-      <div class="s">czerwone na początku kwartału</div></div>
+      <div class="s">czerwone na początku ${isPeriod() ? "okresu" : "kwartału"}</div></div>
     <div class="kpi"><div class="l">Karty wypełnione w terminie</div>
       <div class="v">${onTime == null ? "—" : pct(onTime)}</div>
       <div class="s">${k.cards_on_time} z ${k.cards_due}${k.cards_overdue ? ` · <span style="color:var(--rag-r)">${k.cards_overdue} po terminie</span>` : ""}</div></div>`;
@@ -193,9 +275,11 @@ function setBoardFilter(f) {
 
 function cardTag(s) {
   if (!s.card_id) return `<span class="muted">—</span>`;
-  if (s.card_status === "filled") return `<span class="card-tag filled">✓ wypełniona</span>`;
-  if (s.card_overdue) return `<span class="card-tag late">po terminie</span>`;
-  return `<span class="card-tag open">do ${dd(s.card_due.substring(0, 10))}</span>`;
+  const mine = ST.ro && s.card_owner_id != null && s.card_owner_id === ST.me.me
+    ? ` <span class="card-tag mine" title="Jesteś odpowiedzialny za plan">👤 Ty</span>` : "";
+  if (s.card_status === "filled") return `<span class="card-tag filled">✓ wypełniona</span>${mine}`;
+  if (s.card_overdue) return `<span class="card-tag late">po terminie</span>${mine}`;
+  return `<span class="card-tag open">do ${dd(s.card_due.substring(0, 10))}</span>${mine}`;
 }
 
 function trendHtml(t, week) {
@@ -216,20 +300,20 @@ function renderBoard() {
     <table class="rg"><thead><tr>
       <th></th><th>Obiekt</th><th>Koordynator</th>${multi ? "<th>Region</th>" : ""}
       <th class="num">Ludzie</th><th class="num">Rotacja</th><th class="num">Dożycie</th><th class="num">NN</th>
-      <th class="num">Tyg. czerw.</th><th>Trend 8 tyg.</th><th>Karta</th>
+      <th class="num">${isPeriod() ? "Tyg. czerw. w okresie" : "Tyg. czerw."}</th><th>${isPeriod() ? "Tygodnie w okresie" : "Trend 8 tyg."}</th><th>Karta</th>
     </tr></thead><tbody>
     ${rows.map((s) => `
       <tr class="click" onclick="openSite('${encodeURIComponent(s.site_key)}')">
         <td>${pill(s.status)}</td>
-        <td><b>${esc(s.site_key)}</b>${s.window_days !== 28 ? ` <span class="muted" title="Mały obiekt — okno ${s.window_days} dni">·${s.window_days}d</span>` : ""}
+        <td><b>${esc(s.site_key)}</b>${!isPeriod() && s.window_days !== 28 ? ` <span class="muted" title="Mały obiekt — okno ${s.window_days} dni">·${s.window_days}d</span>` : ""}
             ${s.status === "R" && s.raw_status !== "R" ? ` <span class="muted" title="Wskaźniki już poniżej progu, obiekt wychodzi z czerwonego">↗</span>` : ""}</td>
         <td>${s.coordinator_name ? esc(s.coordinator_name) : `<span class="muted">— nieprzypisany —</span>`}</td>
         ${multi ? `<td>${s.region_name ? esc(s.region_name) : `<span class="muted">—</span>`}</td>` : ""}
         <td class="num">${s.headcount_end}</td>
-        <td class="num" title="${s.departures} odejść przy średnio ${String(s.headcount_avg).replace(".", ",")} osobach">${metric(s.rotation, s.st_rot)}</td>
+        <td class="num" title="${s.departures} odejść przy średnio ${String(s.headcount_avg).replace(".", ",")} osobach${isPeriod() ? " — w przeliczeniu na 28 dni" : ""}">${metric(s.rotation, s.st_rot)}</td>
         <td class="num" title="${s.ret_achieved} z ${s.ret_possible} wag">${metric(s.ret_possible ? s.retention : null, s.st_ret)}</td>
         <td class="num" title="${s.abs_nn} dni NN z ${s.abs_base}">${metric(s.abs_base ? s.absence : null, s.st_abs, 1)}</td>
-        <td class="num">${s.red_weeks || ""}</td>
+        <td class="num">${isPeriod() ? (s.weeks_n ? `${s.red_weeks} z ${s.weeks_n}` : "") : s.red_weeks || ""}</td>
         <td>${trendHtml(s.trend)}</td>
         <td>${cardTag(s)}</td>
       </tr>`).join("")}
@@ -243,7 +327,9 @@ function renderLegend() {
     `Status = najgorszy z kryteriów. Rotacja (na 28 dni): zielony ≤${pct(s.rot_green_max)}, czerwony >${pct(s.rot_amber_max)}. ` +
     `Dożycie do ${s.ret_days_1}/${s.ret_days_2} dni: zielony ≥${pct(s.ret_green_min)}, czerwony <${pct(s.ret_amber_min)}. ` +
     `NN: zielony ≤${pct(s.abs_green_max)}, czerwony >${pct(s.abs_amber_max)}${absOn ? "" : " — <b>tylko informacyjnie, nie wpływa na status</b>"}. ` +
-    `Wyjście z czerwonego: ${s.exit_red_weeks} tyg. z rzędu poniżej progu. Obiekty poniżej ${s.small_site_headcount} osób liczone w oknie ${s.small_site_window_days} dni.`;
+    (isPeriod()
+      ? `<br><b>Okres od–do:</b> status liczony za cały wybrany okres tymi samymi progami (rotacja przeliczona na 28 dni), bez reguły wyjścia z czerwonego i bez dłuższego okna dla małych obiektów. „Tygodnie w okresie” — statusy z cotygodniowych przeliczeń. Karta obiektu pokazuje wskaźniki, odejścia i NN za cały okres; historia statusu — tygodnie z cotygodniowych przeliczeń.`
+      : `Wyjście z czerwonego: ${s.exit_red_weeks} tyg. z rzędu poniżej progu. Obiekty poniżej ${s.small_site_headcount} osób liczone w oknie ${s.small_site_window_days} dni.`);
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -257,8 +343,7 @@ async function openSite(encKey) {
                   <div class="loading">Ładowanie…</div>`;
   dw.classList.add("open"); dw.setAttribute("aria-hidden", "false");
   document.getElementById("drawerBg").classList.add("open");
-  const week = document.getElementById("selWeek").value;
-  const r = await api(`/site?key=${encodeURIComponent(key)}&week=${week}`);
+  const r = await api(`/site?key=${encodeURIComponent(key)}&${siteWhen()}`);
   if (!r) return;
   if (!r.ok) { dw.innerHTML += `<div class="error">${esc(r.error)}</div>`; return; }
   renderSite(r);
@@ -273,61 +358,111 @@ function closeDrawer() {
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
 
 function renderSite(r) {
-  const s = r.snapshot;
+  // okres od–do: wskaźniki, odejścia i NN za cały okres; historia i karta — z cotygodniowych przeliczeń
+  const P = r.mode === "period" && r.period ? r.period : null;
+  const ws = r.snapshot;
+  const s = P ? r.pstat : ws;
   const owner = r.owner || {};
   const dw = document.getElementById("drawer");
   const status = s ? s.status : "N";
   const crit = (label, v, st, sub, d) => `
     <div class="${st || "x"}"><div class="l">${label}</div>
       <div class="v">${v == null ? "—" : pct(v, d)}</div><div class="s">${sub}</div></div>`;
+  const span = P ? `${P.from.slice(0, 4) === P.to.slice(0, 4) ? dd(P.from) : ddy(P.from)}–${ddy(P.to)}` : "";
+  const inWin = P ? "w okresie" : "w oknie";
+  const many = r.history.length > 14;
 
   dw.innerHTML = `
     <div class="dw-head">
       ${pill(status)}
       <div><h2>${esc(r.site_key)}</h2>
-        <div class="sub">${esc(owner.region_name || (s && s.region_name) || "bez regionu")} ·
-          ${esc(owner.coordinator_name || (s && s.coordinator_name) || "koordynator nieprzypisany")} ·
-          tydzień do ${ddy(r.week)}${s ? ` · okno ${s.window_days} dni` : ""}</div></div>
+        <div class="sub">${esc(owner.region_name || (ws && ws.region_name) || "bez regionu")} ·
+          ${esc(owner.coordinator_name || (ws && ws.coordinator_name) || "koordynator nieprzypisany")} ·
+          ${P ? `okres ${span} (${P.days} ${P.days === 1 ? "dzień" : "dni"})`
+              : `tydzień do ${ddy(r.week)}${s ? ` · okno ${s.window_days} dni` : ""}`}</div></div>
       <button class="dw-close" onclick="closeDrawer()" title="Zamknij (Esc)">✕</button>
     </div>
     <div class="dw-body">
       ${s ? `
       <div class="crit">
-        ${crit("Rotacja (na 28 dni)", s.rotation, s.st_rot, `${s.departures} odejść przy średnio ${String(s.headcount_avg).replace(".", ",")} osobach`)}
+        ${crit("Rotacja (na 28 dni)", s.rotation, s.st_rot,
+               `${s.departures} odejść przy średnio ${String(s.headcount_avg).replace(".", ",")} osobach${P && P.days !== 28 ? ` w ciągu ${P.days} dni` : ""}`)}
         ${crit(`Dożycie do ${r.thresholds.d1}/${r.thresholds.d2} dni`, s.ret_possible ? s.retention : null, s.st_ret,
                s.ret_possible ? `${s.ret_achieved} z ${s.ret_possible} wag` : "za mało osób przy progach")}
         ${crit("Nieobecności NN" + ((ST.board && ST.board.settings && ST.board.settings.abs_enabled === 1) ? "" : " · informacyjnie"),
                s.abs_base ? s.absence : null, s.st_abs,
                s.abs_base ? `${s.abs_nn} dni NN z ${s.abs_base} dni` : "brak danych o godzinach", 1)}
-      </div>` : `<div class="empty">Brak danych za ten tydzień</div>`}
+      </div>` : `<div class="empty">Brak danych za ${P ? "ten okres" : "ten tydzień"}</div>`}
+      ${P ? `<div style="font-size:12px;color:var(--text2);margin:-4px 0 10px;line-height:1.7">Status za cały okres, te same progi co w tygodniu.
+        ${ws ? `Ostatnie cotygodniowe przeliczenie (tydzień do ${ddy(r.week)}, okno ${ws.window_days} dni): ${pill(ws.status)} ${STATUS_LABEL[ws.status]}${ws.status === "R" && ws.red_weeks ? `, ${ws.red_weeks} tyg. z rzędu` : ""}.` : ""}</div>` : ""}
 
-      <div class="h3">Historia statusu <span class="c">12 tygodni</span></div>
-      <div class="hist">${r.history.map((h) => `
-        <div class="${h.w === r.week ? "cur" : ""}" title="${ddy(h.w)}: ${STATUS_LABEL[h.status]} · rotacja ${pct(h.rotation)} · dożycie ${pct(h.retention)} · ${h.headcount_end} os.">
-          <i class="${h.status}"></i>${dd(h.w)}</div>`).join("")}</div>
+      <div class="h3">Historia statusu <span class="c">${r.history.length} ${r.history.length === 1 ? "tydzień" : "tyg."}${P ? " · wyblakłe — poza okresem" : ""}</span></div>
+      <div class="hist">${r.history.map((h, i) => `
+        <div class="${h.w === r.week ? "cur" : ""}${P && (h.w < P.from || h.w > P.to) ? " out" : ""}" title="${ddy(h.w)}: ${STATUS_LABEL[h.status]} · rotacja ${pct(h.rotation)} · dożycie ${pct(h.retention)} · ${h.headcount_end} os.">
+          <i class="${h.status}"></i>${many && (r.history.length - 1 - i) % 2 ? "&nbsp;" : dd(h.w)}</div>`).join("")}</div>
 
       <div id="cardBox">${renderCardBox(r.card)}</div>
 
-      <div class="h3">Zbliżają się do progu <span class="c">następne 14 dni — tych ludzi trzeba utrzymać</span></div>
+      <div id="careBox"></div>
+
+      <div class="h3">Zbliżają się do progu <span class="c">${P ? `14 dni po ${ddy(P.to)}` : "następne 14 dni"} — tych ludzi trzeba utrzymać</span></div>
       ${r.approaching.length ? `<div class="tblwrap"><table class="rg"><thead><tr><th>Pracownik</th><th>Obiekt</th><th class="num">Start</th><th class="num">Próg</th><th class="num">Data</th><th class="num">Zostało</th></tr></thead><tbody>
         ${r.approaching.map((a) => `<tr><td>${esc(a.full_name)} <span class="muted">${esc(a.login)}</span></td><td class="muted">${esc(a.facility)}</td>
           <td class="num">${ddr(a.bhp)}</td><td class="num">${a.threshold} dni</td><td class="num">${dd(a.date)}</td>
           <td class="num">${a.days_left} d</td></tr>`).join("")}</tbody></table></div>`
         : `<div class="empty">Nikt nie przekracza progu w najbliższych 14 dniach</div>`}
 
-      <div class="h3">Odejścia w oknie <span class="c">${r.departures.length} osób, od najkrótszego stażu</span></div>
+      <div class="h3">Odejścia ${inWin} <span class="c">${r.departures.length} osób, od najkrótszego stażu</span></div>
       ${r.departures.length ? `<div class="tblwrap"><table class="rg"><thead><tr><th>Pracownik</th><th>Obiekt</th><th class="num">Start</th><th class="num">Ostatni dzień</th><th class="num">Staż</th></tr></thead><tbody>
         ${r.departures.map((d) => `<tr><td>${esc(d.full_name)} <span class="muted">${esc(d.login)}</span></td><td class="muted">${esc(d.facility)}</td>
           <td class="num">${ddr(d.bhp)}</td><td class="num">${ddr(d.last_day)}</td>
           <td class="num ${d.tenure <= 30 ? "tag-short" : ""}">${d.tenure} d</td></tr>`).join("")}</tbody></table></div>`
-        : `<div class="empty">Brak odejść w oknie</div>`}
+        : `<div class="empty">Brak odejść ${inWin}</div>`}
 
-      <div class="h3">Nieobecności bez przyczyny (NN) <span class="c">w oknie</span></div>
+      <div class="h3">Nieobecności bez przyczyny (NN) <span class="c">${inWin}</span></div>
       ${r.absences.length ? `<div class="tblwrap"><table class="rg"><thead><tr><th>Pracownik</th><th class="num">Dni NN</th><th>Daty</th></tr></thead><tbody>
         ${r.absences.map((a) => `<tr><td>${esc(a.full_name)} <span class="muted">${esc(a.login)}</span></td>
           <td class="num">${a.nn}</td><td class="muted">${esc(a.days)}</td></tr>`).join("")}</tbody></table></div>`
-        : `<div class="empty">Brak NN w oknie</div>`}
+        : `<div class="empty">Brak NN ${inWin}</div>`}
     </div>`;
+  loadCareBox(r.site_key);
+}
+
+// ── Rozmowy i ankiety po obiekcie (sekcja Rozmowy) ─────────────────────
+async function loadCareBox(siteKey) {
+  const box = document.getElementById("careBox");
+  if (!box) return;
+  let r = null;
+  try {
+    const res = await fetch("/api/care/site?site=" + encodeURIComponent(siteKey), { headers: { "x-session": SESSION } });
+    r = await res.json();
+  } catch (e) { return; }
+  if (!r || !r.ok || document.getElementById("careBox") !== box) return;
+  const t = r.tasks, sv = r.surveys;
+  const PR = { housing: "mieszkanie", money: "pieniądze", schedule: "grafik", team: "zespół", transport: "dojazd", other: "inne" };
+  const pc = (a, b) => (b ? Math.round((a / b) * 100) + "%" : "—");
+  const list = (arr) => arr.map((x) => `${esc(x.label || PR[x.code] || x.code)} (${x.n})`).join(", ");
+  box.innerHTML = `
+    <div class="h3">Rozmowy i ankiety <span class="c">stan na dziś: rozmowy — ostatnie 28 dni, ankiety — 90 dni ·
+      <a href="rozmowy.html" style="color:var(--accent)">otwórz sekcję</a></span></div>
+    <div class="crit">
+      <div class="${t.late ? "A" : "x"}"><div class="l">Rozmowy</div>
+        <div class="v">${t.done28}</div>
+        <div class="s">zamknięte · otwarte ${t.open_now}${t.late ? `, po terminie ${t.late}` : ""}${t.missed ? `, pominięte ${t.missed}` : ""}<br>
+          ✅ ${t.stays} · ⚠️ ${t.problem} · 🚪 ${t.leaving} · 📵 ${t.no_answer}</div></div>
+      <div class="${sv.sent && sv.done / sv.sent < 0.4 ? "A" : "x"}"><div class="l">Ankiety — odpowiedzi</div>
+        <div class="v">${pc(sv.done, sv.sent)}</div>
+        <div class="s">${sv.done} z ${sv.sent}${sv.no_tg ? ` · bez bota ${sv.no_tg}` : ""}</div></div>
+      <div class="${(sv.work5 != null && sv.work5 < 3) || (sv.housing5 != null && sv.housing5 < 3) ? "R" : "x"}"><div class="l">Oceny w ankietach</div>
+        <div class="v" style="font-size:18px">${sv.work5 ?? "—"} <span style="font-size:11px;color:var(--text3)">praca</span>
+          · ${sv.housing5 ?? "—"} <span style="font-size:11px;color:var(--text3)">mieszk.</span></div>
+        <div class="s">${sv.stay_n ? `waha się / odejdzie: ${pc(sv.stay_doubt, sv.stay_n)}` : "brak odpowiedzi"}</div></div>
+    </div>
+    ${r.problems.length || r.top_problems.length || r.exit_reasons.length ? `<div style="font-size:12px; line-height:1.7; margin-bottom:6px">
+      ${r.problems.length ? `<div><span class="muted">Problemy z rozmów:</span> ${list(r.problems)}</div>` : ""}
+      ${r.top_problems.length ? `<div><span class="muted">Problemy z ankiet:</span> ${list(r.top_problems)}</div>` : ""}
+      ${r.exit_reasons.length ? `<div><span class="muted">Powody odejść (ankieta):</span> ${list(r.exit_reasons)}</div>` : ""}
+      <div class="muted" style="font-size:11px">Podpowiedź do karty czerwonego obiektu.</div></div>` : ""}`;
 }
 
 function renderCardBox(c) {
@@ -342,6 +477,7 @@ function renderCardBox(c) {
     ? `<span class="card-tag filled">✓ wypełniona ${esc(c.filled_at_txt)}</span>`
     : c.overdue ? `<span class="card-tag late">po terminie (${esc(c.due_at_txt)})</span>`
     : `<span class="card-tag open">termin: ${esc(c.due_at_txt)}</span>`;
+  if (ST.ro) return renderCardView(c, state);
   const reasonOpts = [`<option value="">— wybierz —</option>`]
     .concat(ST.reasons.map((x) => `<option value="${x.code}" ${x.code === c.reason_code ? "selected" : ""}>${esc(x.label)}</option>`)).join("");
   const ownerId = c.owner_coordinator_id || (ST.board && (ST.board.sites.find((x) => x.site_key === c.site_key) || {}).coordinator_id);
@@ -373,6 +509,37 @@ function renderCardBox(c) {
     </div>`;
 }
 
+// Koordynator obiektu: karta tylko do odczytu, może dopisywać notatki o postępie
+function notesHtml(c) {
+  return `<div class="notes">
+      ${(c.notes || []).map((n) => `<div class="note"><div class="meta">${esc(n.at)} · ${esc(n.by || "")}</div>${esc(n.text)}</div>`).join("")
+        || `<div class="note" style="color:var(--text3)">Brak notatek o postępie</div>`}
+      <div class="note-add"><input type="text" id="cNewNote" placeholder="Notatka o postępie — co zrobiono, z kim rozmawiano…" onkeydown="if(event.key==='Enter')addNote(${c.id})" />
+        <button class="btn btn-ghost btn-sm" onclick="addNote(${c.id})">Dodaj</button></div>
+    </div>`;
+}
+function renderCardView(c, state) {
+  const mine = c.owner_coordinator_id != null && c.owner_coordinator_id === ST.me.me;
+  const reason = (ST.reasons.find((x) => x.code === c.reason_code) || {}).label || c.reason_code || "";
+  const row = (label, v) => `<div class="${label === "Plan działań" || label === "Komentarz do przyczyny" ? "full" : ""}">
+      <label>${label}</label><div class="ro">${v ? esc(v) : `<span class="muted">—</span>`}</div></div>`;
+  return `
+    <div class="h3">Karta czerwonego obiektu <span class="c">otwarta w tygodniu do ${ddy(c.opened_week)}</span></div>
+    <div class="redcard ${c.status === "filled" ? "filled" : ""}${mine ? " mine" : ""}">
+      <div class="top"><b>Co się dzieje i co robimy</b> ${state}
+        ${mine ? `<span class="card-tag mine">👤 jesteś odpowiedzialny</span>` : ""}</div>
+      ${c.status === "filled" ? `<div class="form">
+        ${row("Przyczyna", reason)}
+        ${row("Odpowiedzialny", (c.owner_name || "") + (mine ? " (Ty)" : ""))}
+        ${row("Komentarz do przyczyny", c.reason_note)}
+        ${row("Plan działań", c.action_plan)}
+        ${row("Termin wykonania", c.action_due ? ddy(c.action_due) : "")}
+      </div>` : `<div class="muted" style="font-size:12px;margin:6px 0 10px">Kartę wypełnia koordynator regionalny: przyczyna, plan działań, termin i odpowiedzialny.
+        Możesz już dopisać notatkę — co widzisz na obiekcie i co robisz.</div>`}
+      ${notesHtml(c)}
+    </div>`;
+}
+
 async function saveCard(id) {
   const body = {
     reason_code: document.getElementById("cReason").value,
@@ -400,10 +567,17 @@ async function addNote(id) {
   if (r && r.ok) reloadSite();
 }
 
+// Karta obiektu: tydzień z listy albo cały wybrany okres od–do
+function siteWhen() {
+  return ST.mode === "period"
+    ? "from=" + encodeURIComponent(document.getElementById("perFrom").value) +
+      "&to=" + encodeURIComponent(document.getElementById("perTo").value)
+    : "week=" + encodeURIComponent(document.getElementById("selWeek").value);
+}
+
 async function reloadSite() {
   if (!ST.siteKey) return;
-  const week = document.getElementById("selWeek").value;
-  const r = await api(`/site?key=${encodeURIComponent(ST.siteKey)}&week=${week}`);
+  const r = await api(`/site?key=${encodeURIComponent(ST.siteKey)}&${siteWhen()}`);
   if (r && r.ok) renderSite(r);
 }
 
@@ -416,7 +590,9 @@ async function loadCoords() {
   const r = await api("/coordinators" + qs());
   if (!r) return;
   if (!r.ok) { box.innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
-  document.getElementById("coordsCnt").textContent = `${r.data.length} · tydzień do ${ddy(r.week)}`;
+  document.getElementById("coordsCnt").textContent = r.mode === "period"
+    ? `${r.data.length} · okres ${dd(r.period.from)}–${ddy(r.period.to)} (status za cały okres)`
+    : `${r.data.length} · tydzień do ${ddy(r.week)}`;
   if (!r.data.length) { box.innerHTML = `<div class="empty">Brak danych</div>`; return; }
   box.innerHTML = `
     <table class="rg"><thead><tr><th>Koordynator</th><th>Obiekty</th><th class="num">Ludzie</th>
@@ -461,7 +637,8 @@ async function loadCards() {
         <td><b>${esc(c.site_key)}</b></td><td>${esc(c.region_name || "—")}</td>
         <td class="num">${dd(c.opened_week)}</td><td class="num">${dd(c.due_at.substring(0, 10))}</td>
         <td>${stTag(c)}</td><td>${esc(c.reason || "")}</td>
-        <td style="max-width:280px">${esc(c.action_plan || "")}</td><td>${esc(c.owner_name || "")}</td>
+        <td style="max-width:280px">${esc(c.action_plan || "")}</td>
+        <td>${esc(c.owner_name || "")}${ST.ro && c.owner_coordinator_id != null && c.owner_coordinator_id === ST.me.me ? ` <span class="card-tag mine">(Ty)</span>` : ""}</td>
         <td class="num">${dd(c.action_due)}</td><td class="num">${c.red_weeks || ""}</td></tr>`).join("")}
     </tbody></table>`;
 }
@@ -552,11 +729,28 @@ async function loadSettings() {
         <span class="cnt">${unassigned ? `<span style="color:var(--rag-r)">${unassigned} obiektów z ludźmi bez regionu</span>` : ""}</span>
         <span class="spacer"></span>
         <label style="font-size:11px;color:var(--text2)"><input type="checkbox" id="onlyUnassigned" onchange="renderSitesCfg()" /> tylko bez regionu</label>
+        <label style="font-size:11px;color:var(--text2)"><input type="checkbox" id="onlyEmpty" onchange="renderSitesCfg()" /> tylko bez ludzi</label>
       </div>
       <div id="sitesCfg"></div>
       <div class="hint">Obiekt = grupa z pola <i>group_name</i> (np. IDL Psary = APT + SAS + WELL). Zmiana działa od podanej daty
         i na ostatnim tygodniu tablicy widać ją od razu. Wcześniejsze tygodnie zostają przy starym przypisaniu —
         żeby przypisać na całą historię, ustaw wcześniejszą datę i przelicz 12 tygodni.</div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">📦 Archiwum obiektów <span class="cnt">${(r.archive || []).length ? `${r.archive.length} — z nimi już nie pracujemy` : "puste"}</span></div>
+      ${(r.archive || []).length ? `<table class="rg"><thead><tr><th>Obiekt</th><th class="num">W archiwum od</th><th>Kto</th><th>Powód</th>
+          <th>Było przypisane</th><th class="num">Ludzie wg grafiku</th><th></th></tr></thead><tbody>
+        ${r.archive.map((a) => `<tr><td><b>${esc(a.site_key)}</b></td><td class="num">${ddy(a.archived_at)}</td>
+          <td>${esc(a.archived_by_name || "")}</td><td>${esc(a.note || "")}</td>
+          <td>${esc([a.prev_region, a.prev_coordinator].filter(Boolean).join(" · ") || "—")}</td>
+          <td class="num">${a.headcount ? `<span style="color:var(--rag-r)" title="W grafiku nadal ktoś pracuje — sprawdź daty ostatniego dnia">${a.headcount}</span>` : "0"}</td>
+          <td><button class="btn btn-ghost btn-sm" onclick="unarchiveSite('${encodeURIComponent(a.site_key)}')">Przywróć</button></td></tr>`).join("")}
+        </tbody></table>` : ""}
+      <div class="hint">Obiekt w archiwum znika z: Wyjazdy / przyjazdy (lista, plan naboru, zestawienia, przypomnienia), Region (tablica i historia tygodni,
+        nowe czerwone karty — otwarta karta się zamyka), Tablicy zarządu, Rozmów (ryzyko, rozmowy, ankiety — otwarte rozmowy się anulują)
+        i pakietu startowego dla nowych. Przypisanie do regionu i koordynatora się zamyka. Dane nie są usuwane:
+        „Przywróć” wraca obiekt z poprzednim regionem i koordynatorem. Do archiwum — przycisk 📦 w tabeli obiektów powyżej.</div>
     </div>
 
     <div class="section">
@@ -597,7 +791,8 @@ async function loadSettings() {
 function renderSitesCfg() {
   const r = ST.config;
   const only = document.getElementById("onlyUnassigned") && document.getElementById("onlyUnassigned").checked;
-  const rows = r.sites.filter((s) => !only || !s.region_id);
+  const empty = document.getElementById("onlyEmpty") && document.getElementById("onlyEmpty").checked;
+  const rows = r.sites.filter((s) => (!only || !s.region_id) && (!empty || !s.headcount));
   const coordOpts = (sel) => `<option value="">—</option>` +
     ST.coordinators.map((c) => `<option value="${c.id}" ${c.id === sel ? "selected" : ""}>${esc(c.full_name)}</option>`).join("");
   const regionOpts = (sel) => `<option value="">— bez regionu —</option>` +
@@ -607,13 +802,31 @@ function renderSitesCfg() {
     <table class="rg"><thead><tr><th>Obiekt</th><th class="num">Ludzie</th><th>Region</th><th>Koordynator</th><th>Od</th><th></th></tr></thead><tbody>
     ${rows.map((s, i) => `<tr>
       <td title="${esc(s.facilities || "")}"><b>${esc(s.site_key)}</b></td>
-      <td class="num">${s.headcount}</td>
+      <td class="num">${s.headcount}${!s.headcount && s.last_work ? `<div class="muted" style="font-size:10px" title="Ostatni dzień pracy wg grafiku">ost. ${ddy(s.last_work)}</div>` : ""}</td>
       <td><select id="stR${i}">${regionOpts(s.region_id)}</select></td>
       <td><select id="stC${i}">${coordOpts(s.coordinator_id)}</select></td>
       <td><input type="date" id="stF${i}" value="${today}" title="Obowiązuje od" /></td>
-      <td><button class="btn btn-ghost btn-sm" onclick="saveSite(${i}, '${encodeURIComponent(s.site_key)}')">Zapisz</button>
+      <td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="saveSite(${i}, '${encodeURIComponent(s.site_key)}')">Zapisz</button>
+        <button class="btn btn-ghost btn-sm" title="Do archiwum — już nie pracujemy z tym obiektem" onclick="archiveSite('${encodeURIComponent(s.site_key)}', ${Number(s.headcount) || 0})">📦</button>
         <span class="form-msg" id="stM${i}"></span></td></tr>`).join("")}
     </tbody></table>`;
+}
+
+async function archiveSite(encKey, headcount) {
+  const site = decodeURIComponent(encKey);
+  const note = window.prompt(`Przenieść „${site}” do archiwum?\n\n` +
+    (headcount ? `Uwaga: wg grafiku pracuje tam jeszcze ${headcount} os.\n\n` : "") +
+    "Obiekt zniknie z Wyjazdów, Regionu, Tablicy i Rozmów; przypisanie do regionu i koordynatora się zamknie. " +
+    "Dane zostają — można przywrócić.\n\nPowód (opcjonalnie):", "");
+  if (note === null) return;
+  const r = await api(`/admin/archive`, { method: "POST", body: { site_key: site, note } });
+  if (r && r.ok) loadSettings(); else alertBox(r);
+}
+async function unarchiveSite(encKey) {
+  const site = decodeURIComponent(encKey);
+  if (!window.confirm(`Przywrócić „${site}” z archiwum? Wróci poprzedni region i koordynator.`)) return;
+  const r = await api(`/admin/unarchive`, { method: "POST", body: { site_key: site } });
+  if (r && r.ok) loadSettings(); else alertBox(r);
 }
 
 async function runSnapshot(weeks) {

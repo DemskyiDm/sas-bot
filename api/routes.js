@@ -1221,7 +1221,7 @@ router.post("/remind-missing", requireAuth, async (req, res) => {
 router.get("/tabele/download-all", requireAuth, async (req, res) => {
   try {
     const fs = require("fs");
-    const { month } = req.query;
+    const { month, facility } = req.query;
     const m = month || new Date().toISOString().substring(0, 7);
 
     const allowedFacilities = await getFacilityFilter(req.coordinator);
@@ -1229,20 +1229,31 @@ router.get("/tabele/download-all", requireAuth, async (req, res) => {
     // Збираємо табелі за місяць у зоні координатора
     const params = [m];
     let facFilter = "";
+    let selectedFacilityFilter = "";
     if (allowedFacilities !== null) {
       if (allowedFacilities.length === 0)
         return res.status(404).json({ ok: false, error: "Brak obiektów" });
       params.push(allowedFacilities);
       facFilter = `AND t.facility_id = ANY($${params.length})`;
     }
+    if (facility) {
+      params.push(facility);
 
+      selectedFacilityFilter =
+        `AND f.name = $${params.length}`;
+    }
+
+    console.log("facility =", facility);
+    console.log("typeof =", typeof facility);
     const rows = await db.query(
       `SELECT t.file_path, t.file_number, w.full_name, w.login,
               f.name AS facility_name
        FROM timesheets t
        JOIN workers w ON w.id = t.worker_id
        JOIN facilities f ON f.id = t.facility_id
-       WHERE t.month = $1 ${facFilter}
+       WHERE t.month = $1
+       ${facFilter}
+        ${selectedFacilityFilter}
        ORDER BY f.name, w.full_name, t.file_number`,
       params,
     );

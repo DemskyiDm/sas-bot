@@ -18,6 +18,9 @@ const gaps = require("./gaps");
 
 const ABS_COLORS = { WZ: "wz", DWZ: "dwz", URL: "url", L4: "l4", NN: "nn", UN: "un" };
 
+// Максимум годин за день — однаково для кнопок, ручного вводу і панелі (api/routes.js)
+const MAX_HOURS = 16;
+
 // ── DB helpers ──────────────────────────────────────────────
 
 async function findWorker(login) {
@@ -636,8 +639,8 @@ async function handleUpdate(bot, update) {
       }
 
       const hrs = parseFloat(payload.substring(2).replace(",", "."));
-      if (isNaN(hrs) || hrs <= 0 || hrs > 17) {
-        await answer("0.25-16");
+      if (isNaN(hrs) || hrs <= 0 || hrs > MAX_HOURS) {
+        await answer(`0.25-${MAX_HOURS}`);
         return;
       }
 
@@ -892,11 +895,15 @@ async function handleUpdate(bot, update) {
       else dec = 24;
     } else {
       const n = parseFloat(s.replace(",", "."));
-      if (!isNaN(n) && n >= 0 && n <= 16) dec = n;
+      if (!isNaN(n) && n >= 0) dec = n;
     }
 
     if (dec === null || dec <= 0) {
       await sendMessage(bot, chatId, T(session, "zero_hours"));
+      return;
+    }
+    if (dec > MAX_HOURS) {
+      await sendMessage(bot, chatId, `${T(session, "bad_hours_format")} (max ${MAX_HOURS})`);
       return;
     }
 

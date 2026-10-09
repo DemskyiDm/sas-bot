@@ -609,10 +609,11 @@ async function exportPeople() {
   const deps = r.departures;
   const ws1 = xlsxSheet("Zakończyli pracę (ostatni dzień w okresie)", sub,
     ["Ostatni dzień", "Tydzień od", "Obiekt", "Koordynator", "Region", "Pracownik", "Login", "Status", "Przeniesienie", "Dokąd",
-      "Plan tygodnia", "Wpisano do tabeli", "Dni przed wyjazdem"],
+      "Plan tygodnia", "Wpisano do tabeli", "Dni przed wyjazdem", "Fakt / zaplanowany"],
     deps.map((x) => [xDate(x.date), xDate(x.week), x.site_key, x.coordinator_name || "", x.region_name || "", x.full_name, x.login || "",
-      st(x.status), yes(x.is_transfer), x.to_site || "", planTxt(x), seen(x), x.notice_days == null ? "" : Number(x.notice_days)]),
-    { widths: [11, 11, 24, 20, 12, 28, 11, 13, 11, 22, 18, 18, 10],
+      st(x.status), yes(x.is_transfer), x.to_site || "", planTxt(x), seen(x), x.notice_days == null ? "" : Number(x.notice_days),
+      x.date <= r.today ? "zakończył" : "zaplanowany"]),
+    { widths: [11, 11, 24, 20, 12, 28, 11, 13, 11, 22, 18, 18, 10, 13],
       fill: (i, c) => (c === 10 && deps[i].week_fixed && !deps[i].planned ? XL_RED : c === 12 && deps[i].notice_days != null && deps[i].notice_days <= 1 ? XL_AMBER : null) });
 
   // 2) Rozpoczęli / przyjazdy
@@ -638,7 +639,13 @@ async function exportPeople() {
   const S = {};
   const g = (x) => (S[x.site_key] = S[x.site_key] || { site: x.site_key, co: x.coordinator_name || "", rg: x.region_name || "",
     out: 0, trOut: 0, unpl: 0, newS: 0, trIn: 0, unc: 0, rez: 0, plan: 0, planNo: 0 });
-  deps.forEach((x) => { const s = g(x); if (x.is_transfer) s.trOut++; else s.out++; if (x.week_fixed && !x.planned && x.date <= r.today) s.unpl++; });
+  // jak na stronie: zakończyli = ostatni dzień nie później niż dziś (przyszłe daty są tylko w arkuszu „Zakończyli” jako zaplanowane)
+  deps.forEach((x) => {
+    const s = g(x);
+    if (x.date > r.today) return;
+    if (x.is_transfer) s.trOut++; else s.out++;
+    if (x.week_fixed && !x.planned) s.unpl++;
+  });
   arrs.forEach((x) => {
     const s = g(x);
     if (x.status === "rezygnacja") s.rez++;

@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SAS Logistic — Wyjazdy / przyjazdy</title>
   <link rel="stylesheet" href="css/style.css" />
+  <!-- xlsx-js-style: eksport do Excela (jak w raporty.html) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
   <style>
     /* ── тільки для розділу Wyjazdy / przyjazdy ── */
     .fl-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -153,9 +155,23 @@
             <span class="spacer"></span>
             <label style="font-size:11px;color:var(--text2);font-weight:400"><input type="checkbox" id="showEmpty" onchange="renderWeek()" /> pokaż obiekty bez ruchu</label>
             <input type="text" class="inp" id="weekSearch" placeholder="Szukaj obiektu…" oninput="renderWeek()" style="width:150px" />
+            <button class="btn btn-ghost btn-sm" onclick="exportWeek()" title="Liczby z tabeli (z filtrami i wyszukiwaniem) do Excela">📥 Excel</button>
           </div>
           <div class="tblwrap" id="weekTable"><div class="loading">Ładowanie…</div></div>
           <div class="note" id="weekNote"></div>
+        </div>
+        <div class="section">
+          <div class="section-head" style="flex-wrap:wrap">
+            📥 Eksport z nazwiskami
+            <span class="cnt">kto zakończył, kto rozpoczął, w planie / poza planem, przeniesienia, nie dojechali, bez statusu</span>
+            <span class="spacer"></span>
+            <label>od</label><input type="date" id="expFrom" />
+            <label>do</label><input type="date" id="expTo" />
+            <button class="btn btn-primary btn-sm" onclick="exportPeople()">📥 Excel z nazwiskami</button>
+            <span class="msg" id="expMsg"></span>
+          </div>
+          <div class="note">Plik: podsumowanie po obiektach + listy osób (Zakończyli, Przyjazdy, Plan wyjazdów). Filtry regionu i koordynatora jak wyżej.
+            „Poza planem” — wg planu tygodnia utrwalonego w poniedziałek 0:00. Najwyżej 93 dni naraz.</div>
         </div>
       </div>
 
@@ -185,6 +201,7 @@
             Ilu ludzi trzeba zrekrutować — na 3 tygodnie <span class="cnt" id="ordCnt"></span>
             <span class="spacer"></span>
             <span class="msg" id="ordMsg"></span>
+            <button class="btn btn-ghost btn-sm" onclick="exportOrders()" title="Plan na 3 tygodnie po obiektach do Excela">📥 Excel</button>
             <button class="btn btn-primary btn-sm" onclick="saveOrders()">Zapisz wszystkie</button>
           </div>
           <div class="tblwrap" id="ordTable"><div class="loading">Ładowanie…</div></div>

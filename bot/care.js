@@ -329,7 +329,9 @@ async function loadTask(id) {
   const r = await db.query(
     `SELECT t.*, w.full_name, w.login, w.telegram_chat_id AS worker_chat,
             a.bhp_date, (care.today() - a.bhp_date)::int AS tenure,
-            c.full_name AS coord_name, c.telegram_chat_id AS coord_chat, COALESCE(c.lang::text, 'uk') AS coord_lang
+            c.full_name AS coord_name, COALESCE(c.lang::text, 'uk') AS coord_lang,
+            -- nieaktywny koordynator nic nie dostaje — pilne zadanie idzie wtedy do regionalnego / admina
+            CASE WHEN COALESCE(c.is_active, true) THEN c.telegram_chat_id END AS coord_chat
        FROM care.tasks t
        JOIN public.workers w ON w.id = t.worker_id
        LEFT JOIN care.v_active a ON a.worker_id = t.worker_id
@@ -792,7 +794,8 @@ async function runEscalation(day) {
   const s = await settings();
   const n = s.escalate_bdays ?? 2;
   const r = await db.query(
-    `SELECT t.id, t.region_id, t.coordinator_id, c.full_name AS coord, c.telegram_chat_id AS coord_chat,
+    `SELECT t.id, t.region_id, t.coordinator_id, c.full_name AS coord,
+            CASE WHEN COALESCE(c.is_active, true) THEN c.telegram_chat_id END AS coord_chat, -- nieaktywnemu nie piszemy
             COALESCE(c.lang::text, 'uk') AS coord_lang, w.full_name AS worker, t.created_at
        FROM care.tasks t
        JOIN public.workers w ON w.id = t.worker_id

@@ -863,6 +863,18 @@ router.put("/admin/sites", requireAdminOnly, async (req, res) => {
     const { site_key, region_id, coordinator_id } = req.body || {};
     const validFrom = isDate(req.body && req.body.valid_from) ? req.body.valid_from : localISO(new Date());
     if (!site_key) return res.status(400).json({ ok: false, error: "site_key required" });
+    // data w przyszłości dałaby dostęp nowemu i zabrała staremu od razu — przypisanie robimy w dniu przekazania
+    const fut = await client.query(`SELECT $1::date > (now() AT TIME ZONE 'Europe/Warsaw')::date AS f`, [validFrom]);
+    if (fut.rows[0].f) return res.status(400).json({ ok: false, error: "Data „od” nie może być w przyszłości — zmień przypisanie w dniu przekazania obiektu" });
+    if (coordinator_id) {
+      const c = await client.query(
+        `SELECT COALESCE(c.is_active, true) AS active,
+                EXISTS (SELECT 1 FROM reg.site_owner o WHERE o.site_key = $2 AND o.valid_to IS NULL AND o.coordinator_id = c.id) AS is_main
+           FROM public.coordinators c WHERE c.id = $1`, [coordinator_id, site_key]);
+      if (!c.rows.length) return res.status(400).json({ ok: false, error: "Nie ma takiego koordynatora" });
+      // nieaktywny — tylko jeśli już jest głównym (zmiana samego regionu); nowego nieaktywnego przypisać nie można
+      if (!c.rows[0].active && !c.rows[0].is_main) return res.status(400).json({ ok: false, error: "Koordynator jest nieaktywny — najpierw go aktywuj" });
+    }
     await client.query("BEGIN");
     // нова прив'язка діє з validFrom: пізніші записи прибираємо,
     // запис, що перекриває validFrom, закриваємо днем раніше — без накладок
@@ -884,6 +896,10 @@ router.put("/admin/sites", requireAdminOnly, async (req, res) => {
     await client.query(`UPDATE reg.red_cards SET region_id = $2 WHERE site_key = $1 AND status <> 'closed'`, [
       site_key, region_id || null,
     ]);
+    // новий головний не лишається ще й допоміжним того ж об'єкта
+    if (coordinator_id) {
+      await client.query(`DELETE FROM reg.site_helpers WHERE site_key = $1 AND coordinator_id = $2`, [site_key, coordinator_id]);
+    }
     await client.query("COMMIT");
     res.json({ ok: true });
   } catch (e) {
@@ -960,6 +976,158 @@ router.post("/admin/unarchive", requireAdminOnly, async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   } finally {
     client.release();
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════
+//  Przypisania — jedno miejsce (tylko admin): obiekt → region, główny koordynator (z datą „od”),
+//  pomocniczy (podgląd / edycja); region → regionalni; koordynator → aktywny / nieaktywny.
+//  Dostęp w panelu głównym (public.coordinator_facilities) przelicza się sam: reg.sync_access()
+//  w triggerach (db/migration_przypisania.sql).
+// ══════════════════════════════════════════════════════════════════════
+router.get("/admin/assign", requireAdminOnly, async (req, res) => {
+  try {
+    const [regions, sites, helpers, coords, access, archive] = await Promise.all([
+      db.query(
+        `SELECT r.id, r.name, r.is_active,
+                COALESCE((SELECT json_agg(json_build_object('id', c.id, 'name', c.full_name, 'is_active', COALESCE(c.is_active, true))
+                                          ORDER BY c.full_name)
+                            FROM reg.region_leads rl JOIN public.coordinators c ON c.id = rl.coordinator_id
+                           WHERE rl.region_id = r.id), '[]') AS leads
+           FROM reg.regions r ORDER BY r.is_active DESC, r.name`),
+      db.query(
+        `WITH keys AS (
+           SELECT DISTINCT reg.site_key(group_name, name) AS site_key FROM public.facilities
+            WHERE is_active AND name <> 'test' AND reg.site_key(group_name, name) IS NOT NULL
+           UNION SELECT site_key FROM reg.site_owner WHERE valid_to IS NULL
+           UNION SELECT site_key FROM reg.site_helpers),
+         hc AS (
+           SELECT site_key, COUNT(DISTINCT worker_id) FILTER (WHERE last_work_date IS NULL OR last_work_date > CURRENT_DATE)::int AS n,
+                  CASE WHEN bool_or(last_work_date IS NULL) THEN NULL ELSE to_char(MAX(last_work_date), 'YYYY-MM-DD') END AS last_work
+             FROM reg.v_periods GROUP BY site_key)
+         SELECT k.site_key, COALESCE(hc.n, 0) AS headcount, hc.last_work,
+                so.region_id, so.coordinator_id, to_char(so.valid_from, 'YYYY-MM-DD') AS valid_from,
+                (SELECT string_agg(f.name, ', ' ORDER BY f.name) FROM public.facilities f
+                  WHERE reg.site_key(f.group_name, f.name) = k.site_key) AS facilities
+           FROM keys k
+           LEFT JOIN hc ON hc.site_key = k.site_key
+           LEFT JOIN reg.site_owner so ON so.site_key = k.site_key AND so.valid_to IS NULL
+          WHERE NOT reg.archived(k.site_key)
+          ORDER BY k.site_key`),
+      db.query(`SELECT site_key, coordinator_id, can_edit, review FROM reg.site_helpers ORDER BY site_key`),
+      db.query(
+        `SELECT c.id, c.full_name, c.role, COALESCE(c.is_active, true) AS is_active, (c.telegram_chat_id IS NOT NULL) AS has_tg,
+                ca.username, COALESCE(ca.is_admin, false) AS is_admin,
+                to_char(ca.last_login AT TIME ZONE 'Europe/Warsaw', 'YYYY-MM-DD') AS last_login
+           FROM public.coordinators c
+           LEFT JOIN public.coordinator_auth ca ON ca.coordinator_id = c.id
+          ORDER BY COALESCE(c.is_active, true) DESC, c.full_name`),
+      db.query(
+        `SELECT coordinator_id, COUNT(*)::int AS n, COUNT(*) FILTER (WHERE is_primary)::int AS edit
+           FROM public.coordinator_facilities GROUP BY coordinator_id`),
+      db.query(
+        `SELECT a.site_key, to_char(a.archived_at AT TIME ZONE 'Europe/Warsaw', 'YYYY-MM-DD') AS archived_at, a.note,
+                c.full_name AS archived_by_name, rg.name AS prev_region, pc.full_name AS prev_coordinator,
+                (SELECT COUNT(DISTINCT p.worker_id)::int FROM reg.v_periods p
+                  WHERE p.site_key = a.site_key AND (p.last_work_date IS NULL OR p.last_work_date > CURRENT_DATE)) AS headcount
+           FROM reg.site_archive a
+           LEFT JOIN public.coordinators c  ON c.id = a.archived_by
+           LEFT JOIN public.coordinators pc ON pc.id = a.prev_coordinator_id
+           LEFT JOIN reg.regions rg         ON rg.id = a.prev_region_id
+          ORDER BY a.site_key`),
+    ]);
+    const acc = Object.fromEntries(access.rows.map((x) => [x.coordinator_id, x]));
+    const bySite = {};
+    helpers.rows.forEach((h) => { (bySite[h.site_key] = bySite[h.site_key] || []).push(h); });
+    const siteRows = sites.rows.map((s) => ({ ...s, helpers: bySite[s.site_key] || [] }));
+    const coordRows = coords.rows.map((c) => ({
+      ...c,
+      main_sites: siteRows.filter((s) => s.coordinator_id === c.id).map((s) => s.site_key),
+      helper_sites: helpers.rows.filter((h) => h.coordinator_id === c.id).map((h) => ({ site_key: h.site_key, can_edit: h.can_edit, review: h.review })),
+      lead_regions: regions.rows.filter((r) => (r.leads || []).some((l) => l.id === c.id)).map((r) => r.name),
+      access_n: (acc[c.id] || {}).n || 0, edit_n: (acc[c.id] || {}).edit || 0,
+    }));
+    res.json({
+      ok: true, me: req.coordinator.coordinator_id, regions: regions.rows, sites: siteRows, coordinators: coordRows,
+      // tylko obiekty z tabeli (bez archiwum) — żeby liczba zgadzała się z filtrem „do sprawdzenia”
+      archive: archive.rows, review_n: siteRows.reduce((n, s) => n + s.helpers.filter((h) => h.review).length, 0),
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Pomocniczy: dodać / zmienić podgląd ↔ edycja (zdejmuje „do sprawdzenia”)
+router.put("/admin/helpers", requireAdminOnly, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const site = String(b.site_key || "").trim();
+    const cid = parseInt(b.coordinator_id, 10);
+    if (!site || !cid) return res.status(400).json({ ok: false, error: "Wybierz obiekt i koordynatora" });
+    if (typeof b.can_edit !== "boolean") return res.status(400).json({ ok: false, error: "can_edit: true | false" });
+    const c = await db.query(
+      `SELECT COALESCE(c.is_active, true) AS active,
+              EXISTS (SELECT 1 FROM reg.site_helpers h WHERE h.site_key = $2 AND h.coordinator_id = c.id) AS is_helper
+         FROM public.coordinators c WHERE c.id = $1`, [cid, site]);
+    if (!c.rows.length) return res.status(400).json({ ok: false, error: "Nie ma takiego koordynatora" });
+    // nieaktywnego nie dodajemy, ale już przypisanemu można zmienić podgląd ↔ edycja
+    if (!c.rows[0].active && !c.rows[0].is_helper) return res.status(400).json({ ok: false, error: "Koordynator jest nieaktywny — najpierw go aktywuj" });
+    const main = await db.query(`SELECT 1 FROM reg.site_owner WHERE site_key = $1 AND valid_to IS NULL AND coordinator_id = $2`, [site, cid]);
+    if (main.rows.length) return res.status(400).json({ ok: false, error: "To jest główny koordynator tego obiektu" });
+    await db.query(
+      `INSERT INTO reg.site_helpers (site_key, coordinator_id, can_edit, review, created_by) VALUES ($1, $2, $3, false, $4)
+       ON CONFLICT (site_key, coordinator_id) DO UPDATE SET can_edit = EXCLUDED.can_edit, review = false`,
+      [site, cid, b.can_edit, req.coordinator.coordinator_id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+router.delete("/admin/helpers", requireAdminOnly, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const r = await db.query(`DELETE FROM reg.site_helpers WHERE site_key = $1 AND coordinator_id = $2`,
+      [String(b.site_key || "").trim(), parseInt(b.coordinator_id, 10) || 0]);
+    res.json({ ok: true, deleted: r.rowCount });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+// Przeniesione z panelu admina („do sprawdzenia”) — wszystkie naraz: mode = view (tylko podgląd) | edit (zostaw edycję)
+router.post("/admin/helpers/review", requireAdminOnly, async (req, res) => {
+  try {
+    const mode = req.body && req.body.mode === "view" ? "view" : req.body && req.body.mode === "edit" ? "edit" : null;
+    if (!mode) return res.status(400).json({ ok: false, error: "mode: view | edit" });
+    const r = await db.query(
+      `UPDATE reg.site_helpers SET review = false, can_edit = CASE WHEN $1 = 'view' THEN false ELSE can_edit END WHERE review`, [mode]);
+    res.json({ ok: true, n: r.rowCount });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Aktywny / nieaktywny. Nieaktywny: nie zaloguje się, nie ma dostępu do obiektów, nie dostaje wiadomości.
+// Przypisania zostają (wracają po aktywacji); obiekty, gdzie był głównym, trzeba przypisać innemu.
+router.post("/admin/coordinators/:id/active", requireAdminOnly, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const active = req.body && req.body.active;
+    if (!id) return res.status(400).json({ ok: false, error: "id" });
+    if (typeof active !== "boolean") return res.status(400).json({ ok: false, error: "active: true | false" });
+    if (!active && id === req.coordinator.coordinator_id) return res.status(400).json({ ok: false, error: "Nie możesz dezaktywować samego siebie" });
+    const r = await db.query(`UPDATE public.coordinators SET is_active = $2 WHERE id = $1 RETURNING full_name`, [id, active]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: "Nie ma takiego koordynatora" });
+    let sessionsClosed = 0;
+    if (!active) {
+      const { sessions } = require("./admin");
+      for (const [token, s] of Object.entries(sessions)) {
+        if (s && Number(s.coordinator_id) === id) { delete sessions[token]; sessionsClosed++; }
+      }
+    }
+    const main = await db.query(`SELECT site_key FROM reg.site_owner WHERE valid_to IS NULL AND coordinator_id = $1 ORDER BY 1`, [id]);
+    res.json({ ok: true, full_name: r.rows[0].full_name, main_sites: main.rows.map((x) => x.site_key), sessions_closed: sessionsClosed });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
@@ -1200,8 +1368,27 @@ function schedule(bot) {
     } catch (e) {
       console.error("[regional] schedule", e.message);
     }
-    if (done.size > 50) done.clear();
+    // co godzinę (:17) — kontrolne przeliczenie dostępu z Przypisań, gdyby któryś trigger nie zadziałał
+    if (now.getMinutes() === 17) {
+      const k2 = `${localISO(now)}_${now.getHours()}_sync`;
+      if (!done.has(k2)) {
+        done.add(k2);
+        syncAccess().catch((e) => console.error("[regional] sync_access", e.message));
+      }
+    }
+    // czyścimy tylko wczorajsze klucze — żeby zadanie z tej minuty nie poszło drugi raz
+    if (done.size > 50) for (const k of [...done]) if (!k.startsWith(localISO(now))) done.delete(k);
   }, 30 * 1000);
 }
 
-module.exports = { router, schedule, setBot, takeSnapshot, sendCardReminders, notifyNewRed };
+// Przelicza public.coordinator_facilities z Przypisań (db/migration_przypisania.sql); bez migracji — nic nie robi
+async function syncAccess() {
+  const ok = await db.query(`SELECT to_regprocedure('reg.sync_access()') IS NOT NULL AS ok`);
+  if (!ok.rows[0].ok) return 0;
+  const r = await db.query(`SELECT reg.sync_access() AS n`);
+  const n = r.rows[0].n;
+  if (n) console.log(`[regional] sync_access: poprawiono ${n} wierszy dostępu`);
+  return n;
+}
+
+module.exports = { router, schedule, setBot, takeSnapshot, sendCardReminders, notifyNewRed, syncAccess };

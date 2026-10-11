@@ -302,8 +302,18 @@ app.get("/api/facility-settings-all", requireAuth, async (req, res) => {
   }
 });
 
-app.patch("/api/facility-settings/:id", async (req, res) => {
+app.patch("/api/facility-settings/:id", requireAuth, async (req, res) => {
   const { field, value } = req.body;
+
+  // Admin — każdy zakład; koordynator — tylko z prawem edycji (główny / pomocniczy z edycją,
+  // Region → Przypisania). Pomocniczy „tylko podgląd” i regionalny widzą ustawienia, ale ich nie zmieniają.
+  if (!req.coordinator.is_admin) {
+    const can = await db.query(
+      `SELECT 1 FROM coordinator_facilities WHERE coordinator_id = $1 AND facility_id = $2 AND is_primary`,
+      [req.coordinator.coordinator_id, parseInt(req.params.id, 10) || 0],
+    );
+    if (!can.rows.length) return res.status(403).json({ error: "Tylko podgląd — brak prawa edycji na tym zakładzie" });
+  }
 
   const allowed = [
     "enable_advances",

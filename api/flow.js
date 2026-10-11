@@ -875,34 +875,37 @@ const txOf = (l) => ({ ...TX[langOf(l)], ...TXD[langOf(l)] });
 // Підписи картинок-таблиць (без HTML і емодзі: шрифт картинки їх не має)
 const IMGTX = {
   uk: {
-    site: "Обʼєкт", coord: "Координатор", out: "Закінчили", in: "Почали", inTr: ["в т.ч.", "переведенням"], rez: ["Не", "доїхали"],
+    site: "Обʼєкт", coord: "Координатор", out: "Закінчили", in: "Почали", inTr: ["в т.ч.", "переведенням"], rez: ["Не", "доїхали"], unc: ["Без", "статусу"],
     rec: "Набір / план", total: "Разом", gToday: "Сьогодні", gWtd: "Тиждень на сьогодні", gSince: "З понеділка", gPlan: "План тижня", gFull: "За тиждень",
     dayTitle: (d) => `Виїзди і приїзди · ${d}`, daySub: "за день", weekTitle: (a, b) => `Тиждень ${a}${a === b ? "" : " – " + b}`,
     wtdSub: "з понеділка по сьогодні", prevSub: "минулий тиждень", prevEmpty: "За тиждень виїздів і приїздів не було",
     lag: (p) => `набір відстає від темпу: на сьогодні треба ${p}% плану тижня`, lagFull: "набір нижче плану тижня",
-    note: "«—» план не введено · «Закінчили» і «Почали» — разом із переведеннями",
+    note: ["«—» план не введено · «Закінчили» і «Почали» — разом із переведеннями",
+      "«Без статусу» — перший день минув, а статус не підтверджено (у «Почали» не входять)"],
     oTitle: "План набору · 3 тижні", oSub: (d) => `стан на ${d}`, oWeeks: "Тижні з понеділка", oStatus: "Стан",
     oOk: "підтверджено", oUnc: "не підтверджено", oMiss: "не введено",
     oLegRed: "план не введено", oLegAmber: "не підтверджено після суботи",
   },
   ru: {
-    site: "Объект", coord: "Координатор", out: "Закончили", in: "Начали", inTr: ["в т.ч.", "переводом"], rez: ["Не", "доехали"],
+    site: "Объект", coord: "Координатор", out: "Закончили", in: "Начали", inTr: ["в т.ч.", "переводом"], rez: ["Не", "доехали"], unc: ["Нет", "статуса"],
     rec: "Набор / план", total: "Итого", gToday: "Сегодня", gWtd: "Неделя на сегодня", gSince: "С понедельника", gPlan: "План недели", gFull: "За неделю",
     dayTitle: (d) => `Выезды и приезды · ${d}`, daySub: "за день", weekTitle: (a, b) => `Неделя ${a}${a === b ? "" : " – " + b}`,
     wtdSub: "с понедельника по сегодня", prevSub: "прошлая неделя", prevEmpty: "За неделю выездов и приездов не было",
     lag: (p) => `набор отстаёт от темпа: на сегодня нужно ${p}% плана недели`, lagFull: "набор ниже плана недели",
-    note: "«—» план не введён · «Закончили» и «Начали» — вместе с переводами",
+    note: ["«—» план не введён · «Закончили» и «Начали» — вместе с переводами",
+      "«Нет статуса» — первый день прошёл, а статус не подтверждён (в «Начали» не входят)"],
     oTitle: "План набора · 3 недели", oSub: (d) => `на ${d}`, oWeeks: "Недели с понедельника", oStatus: "Статус",
     oOk: "подтверждён", oUnc: "не подтверждён", oMiss: "не введён",
     oLegRed: "план не введён", oLegAmber: "не подтверждён после субботы",
   },
   pl: {
-    site: "Obiekt", coord: "Koordynator", out: "Zakończyli", in: "Rozpoczęli", inTr: ["w tym z", "przeniesienia"], rez: ["Nie", "dojechali"],
+    site: "Obiekt", coord: "Koordynator", out: "Zakończyli", in: "Rozpoczęli", inTr: ["w tym z", "przeniesienia"], rez: ["Nie", "dojechali"], unc: ["Bez", "statusu"],
     rec: "Nabór / plan", total: "Razem", gToday: "Dziś", gWtd: "Tydzień do dziś", gSince: "Od poniedziałku", gPlan: "Plan tygodnia", gFull: "Za tydzień",
     dayTitle: (d) => `Wyjazdy i przyjazdy · ${d}`, daySub: "dzień", weekTitle: (a, b) => `Tydzień ${a}${a === b ? "" : " – " + b}`,
     wtdSub: "od poniedziałku do dziś", prevSub: "poprzedni tydzień", prevEmpty: "W tygodniu nie było wyjazdów ani przyjazdów",
     lag: (p) => `nabór poniżej tempa: na dziś potrzeba ${p}% planu tygodnia`, lagFull: "nabór poniżej planu tygodnia",
-    note: "«—» brak planu · „Zakończyli” i „Rozpoczęli” — razem z przeniesieniami",
+    note: ["«—» brak planu · „Zakończyli” i „Rozpoczęli” — razem z przeniesieniami",
+      "„Bez statusu” — pierwszy dzień minął, status niepotwierdzony (nie wchodzą do „Rozpoczęli”)"],
     oTitle: "Plan naboru · 3 tygodnie", oSub: (d) => `stan na ${d}`, oWeeks: "Tygodnie od poniedziałku", oStatus: "Stan",
     oOk: "potwierdzone", oUnc: "do potwierdzenia", oMiss: "do wpisania",
     oLegRed: "brak planu", oLegAmber: "niepotwierdzone po sobocie",
@@ -1255,13 +1258,13 @@ function scopeText(t, ts) {
 }
 const stamp = (day) => `KoorPanel · ${dd(day)} ${new Date().toLocaleTimeString("pl-PL", { timeZone: "Europe/Warsaw", hour: "2-digit", minute: "2-digit" })}`;
 
-// Колонки «Обʼєкт | Координатор | Закінчили | Почали | в т.ч. переведенням | Не доїхали | Набір / план | %»
+// Колонки «Обʼєкт | Координатор | Закінчили | Почали | Без статусу | в т.ч. переведенням | Не доїхали | Набір / план | %»
 function moveCols(it, own, groupLabels) {
   const cols = [{ label: it.site, kind: "site", align: "left" }];
   if (!own) cols.push({ label: it.coord, kind: "muted", align: "left" });
-  cols.push({ label: it.out, kind: "num", sep: true }, { label: it.in, kind: "num" }, { label: it.inTr, kind: "num" },
-    { label: it.rez, kind: "num" }, { label: it.rec, kind: "text", sep: true }, { label: "%", kind: "pct" });
-  return { cols, lead: own ? 1 : 2, groups: [{ label: groupLabels[0], span: 4 }, { label: groupLabels[1], span: 2 }] };
+  cols.push({ label: it.out, kind: "num", sep: true }, { label: it.in, kind: "num" }, { label: it.unc, kind: "num" },
+    { label: it.inTr, kind: "num" }, { label: it.rez, kind: "num" }, { label: it.rec, kind: "text", sep: true }, { label: "%", kind: "pct" });
+  return { cols, lead: own ? 1 : 2, groups: [{ label: groupLabels[0], span: 5 }, { label: groupLabels[1], span: 2 }] };
 }
 // Набір / план, %, чи відстає від темпу
 function recCells(f, p, pace) {
@@ -1276,7 +1279,7 @@ function moveRows(items, own, pace) {
     const [rec, pct, lag] = recCells(x.f, x.p, pace);
     const cells = [x.site];
     if (!own) cells.push(x.coord || "—");
-    cells.push(x.out, x.in, x.inTr, x.rez, rec, pct);
+    cells.push(x.out, x.in, x.unc, x.inTr, x.rez, rec, pct);
     return { cells, tone: lag ? "red" : null };
   });
 }
@@ -1284,14 +1287,14 @@ function moveTotal(it, own, x, pace) {
   const [rec, pct, lag] = recCells(x.f, x.p, pace);
   const cells = [it.total];
   if (!own) cells.push("");
-  cells.push(x.out, x.in, x.inTr, x.rez, rec, lag && pct ? { v: pct, tone: "red" } : pct);
+  cells.push(x.out, x.in, x.unc, x.inTr, x.rez, rec, lag && pct ? { v: pct, tone: "red" } : pct);
   return { cells };
 }
 const nz = (v) => Number(v) || 0;
 // Підсумок тижня по обʼєктах у межах отримувача — як у текстовому зведенні (rec2)
 function weekTotalItem(rows) {
   const s = totals(rows);
-  return { out: nz(s.dep_fact), in: nz(s.arr_fact) + nz(s.tr_fact), inTr: nz(s.tr_fact), rez: nz(s.arr_rez),
+  return { out: nz(s.dep_fact), in: nz(s.arr_fact) + nz(s.tr_fact), unc: nz(s.arr_unconf), inTr: nz(s.tr_fact), rez: nz(s.arr_rez),
     f: nz(s.arr_fact) + nz(s.tr_fact), p: s.sites_with_order ? nz(s.order_qty) : null };
 }
 
@@ -1301,12 +1304,13 @@ function dayTableSpec(data, ts, target) {
   const keys = new Set(ts.keys), own = ts.label === "own";
   const wk = Object.fromEntries(data.weekRows.map((x) => [x.site_key, x]));
   const g = {};
-  const get = (k) => (g[k] = g[k] || { site: k, coord: coordName(k), out: 0, in: 0, inTr: 0, rez: 0 });
+  const get = (k) => (g[k] = g[k] || { site: k, coord: coordName(k), out: 0, in: 0, unc: 0, inTr: 0, rez: 0 });
   bySite(data.deps, keys).forEach((x) => { get(x.site_key).out++; });
   bySite(data.arrs, keys).forEach((x) => {
     if (x.status === "rezygnacja") get(x.site_key).rez++;
     else if (x.kind === "transfer") { get(x.site_key).in++; get(x.site_key).inTr++; }
-    else if (x.status !== "unknown") get(x.site_key).in++;
+    else if (x.status === "unknown") get(x.site_key).unc++;      // новий без статусу — як «Без статусу» в тексті
+    else get(x.site_key).in++;
   });
   const items = Object.values(g).map((x) => {
     const w = wk[x.site] || {};
@@ -1320,7 +1324,8 @@ function dayTableSpec(data, ts, target) {
     title: it.dayTitle(`${t.days[dow]} ${dd(data.day)}`), sub: `${scopeText(t, ts)} · ${it.daySub}`,
     ...moveCols(it, own, [it.gToday, it.gWtd]),
     rows: moveRows(items, own, data.pace),
-    total: moveTotal(it, own, { out: sum("out"), in: sum("in"), inTr: sum("inTr"), rez: sum("rez"), f: wt.f, p: wt.p }, data.pace),
+    total: moveTotal(it, own, { out: sum("out"), in: sum("in"), unc: sum("unc"), inTr: sum("inTr"), rez: sum("rez"), f: wt.f, p: wt.p }, data.pace),
+    totalTop: true,
     legend: [{ tone: "red", text: it.lag(data.pace) }], note: it.note, footRight: stamp(data.day),
   };
 }
@@ -1329,17 +1334,18 @@ function weekTableSpec(weekRows, ts, target, o) {
   const it = IMGTX[langOf(target.lang)];
   const keys = new Set(ts.keys), own = ts.label === "own";
   const wr = weekRows.filter((x) => keys.has(x.site_key));
-  // тільки обʼєкти, де був рух (закінчили, почали, не доїхали) — рядків із самими нулями немає;
-  // «Разом» — по всіх обʼєктах отримувача (план теж увесь)
+  // тільки обʼєкти, де був рух (закінчили, почали, без статусу, не доїхали) — рядків із самими нулями немає;
+  // «Разом» — по всіх обʼєктах отримувача (план теж увесь), рядком угорі
   const items = wr
-    .filter((x) => nz(x.dep_fact) + nz(x.arr_fact) + nz(x.tr_fact) + nz(x.arr_rez) > 0)
+    .filter((x) => nz(x.dep_fact) + nz(x.arr_fact) + nz(x.tr_fact) + nz(x.arr_rez) + nz(x.arr_unconf) > 0)
     .map((x) => ({
-      site: x.site_key, coord: coordName(x.site_key), out: nz(x.dep_fact), in: nz(x.arr_fact) + nz(x.tr_fact), inTr: nz(x.tr_fact),
+      site: x.site_key, coord: coordName(x.site_key), out: nz(x.dep_fact), in: nz(x.arr_fact) + nz(x.tr_fact),
+      unc: nz(x.arr_unconf), inTr: nz(x.tr_fact),
       rez: nz(x.arr_rez), f: nz(x.arr_fact) + nz(x.tr_fact), p: x.order_qty == null ? null : Number(x.order_qty),
     }));
   return {
     title: o.title, sub: o.sub, ...moveCols(it, own, o.groups),
-    rows: moveRows(items, own, o.pace), total: moveTotal(it, own, weekTotalItem(wr), o.pace),
+    rows: moveRows(items, own, o.pace), total: moveTotal(it, own, weekTotalItem(wr), o.pace), totalTop: true,
     empty: o.empty, legend: [{ tone: "red", text: o.legend }], note: it.note, footRight: stamp(o.day),
   };
 }

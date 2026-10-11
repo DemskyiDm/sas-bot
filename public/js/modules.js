@@ -137,7 +137,7 @@ async function batchAdvances(action) {
     selectedAdvances.clear();
     loadAdvances();
   } else {
-    showToast("⚠️ Błąd");
+    showToast("⚠️ " + ((res && res.error) || "Błąd"));
   }
 }
 
@@ -169,7 +169,7 @@ async function updateAdvance(id, status) {
     );
     loadAdvances();
   } else {
-    showToast("⚠️ Błąd");
+    showToast("⚠️ " + ((res && res.error) || "Błąd"));
   }
 }
 
@@ -229,7 +229,7 @@ async function batchDayoff(action) {
     selectedDayoff.clear();
     loadDayoffPage();
   } else {
-    showToast("⚠️ Błąd");
+    showToast("⚠️ " + ((res && res.error) || "Błąd"));
   }
 }
 
@@ -623,11 +623,17 @@ async function loadSettingsTable() {
 }
 
 async function updateField(facilityId, field, value) {
-  await fetch(`/api/facility-settings/${facilityId}`, {
+  const r = await fetch(`/api/facility-settings/${facilityId}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-session": localStorage.getItem("sas_session") || "" },
     body: JSON.stringify({ field, value }),
   });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    alert(d.error || "Nie zapisano");
+    loadSettingsTable();
+    return;
+  }
   showToast("✔ Zapisano");
 }
 

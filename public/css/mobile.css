@@ -1,5 +1,5 @@
-/* Мобільна версія: тільки плитки показників — 2 в ряд на телефоні.
-   Підключається ПІСЛЯ style.css. На екранах ширше 768px нічого не змінює. */
+/* Мобільна версія: плитки показників — 2 в ряд на телефоні; прокрутка головної панелі.
+   Підключається ПІСЛЯ style.css. На екранах ширше 768px (і вищих за 500px) нічого не змінює. */
 @media (max-width: 768px) {
   .stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px !important; margin-bottom: 12px !important; }
   .stat-card { padding: 10px 12px !important; min-width: 0; }
@@ -9,4 +9,37 @@
 }
 @media (max-width: 380px) {
   .stat-value { font-size: 20px !important; }
+}
+
+/* Головна панель (index.html) на телефоні: прокручується ВСЯ сторінка — плитки й фільтри їдуть угору,
+   як було до «таблиці годин до низу вікна» (та зміна лишається на компʼютері).
+   Таблиця годин — своє вікно майже на весь екран: рядок дат і перша колонка прилипають,
+   дійшли до краю таблиці — далі прокручується сторінка. */
+@media (max-width: 768px), (max-height: 500px) {
+  body:has(#pageHours) { height: auto; min-height: 100vh; overflow: visible; display: block; }
+  body:has(#pageHours) .main { min-height: 0; display: block; }
+  body:has(#pageHours) .content { overflow: visible; display: block; }
+  body:has(#pageHours) #pageHours { display: block; }
+  body:has(#pageHours) #pageHours .card:has(.table-wrap) { display: block; overflow: visible; margin-bottom: 16px; }
+  body:has(#pageHours) #pageHours .card:has(.table-wrap) .table-wrap {
+    max-height: calc(100vh - 70px);
+    max-height: calc(100dvh - 70px);
+    overscroll-behavior-y: auto;
+  }
+  /* шапка картки годин (група/обʼєкт, місяць, легенда, кнопки) переноситься в кілька рядків,
+     а не виїжджає за правий край — сторінка не «гуляє» вбік */
+  body:has(#pageHours) .main { overflow-x: clip; }
+  body:has(#pageHours) #pageHours .card > div:not(.table-wrap) { flex-wrap: wrap; row-gap: 6px; }
+  body:has(#pageHours) #pageHours .card > div:not(.table-wrap) > div { flex-wrap: wrap; row-gap: 6px; white-space: normal !important; }
+  body:has(#pageHours) #pageHours .facility-tabs { flex-wrap: wrap; white-space: normal; }
+  /* «Grupa» і «Obiekt» — завжди в одному рядку на всю ширину, списки вміщаються в екран:
+     «Grupa» відкривається від лівого краю, «Obiekt» — від правого */
+  body:has(#pageHours) #facilityTabs { flex: 1 1 100% !important; min-width: 0; }
+  body:has(#pageHours) #groupDropWrap,
+  body:has(#pageHours) #facDropWrap { flex: 1 1 0; min-width: 0; }
+  body:has(#pageHours) #groupDropWrap > button,
+  body:has(#pageHours) #facDropWrap > button { width: 100%; overflow: hidden; }
+  body:has(#pageHours) #groupDropMenu,
+  body:has(#pageHours) #facDropMenu { min-width: 0 !important; width: min(260px, calc(100vw - 40px)); }
+  body:has(#pageHours) #facDropMenu { left: auto !important; right: 0; }
 }

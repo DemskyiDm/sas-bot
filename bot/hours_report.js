@@ -7,7 +7,8 @@
 //    2) пропуски з 1-го числа місяця ДО ВЧОРА — сьогоднішній день не рахується, він ще триває.
 //       1-го числа — увесь попередній місяць.
 //  Кому: активні координатори з Telegram, крім вимкнених у панелі.
-//    Охоплення за замовчуванням: роль head — уся фірма, інші — свої обʼєкти (coordinator_facilities).
+//    Охоплення за замовчуванням: роль head — уся фірма, інші — свої обʼєкти (coordinator_facilities з правом
+//    редагування: головний або допоміжний з редагуванням — Region → Przypisania).
 //    У панелі можна змінити: свої обʼєкти / регіон (Region → регіональний) / уся фірма.
 //  Налаштування — схема hrep (db/migration_hours_report.sql), сторінка raport-godzin.html.
 //
@@ -58,7 +59,7 @@ async function coordinators() {
   const [r, leads] = await Promise.all([
     db.query(
       `SELECT c.id, c.full_name, c.role, c.telegram_chat_id::text AS chat,
-              (SELECT count(*) FROM coordinator_facilities cf WHERE cf.coordinator_id = c.id)::int AS own_n,
+              (SELECT count(*) FROM coordinator_facilities cf WHERE cf.coordinator_id = c.id AND cf.is_primary)::int AS own_n,
               hr.enabled AS r_enabled, hr.scope AS r_scope
          FROM coordinators c
          LEFT JOIN hrep.recipients hr ON hr.coordinator_id = c.id
@@ -75,7 +76,8 @@ async function coordinators() {
 // Обʼєкти (facility_id) для охоплення; null = уся фірма
 async function facilitiesFor(c, scope) {
   if (scope === "all") return null;
-  const own = await db.query(`SELECT facility_id FROM coordinator_facilities WHERE coordinator_id = $1`, [c.id]);
+  // свої = з правом редагування (головний / допоміжний з редагуванням); перегляд регіону сюди не входить
+  const own = await db.query(`SELECT facility_id FROM coordinator_facilities WHERE coordinator_id = $1 AND is_primary`, [c.id]);
   const ids = new Set(own.rows.map((x) => x.facility_id).filter((x) => x != null));
   if (scope === "region") {
     try {

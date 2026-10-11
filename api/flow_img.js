@@ -72,7 +72,8 @@ function cellStyle(col, cell, rowTone, isTotal) {
 //         lead: скільки перших колонок без групи, cols: [{ label: "…" | ["рядок 1", "рядок 2"],
 //         kind: "site" | "muted" | "num" | "pct" | "text" | "status", align: "left" | "center", sep }],
 //         rows: [{ cells: [...], tone: null | "red" | "amber" }], total: { cells } | null,
-//         legend: [{ tone: "red" | "amber", text }], note, footRight, maxRows, scale }
+//         totalTop: true — «Разом» одразу під шапкою на кожній картинці (інакше — внизу останньої),
+//         legend: [{ tone: "red" | "amber", text }], note: "рядок" | ["рядок", …], footRight, maxRows, scale }
 function render(spec) {
   const L = lib();
   const maxRows = spec.maxRows || 30;
@@ -104,7 +105,8 @@ function render(spec) {
   }
   let tableW = widths.reduce((a, b) => a + b, 0);
   const legendW = (spec.legend || []).reduce((a, l) => a + 22 + width(l.text, F.foot, 400), 0) + Math.max(0, (spec.legend || []).length - 1) * 14;
-  const noteW = spec.note ? width(spec.note, F.foot, 400) : 0;
+  const notes = [].concat(spec.note || []).filter(Boolean);
+  const noteW = notes.length ? Math.max(...notes.map((n) => width(n, F.foot, 400))) : 0;
   const footRightW = spec.footRight ? width(spec.footRight, F.foot, 400) : 0;
   const titleW = width(spec.title + (pages.length > 1 ? " (9/9)" : ""), F.title, 700);
   const subW = spec.sub ? width(spec.sub, F.sub, 400) : 0;
@@ -149,9 +151,11 @@ function render(spec) {
     });
     y += headH;
     S.push(hline(x0, x0 + tableW, y, C.ruleStrong));
+    const top = !!(spec.total && spec.totalTop);
     // рядки
     const drawRow = (r, isTotal) => {
-      if (isTotal) { S.push(rect(x0, y, tableW, ROW, C.totalBg)); S.push(hline(x0, x0 + tableW, y, C.ruleStrong, 2)); }
+      if (isTotal && top) S.push(rect(x0, y, tableW, ROW, C.totalBg));
+      else if (isTotal) { S.push(rect(x0, y, tableW, ROW, C.totalBg)); S.push(hline(x0, x0 + tableW, y, C.ruleStrong, 2)); }
       else if (r.tone === "red") { S.push(rect(x0, y, tableW, ROW, C.redBg)); S.push(rect(x0, y, 4, ROW, C.red)); }
       else if (r.tone === "amber") { S.push(rect(x0, y, tableW, ROW, C.amberBg)); S.push(rect(x0, y, 4, ROW, C.amber)); }
       cols.forEach((c, i) => {
@@ -162,15 +166,17 @@ function render(spec) {
           { ...st, anchor: left ? "start" : "middle" }));
       });
       y += ROW;
-      if (!isTotal) S.push(hline(x0, x0 + tableW, y, C.line));
+      if (isTotal && top) S.push(hline(x0, x0 + tableW, y, C.ruleStrong, 2));
+      else if (!isTotal) S.push(hline(x0, x0 + tableW, y, C.line));
     };
+    if (top) drawRow(spec.total, true);
     rows.forEach((r) => drawRow(r, false));
     if (!rows.length && spec.empty) {
       S.push(txt(x0 + CELL, y + ROW / 2 + 5, spec.empty, { size: F.body, fill: C.faint }));
       y += ROW;
     }
     const last = pi === pages.length - 1;
-    if (last && spec.total) drawRow(spec.total, true);
+    if (last && spec.total && !top) drawRow(spec.total, true);
     const tableBottom = y;
     // вертикальні роздільники груп
     cols.forEach((c, i) => { if (c.sep) S.push(vline(xs[i], tableTop + (spec.groups ? 22 : 0), tableBottom, C.rule)); });
@@ -185,9 +191,9 @@ function render(spec) {
     }
     let footY = y;
     if (spec.legend && spec.legend.length) footY += 18;
-    if (spec.note) { S.push(txt(x0, footY + 12.5, spec.note, { size: F.foot, fill: C.faint })); footY += 18; }
+    for (const n of notes) { S.push(txt(x0, footY + 12.5, n, { size: F.foot, fill: C.faint })); footY += 18; }
     // час — праворуч у першому рядку підвалу, якщо влазить, інакше окремим рядком
-    const firstLineW = (spec.legend && spec.legend.length) ? lx - x0 : spec.note ? noteW : 0;
+    const firstLineW = (spec.legend && spec.legend.length) ? lx - x0 : notes.length ? width(notes[0], F.foot, 400) : 0;
     if (spec.footRight) {
       if (firstLineW + footRightW + 24 <= tableW) S.push(txt(x0 + tableW, y + 12.5, spec.footRight, { size: F.foot, fill: C.faint, anchor: "end" }));
       else { S.push(txt(x0 + tableW, footY + 12.5, spec.footRight, { size: F.foot, fill: C.faint, anchor: "end" })); footY += 18; }

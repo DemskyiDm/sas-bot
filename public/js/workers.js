@@ -297,6 +297,9 @@ async function startImport() {
       btn.textContent = "✅ Gotowe";
       setTimeout(() => { btn.textContent = "⬇ Import"; btn.disabled = false; }, 5000);
       loadWorkersPage(); loadWorkerStats(); loadStats();
-    } else { btn.textContent = "❌ Blad"; setTimeout(() => { btn.textContent = "⬇ Import"; btn.disabled = false; }, 3000); }
+    } else {
+      btn.textContent = "❌ Blad"; setTimeout(() => { btn.textContent = "⬇ Import"; btn.disabled = false; }, 3000);
+      if (res && res.error) alert(res.error);
+    }
   } catch (e) { btn.textContent = "❌ Blad"; setTimeout(() => { btn.textContent = "⬇ Import"; btn.disabled = false; }, 3000); }
 }

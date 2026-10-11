@@ -1077,7 +1077,8 @@ async function sendCoordinatorReports(bot) {
 
       if (coord.role !== "head") {
         const facRes = await db.query(
-          `SELECT facility_id FROM coordinator_facilities WHERE coordinator_id = $1`,
+          // свої = з правом редагування (головний / допоміжний з редагуванням); перегляд регіону — ні
+          `SELECT facility_id FROM coordinator_facilities WHERE coordinator_id = $1 AND is_primary`,
           [coord.id]
         );
         const facIds = facRes.rows.map(r => r.facility_id);

@@ -149,7 +149,7 @@ async function findGapWorkers(workerId = null) {
            (SELECT string_agg(DISTINCT c.full_name, ', ')
               FROM coordinator_facilities cf
               JOIN coordinators c ON c.id = cf.coordinator_id
-             WHERE cf.facility_id = a.facility_id AND c.is_active = true) AS coordinators,
+             WHERE cf.facility_id = a.facility_id AND c.is_active = true AND cf.is_primary) AS coordinators,
            json_agg(json_build_object(
              'start', to_char(r.run_start, 'YYYY-MM-DD'),
              'end',   to_char(r.run_end,   'YYYY-MM-DD'),

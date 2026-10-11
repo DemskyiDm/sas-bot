@@ -85,7 +85,7 @@ function render() {
     </div>
     <div class="tblwrap" id="recTable"></div>
     <div class="note">Odznacz „Wysyłać” — koordynator nie dostanie raportu. Zakres domyślnie: rola <b>head</b> — cała firma, pozostali — swoje obiekty
-      (przypisane w karcie koordynatora). „Region” — obiekty regionów, w których jest regionalnym (Region → Ustawienia), plus swoje.
+      (główny albo pomocniczy z prawem edycji — Region → Przypisania). „Region” — obiekty regionów, w których jest regionalnym, plus swoje.
       Bez Telegrama w karcie albo bez obiektów — nic nie dostaje. 🧪 — wysyła na Twój Telegram raport tak, jak zobaczy go ten koordynator.</div>
   </div>`;
   renderRecipients();

@@ -134,8 +134,22 @@
     .lead-chip button { background: transparent; border: none; color: var(--text3); cursor: pointer;
       font-size: 11px; padding: 0 2px; }
     .lead-chip button:hover { color: var(--red); }
+    .lead-chip.edit { border-color: var(--accent); }
+    .lead-chip.review { border-color: var(--accent2); background: rgba(245, 158, 11, .12); }
+    .lead-chip.off { border-color: var(--red); color: var(--red); }
+    .lead-chip .mode { border: 1px solid var(--border); border-radius: 8px; padding: 0 5px; color: var(--text2); font-size: 10px; }
+    .lead-chip .mode:hover { color: var(--accent); border-color: var(--accent); }
+    .as-banner { padding: 10px 14px; font-size: 12px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--accent2);
+      background: var(--surface); color: var(--text); line-height: 1.6; }
+    .as-banner .btn { margin-right: 6px; }
+    table.rg tr.off td { opacity: .55; }
+    table.rg td .sub { font-size: 10px; color: var(--text3); }
+    .tag-off { font-size: 10px; color: var(--red); border: 1px solid var(--red); border-radius: 8px; padding: 0 6px; white-space: nowrap; }
+    .tag-adm { font-size: 10px; color: var(--accent); border: 1px solid var(--accent); border-radius: 8px; padding: 0 6px; }
+    .as-filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-weight: 400; }
+    .as-filters label { font-size: 11px; color: var(--text2); }
     .main { min-width: 0; }   /* щоб широкі таблиці скролились у своєму блоці, а не розтягували сторінку */
-    #boardTable, #coordsTable, #cardsTable, #sitesCfg, .tblwrap { overflow-x: auto; }
+    #boardTable, #coordsTable, #cardsTable, #sitesCfg, #asSites, #asCoords, .tblwrap { overflow-x: auto; }
     @media (max-width: 900px) { .crit { grid-template-columns: 1fr; } .form { grid-template-columns: 1fr; } }
     @media (max-width: 800px) {
       .topbar { height: auto; flex-wrap: wrap; padding: 10px 16px; gap: 8px; }
@@ -164,6 +178,7 @@
       <div class="nav-item active" data-view="board" onclick="showView('board')">🚦 Tablica</div>
       <div class="nav-item" data-view="coords" onclick="showView('coords')">👥 Koordynatorzy</div>
       <div class="nav-item" data-view="cards" onclick="showView('cards')">🗂️ Karty <span class="nav-badge" id="badgeCards"></span></div>
+      <div class="nav-item" data-view="assign" id="navAssign" onclick="showView('assign')" style="display:none">🔗 Przypisania <span class="nav-badge" id="badgeAssign"></span></div>
       <div class="nav-item" data-view="settings" id="navSettings" onclick="showView('settings')" style="display:none">⚙️ Ustawienia</div>
       <div class="nav-item" onclick="location.href='rozmowy.html'">📞 Rozmowy</div>
     </div>
@@ -240,6 +255,9 @@
             Zamyka się sama, gdy obiekt wyjdzie z czerwonego.</div>
         </div>
       </div>
+
+      <!-- ПРИЗНАЧЕННЯ (адмін): об'єкти, головний / допоміжні, регіональні, активні координатори -->
+      <div class="rg-view" id="view-assign"><div id="assignBody"><div class="loading">Ładowanie…</div></div></div>
 
       <!-- НАЛАШТУВАННЯ (адмін) -->
       <div class="rg-view" id="view-settings"><div id="settingsBody"><div class="loading">Ładowanie…</div></div></div>

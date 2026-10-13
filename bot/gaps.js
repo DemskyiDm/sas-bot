@@ -430,30 +430,67 @@ async function sendGapSpam(bot, { workerId = null, ignoreHours = false, force = 
 }
 
 // ── Планувальник: викликати з існуючого щохвилинного setInterval ──
+// Не прив'язаний до точної хвилини. Раніше зведення йшло, лише якщо тік припав рівно на 08:00;
+// а в index.js тік чекає, поки розішлються нагадування про години (300 мс на людину), — якщо
+// о 08:00 є нагадування на обʼєктах, імпорт чи перезапуск pm2, хвилина 08:00 пропускалась
+// і зведення того дня не приходило зовсім. Тепер:
+//   • зведення — при першому тіку від GAP_ADMIN_TIME до +3 год (один раз на день);
+//   • спам — при першому тіку в перші 30 хв кожної години GAP_SPAM_FROM…GAP_SPAM_TO (раз на годину).
+// «Один раз» тримається в базі (flow.job_runs, як у Wyjazdy) — перезапуск pm2 не дублює відправку;
+// якщо цієї таблиці немає — лише в памʼяті процесу, як було.
+const ADMIN_LATE_MIN = 180;
+const SPAM_LATE_MIN = 30;
 const firedKeys = new Set();
+const failCount = new Map();
+const hmToMin = (s) => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || "").trim());
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+};
+async function claimOnce(job, key) {
+  const k = `${job}|${key}`;
+  if (firedKeys.has(k)) return false;
+  firedKeys.add(k);
+  try {
+    const r = await db.query(
+      `INSERT INTO flow.job_runs (job, key) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING job`, [job, key]);
+    return r.rowCount > 0;
+  } catch (e) {
+    return true; // немає flow.job_runs — тільки памʼять
+  }
+}
+// Помилка (напр., база недоступна) — зняти відмітку, щоб спробувати на наступному тіку; не більше 3 спроб
+async function release(job, key, e) {
+  const k = `${job}|${key}`;
+  const n = (failCount.get(k) || 0) + 1;
+  failCount.set(k, n);
+  console.error(`[Gaps] ${job} ${key} error (спроба ${n}/3):`, e.message);
+  if (n >= 3) return;
+  firedKeys.delete(k);
+  await db.query(`DELETE FROM flow.job_runs WHERE job = $1 AND key = $2`, [job, key]).catch(() => {});
+}
 async function tick(bot, now = new Date()) {
   if (!CFG.enabled) return;
-  const hh = String(now.getHours()).padStart(2, "0");
-  const mi = String(now.getMinutes()).padStart(2, "0");
-  const current = `${hh}:${mi}`;
   const day = isoLocal(now);
+  const min = now.getHours() * 60 + now.getMinutes();
+  if (firedKeys.size > 200) for (const k of firedKeys) if (!k.includes(day)) firedKeys.delete(k);
+  if (failCount.size > 50) failCount.clear();
 
-  const once = async (key, fn) => {
-    const k = `${day}_${key}`;
-    if (firedKeys.has(k)) return;
-    firedKeys.add(k);
-    if (firedKeys.size > 200) {
-      for (const x of firedKeys) if (!x.startsWith(day)) firedKeys.delete(x);
+  // Спочатку зведення адміну, потім хвиля спаму
+  const at = hmToMin(CFG.adminTime);
+  if (at != null && min >= at && min < at + ADMIN_LATE_MIN && (await claimOnce("gaps_admin", day))) {
+    try {
+      await sendAdminGapSummary(bot);
+    } catch (e) {
+      await release("gaps_admin", day, e);
     }
-    await fn();
-  };
-
-  // Спочатку зведення адміну, потім перша хвиля спаму
-  if (current === CFG.adminTime) {
-    await once(`admin_${current}`, () => sendAdminGapSummary(bot));
   }
-  if (mi === "00" && now.getHours() >= CFG.spamFrom && now.getHours() <= CFG.spamTo) {
-    await once(`spam_${current}`, () => sendGapSpam(bot));
+  const h = now.getHours();
+  if (h >= CFG.spamFrom && h <= CFG.spamTo && now.getMinutes() < SPAM_LATE_MIN) {
+    const key = `${day} ${String(h).padStart(2, "0")}`;
+    if (await claimOnce("gaps_spam", key)) {
+      const r = await sendGapSpam(bot);
+      if (r && r.error) await release("gaps_spam", key, new Error(r.error));
+    }
   }
 }
 

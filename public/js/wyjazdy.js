@@ -254,19 +254,21 @@ function sortWeek(k) {
 const LIST_TITLE = {
   arr_entered: "Nowi wpisani na tydzień", arr_fact: "Nowi — rozpoczęli pracę", arr_unconf: "Nowi bez statusu (niepotwierdzeni)",
   arr_rez: "Nie dojechali (rezygnacja)", tr_entered: "Przyszli z przeniesienia", arr_all: "Przyjazdy",
+  tr_fact: "Z przeniesienia — rozpoczęli pracę", arr_razem: "Rozpoczęli pracę — nowi i z przeniesienia",
   dep_plan: "Wyjazdy w planie (poniedziałek 00:00)", plan_moved: "Z planu nie wyjechali w tym tygodniu",
   dep_now: "Wyjazdy wpisane na tydzień", dep_fact: "Zakończyli pracę", dep_unplanned: "Wyjazdy poza planem", dep_fact_tr: "Przeniesienia na inne obiekty",
 };
-async function openList(kind, site, date) {
+async function openList(kind, site, date, week) {
   const dw = document.getElementById("drawer");
   const title = LIST_TITLE[kind] || "Lista";
-  const sub = `${site ? esc(site) + " · " : ""}${date ? `${dow(date)} ${ddy(date)}` : `tydzień ${dd(ST.week)}–${ddy(addDays(ST.week, 6))}`}`;
+  const wk = week || ST.week;   // Plan naboru: zawsze bieżący tydzień, niezależnie od wybranego w „Tydzień”
+  const sub = `${site ? esc(site) + " · " : ""}${date ? `${dow(date)} ${ddy(date)}` : `tydzień ${dd(wk)}–${ddy(addDays(wk, 6))}`}`;
   dw.innerHTML = `<div class="dw-head"><div><h2>${esc(title)}</h2><div class="sub">${sub}</div></div>
     <button class="dw-close" onclick="closeDrawer()" title="Zamknij (Esc)">✕</button></div><div class="dw-body"><div class="loading">Ładowanie…</div></div>`;
   dw.classList.add("open"); dw.setAttribute("aria-hidden", "false");
   document.getElementById("drawerBg").classList.add("open");
   const my = ++ST.dseq;
-  const r = await api("/list" + qs({ kind, site, week: date ? null : ST.week, date }));
+  const r = await api("/list" + qs({ kind, site, week: date ? null : wk, date }));
   if (my !== ST.dseq || !r) return;
   const body = dw.querySelector(".dw-body");
   if (!r.ok) { body.innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
@@ -407,17 +409,55 @@ function renderOrders() {
       oninput="this.classList.remove('prop','bad'); this.dataset.dirty='1'" />
       <span class="h">wyj. ${c.dep} · wpis. ${c.arr}</span></div>`;
   };
-  document.getElementById("ordTable").innerHTML = `<table class="fl"><thead><tr>
-      <th class="l">Obiekt</th><th title="Pracuje dziś">Pracuje</th>
-      <th class="sep" title="Bieżący tydzień — zamknięty">${dd(r.current_week)}–${dd(addDays(r.current_week, 6))}</th>
+  // Bieżący tydzień: plan i fakt przyjazdów (jak w tabeli tygodnia; realizacja = razem / plan, czerwone — poniżej tempa)
+  const cwk = r.current_week;
+  const num = (v, kind, site, cls) => (!v ? `<span class="z">0</span>`
+    : `<a class="n ${cls || ""}" data-k="${kind}" data-s="${esc(site)}" onclick="openList(this.dataset.k, this.dataset.s, null, ST.orders.current_week)">${v}</a>`);
+  const real = (c) => (!c.plan ? `<span class="z">—</span>`
+    : `<span class="${c.lag ? "bad" : c.razem >= c.plan ? "good" : ""}" title="${c.lag ? `Poniżej tempa: na dziś trzeba ${r.pace}% planu tygodnia` : "Razem / plan"}">${pct(c.razem, c.plan)}</span>`);
+  const cwCells = (c, site) => `
+      <td>${num(c.entered, "arr_entered", site)}</td>
+      <td>${num(c.fact, "arr_fact", site)}</td>
+      <td>${num(c.tr, "tr_fact", site)}</td>
+      <td>${num(c.razem, "arr_razem", site)}</td>
+      <td>${real(c)}</td>
+      <td>${num(c.unconf, "arr_unconf", site, "warn")}</td>
+      <td>${num(c.rez, "arr_rez", site, "bad")}</td>`;
+  const planCur = (row, i) => (r.can_edit_current
+    ? `<div class="ord-cell"><input type="number" min="0" max="999" value="${row.current.qty == null ? "" : row.current.qty}" data-i="${i}" data-j="cur" oninput="this.dataset.dirty='1'" /><span class="h">wyj. ${row.current.dep}</span></div>`
+    : `${row.current.qty == null ? `<span class="z">—</span>` : row.current.qty}<div class="sub">wyj. ${row.current.dep}</div>`);
+  const sum = (f) => r.rows.reduce((a, x) => a + (Number(f(x)) || 0), 0);
+  const t = r.cw_total;
+  const totalRow = `<tr class="tot top">
+      <td class="l">Razem</td><td>${sum((x) => x.headcount)}</td>
+      <td class="sep">${t.plan == null ? `<span class="z">—</span>` : t.plan}<div class="sub">wyj. ${sum((x) => x.current.dep)}</div></td>
+      ${cwCells(t, "")}
+      ${r.weeks.map((w, j) => {
+        const has = r.rows.some((x) => x.weeks[j].qty != null);
+        return `<td class="sep">${has ? sum((x) => x.weeks[j].qty) : `<span class="z">—</span>`}<div class="sub">wyj. ${sum((x) => x.weeks[j].dep)} · wpis. ${sum((x) => x.weeks[j].arr)}</div></td>`;
+      }).join("")}
+      <td class="l sep">potwierdzone ${done} z ${r.rows.length}</td><td></td></tr>`;
+  document.getElementById("ordTable").innerHTML = `<table class="fl"><thead>
+      <tr><th class="l grp" colspan="2"></th>
+        <th class="grp sep" colspan="8">Tydzień ${dd(cwk)}–${dd(addDays(cwk, 6))} · plan i fakt</th>
+        <th class="grp sep" colspan="3">Plan naboru — następne tygodnie</th><th class="grp sep" colspan="2"></th></tr>
+      <tr><th class="l">Obiekt</th><th title="Pracuje dziś">Pracuje</th>
+      <th class="sep" title="Plan naboru na bieżący tydzień${r.can_edit_current ? " — zmienia tylko kierownictwo" : " — zamknięty"}">Plan</th>
+      <th title="Nowi z pierwszym dniem w tym tygodniu (bez rezygnacji)">Wpisano</th>
+      <th title="Nowi: pierwszy dzień minął, status ustawiony">Fakt</th>
+      <th title="Z przeniesienia z innego obiektu: pierwszy dzień minął, status ustawiony">Przenie-<br>sienie</th>
+      <th title="Fakt + przeniesienie">Razem</th>
+      <th title="Razem / plan">Reali-<br>zacja</th>
+      <th title="Nowi: pierwszy dzień minął, a statusu nie ma — nie wchodzą do faktu">Bez<br>statusu</th>
+      <th title="Rezygnacja przed rozpoczęciem pracy">Nie<br>dojechali</th>
       ${r.weeks.map((w) => `<th class="sep">${dd(w)}–${dd(addDays(w, 6))}</th>`).join("")}
       <th class="l sep">Stan</th><th></th></tr></thead><tbody>
+    ${totalRow}
     ${r.rows.map((row, i) => `<tr>
       <td class="l">${esc(row.site_key)}<div class="sub">${row.coordinator_name ? esc(row.coordinator_name) : "— bez koordynatora —"}</div></td>
       <td>${row.headcount}</td>
-      <td class="sep">${r.can_edit_current
-        ? `<div class="ord-cell"><input type="number" min="0" max="999" value="${row.current.qty == null ? "" : row.current.qty}" data-i="${i}" data-j="cur" oninput="this.dataset.dirty='1'" /><span class="h">wyj. ${row.current.dep} · wpis. ${row.current.arr}</span></div>`
-        : `${row.current.qty == null ? `<span class="z">—</span>` : row.current.qty}<div class="sub">wyj. ${row.current.dep} · wpis. ${row.current.arr}</div>`}</td>
+      <td class="sep">${planCur(row, i)}</td>
+      ${cwCells(row.cw, row.site_key)}
       ${row.weeks.map((c, j) => `<td class="sep">${cell(row, c, i, j, true)}</td>`).join("")}
       <td class="l sep">${row.confirmed ? `<span class="ok-mark">✓ potwierdzone</span>`
         : row.weeks.every((c) => c.qty != null) ? `<span class="no-mark" title="Liczby są, ale od soboty nikt ich nie potwierdził">do potwierdzenia</span>`
@@ -559,30 +599,35 @@ function exportOrders() {
   if (!ST.orders || !xlsxReady()) return;
   const r = ST.orders;
   const wl = (w) => `${dd(w)}–${dd(addDays(w, 6))}`;
-  const head = ["Obiekt", "Koordynator", "Region", "Pracuje dziś", `Bieżący ${wl(r.current_week)} — plan`];
+  const cw = wl(r.current_week);
+  const head = ["Obiekt", "Koordynator", "Region", "Pracuje dziś",
+    `${cw} — plan`, `${cw} — wpisano`, `${cw} — fakt`, `${cw} — przeniesienie`, `${cw} — razem`, `${cw} — realizacja`,
+    `${cw} — bez statusu`, `${cw} — nie dojechali`];
   r.weeks.forEach((w) => head.push(`${wl(w)} — plan`, `${wl(w)} — wyjazdy wpisane`, `${wl(w)} — nowi wpisani`));
   head.push("Stan", "Ostatnia zmiana");
   const stan = (row) => (row.confirmed ? "potwierdzone" : row.weeks.every((c) => c.qty != null) ? "do potwierdzenia" : "do wpisania");
+  const cwOut = (c, plan) => [xNum(plan), c.entered, c.fact, c.tr, c.razem, plan ? c.razem / plan : "", c.unconf, c.rez];
+  const sum = (f) => r.rows.reduce((a, x) => a + (Number(f(x)) || 0), 0);
+  const tot = ["Razem", "", "", sum((x) => x.headcount), ...cwOut(r.cw_total, r.cw_total.plan)];
+  r.weeks.forEach((_, j) => tot.push(sum((x) => x.weeks[j].qty), sum((x) => x.weeks[j].dep), sum((x) => x.weeks[j].arr)));
+  tot.push(`potwierdzone ${r.rows.filter((x) => x.confirmed).length} z ${r.rows.length}`, "");
   const data = r.rows.map((row) => {
-    const out = [row.site_key, row.coordinator_name || "", row.region_name || "", row.headcount, xNum(row.current.qty)];
+    const out = [row.site_key, row.coordinator_name || "", row.region_name || "", row.headcount, ...cwOut(row.cw, row.current.qty)];
     row.weeks.forEach((c) => out.push(xNum(c.qty), c.dep, c.arr));
     out.push(stan(row), row.weeks[0].entered_at ? `${dd(row.weeks[0].entered_at)} ${row.weeks[0].entered_at.slice(11)}` : "");
     return out;
   });
-  const sum = (f) => r.rows.reduce((a, x) => a + (Number(f(x)) || 0), 0);
-  const tot = ["Razem", "", "", sum((x) => x.headcount), sum((x) => x.current.qty)];
-  r.weeks.forEach((_, j) => tot.push(sum((x) => x.weeks[j].qty), sum((x) => x.weeks[j].dep), sum((x) => x.weeks[j].arr)));
-  tot.push("", "");
-  const stCol = head.length - 2;
-  const ws = xlsxSheet(`Plan naboru — 3 tygodnie od ${ddy(r.weeks[0])}`,
-    `${filtersText()} · stan na ${nowText()} · potwierdzenia liczą się od soboty ${ddy(r.confirm_from)}`,
+  const stCol = head.length - 2, realCol = 9;
+  const ws = xlsxSheet(`Plan naboru — tydzień ${cw}: plan i fakt · 3 tygodnie od ${ddy(r.weeks[0])}`,
+    `${filtersText()} · stan na ${nowText()} · realizacja = (fakt + przeniesienie) / plan, czerwona — poniżej tempa ${r.pace}% · potwierdzenia liczą się od soboty ${ddy(r.confirm_from)}`,
     head, data.concat([tot]), {
-      total: true,
-      widths: [26, 22, 14, 9, 11, ...r.weeks.flatMap(() => [10, 10, 10]), 16, 14],
+      pct: [realCol], total: true,
+      widths: [26, 22, 14, 9, 9, 9, 9, 11, 9, 11, 9, 10, ...r.weeks.flatMap(() => [10, 10, 10]), 16, 14],
       fill: (i, c) => {
         if (i >= r.rows.length) return null;
-        const s = stan(r.rows[i]);
-        if (c === stCol) return s === "potwierdzone" ? XL_GREEN : s === "do potwierdzenia" ? XL_AMBER : XL_RED;
+        const row = r.rows[i];
+        if (c === stCol) { const s = stan(row); return s === "potwierdzone" ? XL_GREEN : s === "do potwierdzenia" ? XL_AMBER : XL_RED; }
+        if (c === realCol && row.cw.plan) return row.cw.lag ? XL_RED : row.cw.razem >= row.cw.plan ? XL_GREEN : null;
         return null;
       },
     });

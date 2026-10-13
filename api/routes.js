@@ -37,35 +37,39 @@ async function getEditFacilityFilter(coordinator) {
   );
   return result.rows.map((r) => r.facility_id);
 }
-async function workerInEditScope(coordinator, workerId) {
+// Працівник на обʼєкті координатора: його поточний обʼєкт (v_worker_current) АБО — для правки годин
+// за конкретну дату — запис історії на обʼєкті координатора (крім rezygnacja), що покриває цю дату.
+// Друге потрібне, коли «поточним» рахується інший заклад: напр. працівник повернувся з відрядження,
+// а там BHP пізніший (запис rezygnacja / закінчений) — у списку годин він у свого координатора, а правка давала 403.
+const isoDate = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(String(d || "")) ? String(d) : null);
+const scopeSql = (edit) => `
+  SELECT 1
+    FROM coordinator_facilities cf
+   WHERE cf.coordinator_id = $2${edit ? " AND cf.is_primary" : ""}
+     AND (EXISTS (SELECT 1 FROM v_worker_current w WHERE w.id = $1 AND w.facility_id = cf.facility_id)
+          OR ($3::date IS NOT NULL AND EXISTS (
+                SELECT 1 FROM worker_facility_history h
+                 WHERE h.worker_id = $1 AND h.facility_id = cf.facility_id
+                   AND h.status::text <> 'rezygnacja'
+                   AND h.bhp_date <= $3::date
+                   AND (h.last_work_date IS NULL OR h.last_work_date >= $3::date))))
+   LIMIT 1`;
+async function workerInEditScope(coordinator, workerId, workDate) {
   if (coordinator.is_admin) return true;
-  const r = await db.query(
-    `SELECT 1
-     FROM v_worker_current w
-     JOIN coordinator_facilities cf ON cf.facility_id = w.facility_id
-     WHERE w.id = $1 AND cf.coordinator_id = $2 AND cf.is_primary
-     LIMIT 1`,
-    [workerId, coordinator.coordinator_id],
-  );
+  const r = await db.query(scopeSql(true), [workerId, coordinator.coordinator_id, isoDate(workDate)]);
   return r.rows.length > 0;
 }
 // null — można zmieniać; inaczej tekst błędu (widzi, ale tylko podgląd / w ogóle nie jego)
-async function editDenied(coordinator, workerId) {
-  if (await workerInEditScope(coordinator, workerId)) return null;
-  return (await workerInScope(coordinator, workerId)) ? VIEW_ONLY : "Forbidden";
+async function editDenied(coordinator, workerId, workDate) {
+  if (await workerInEditScope(coordinator, workerId, workDate)) return null;
+  return (await workerInScope(coordinator, workerId, workDate)) ? VIEW_ONLY : "Forbidden";
 }
 
-// true, если работник в зоне ответственности координатора (админ — всегда)
-async function workerInScope(coordinator, workerId) {
+// true, если работник в зоне ответственности координатора (админ — всегда);
+// workDate — для правки годин: также если на эту дату он был на объекте координатора (см. scopeSql)
+async function workerInScope(coordinator, workerId, workDate) {
   if (coordinator.is_admin) return true;
-  const r = await db.query(
-    `SELECT 1
-     FROM v_worker_current w
-     JOIN coordinator_facilities cf ON cf.facility_id = w.facility_id
-     WHERE w.id = $1 AND cf.coordinator_id = $2
-     LIMIT 1`,
-    [workerId, coordinator.coordinator_id],
-  );
+  const r = await db.query(scopeSql(false), [workerId, coordinator.coordinator_id, isoDate(workDate)]);
   return r.rows.length > 0;
 }
 
@@ -212,7 +216,7 @@ router.get("/stats", requireAuth, async (req, res) => {
 router.post("/hours", requireAuth, async (req, res) => {
   try {
     const { worker_id, work_date, hours, absence_type } = req.body;
-    const denied = await editDenied(req.coordinator, worker_id);
+    const denied = await editDenied(req.coordinator, worker_id, work_date);
     if (denied) return res.status(403).json({ ok: false, error: denied });
 
     const h =

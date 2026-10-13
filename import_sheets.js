@@ -412,6 +412,13 @@ async function importSource(source, facilityId, cache) {
   //     відкритий — це той самий період, у якого виправили BHP → оновлюємо;
   // (3) інакше — новий період, вставляємо.
   if (dbInserts.length > 0) {
+    // BHP усіх рядків працівника на цьому листі (для злиття дублів періодів, див. updatePeriod)
+    const sheetBhps = new Map();
+    for (const [w, f, , , bhp] of dbInserts) {
+      const k = `${w}_${f}`;
+      if (!sheetBhps.has(k)) sheetBhps.set(k, new Set());
+      sheetBhps.get(k).add(bhp || "null");
+    }
     for (const row of dbInserts) {
       const [rowWorkerId, rowFacilityId, status, sourceSheet, bhpDate, lastWorkDate] = row;
 
@@ -441,41 +448,30 @@ async function importSource(source, facilityId, cache) {
 
         // (1) Той самий період за bhp_date → оновлюємо статус і дату звільнення
         const byBhp = await db.query(
-          `UPDATE worker_facility_history
-             SET status = $3::worker_status,
-                 last_work_date = $5,
-                 source_sheet = $4,
-                 imported_at = now()
-           WHERE id = (
-             SELECT id FROM worker_facility_history
-             WHERE worker_id = $1 AND facility_id = $2 AND bhp_date = $6
-             ORDER BY imported_at DESC LIMIT 1
-           )
-           RETURNING id`,
-          [rowWorkerId, rowFacilityId, status, sourceSheet, lastWorkDate, bhpDate],
+          `SELECT id FROM worker_facility_history
+            WHERE worker_id = $1 AND facility_id = $2 AND bhp_date = $3
+            ORDER BY imported_at DESC LIMIT 1`,
+          [rowWorkerId, rowFacilityId, bhpDate],
         );
-        if (byBhp.rowCount > 0) continue;
+        if (byBhp.rows.length) {
+          await updatePeriod(byBhp.rows[0].id, row, sheetBhps, false);
+          continue;
+        }
 
         // (2) BHP змінили в джерелі → оновлюємо відкритий період.
         // Тільки якщо вхідний рядок сам відкритий, щоб історичний закритий
         // рядок не захопив поточний період.
         if (lastWorkDate === null) {
           const openRow = await db.query(
-            `UPDATE worker_facility_history
-               SET bhp_date = $6,
-                   status = $3::worker_status,
-                   last_work_date = $5,
-                   source_sheet = $4,
-                   imported_at = now()
-             WHERE id = (
-               SELECT id FROM worker_facility_history
-               WHERE worker_id = $1 AND facility_id = $2 AND last_work_date IS NULL
-               ORDER BY bhp_date DESC LIMIT 1
-             )
-             RETURNING id`,
-            [rowWorkerId, rowFacilityId, status, sourceSheet, lastWorkDate, bhpDate],
+            `SELECT id FROM worker_facility_history
+              WHERE worker_id = $1 AND facility_id = $2 AND last_work_date IS NULL
+              ORDER BY bhp_date DESC LIMIT 1`,
+            [rowWorkerId, rowFacilityId],
           );
-          if (openRow.rowCount > 0) continue;
+          if (openRow.rows.length) {
+            await updatePeriod(openRow.rows[0].id, row, sheetBhps, true);
+            continue;
+          }
         }
 
         // (3) Новий період (повторний найм тощо) → вставляємо
@@ -491,7 +487,8 @@ async function importSource(source, facilityId, cache) {
           [rowWorkerId, rowFacilityId, status, sourceSheet, lastWorkDate, bhpDate],
         );
       } catch (err) {
-        console.warn(`  HISTORY SKIP worker=${rowWorkerId} fac=${rowFacilityId}: ${err.message}`);
+        const who = [...cache.byLogin.values()].find((w) => w.id === rowWorkerId);
+        console.warn(`  HISTORY SKIP worker=${rowWorkerId}${who ? ` ${who.login} ${who.full_name}` : ""} fac=${rowFacilityId} bhp=${bhpDate || "—"}: ${err.message}`);
       }
     }
   }
@@ -564,6 +561,63 @@ async function importSource(source, facilityId, cache) {
   console.log(
     `  Done: added = ${added} updated = ${updated} history = ${historyAdded} skipped = ${skipped}`,
   );
+}
+
+// ── Оновлення періоду історії з листа ─────────────────────────
+// row = [worker, facility, status, source_sheet, bhp, last_work_date]; setBhp — також виправити BHP (крок 2).
+// Унікальність (uq_wfh_worker_facility_status_lwd): у працівника на обʼєкті не може бути двох періодів
+// з тим самим статусом і останнім днем. Буває, коли на листі два періоди злили в один
+// (напр. повернувся з відрядження: замість «15.05–18.06 zwolniony» + «26.06– pracuje» лишили один рядок
+// «15.05 pracuje»): оновлення 15.05 → pracuje упирається у старий рядок 26.06 pracuje, і раніше
+// рядок просто пропускався (HISTORY SKIP) на кожному імпорті.
+// Тепер: якщо інший період R на листі вже НЕ значиться (його BHP немає серед рядків працівника)
+// і новий період повністю його покриває (BHP не пізніший, той самий кінець) — R це той самий
+// період у старому вигляді: R видаляється, період оновлюється (в одній транзакції).
+// Інакше (R є на листі — дубль на самому листі, або новий період коротший) — нічого не міняється,
+// у лозі зрозуміла причина.
+async function updatePeriod(id, row, sheetBhps, setBhp) {
+  const [workerId, facilityId, status, sourceSheet, bhpDate, lastWorkDate] = row;
+  const sql = `UPDATE worker_facility_history
+                  SET status = $2::worker_status, last_work_date = $3, source_sheet = $4,
+                      ${setBhp ? "bhp_date = $5," : ""} imported_at = now()
+                WHERE id = $1`;
+  const params = setBhp ? [id, status, lastWorkDate, sourceSheet, bhpDate] : [id, status, lastWorkDate, sourceSheet];
+  try {
+    await db.query(sql, params);
+    return;
+  } catch (err) {
+    if (err.code !== "23505") throw err;
+  }
+  const other = await db.query(
+    `SELECT id, to_char(bhp_date, 'YYYY-MM-DD') AS bhp, to_char(last_work_date, 'YYYY-MM-DD') AS lwd
+       FROM worker_facility_history
+      WHERE worker_id = $1 AND facility_id = $2 AND status = $3::worker_status
+        AND COALESCE(last_work_date, '9999-12-31') = COALESCE($4::date, '9999-12-31') AND id <> $5`,
+    [workerId, facilityId, status, lastWorkDate, id],
+  );
+  const r = other.rows[0];
+  const end = lastWorkDate || "відкритий";
+  if (!r) throw new Error("конфлікт унікальності, але другий період не знайдено");
+  const onSheet = (sheetBhps.get(`${workerId}_${facilityId}`) || new Set()).has(r.bhp || "null");
+  if (onSheet) {
+    throw new Error(`на листі два рядки цього працівника з однаковим статусом «${status}» і кінцем ${end} (BHP ${bhpDate} і ${r.bhp}) — виправте лист`);
+  }
+  if (!r.bhp || !bhpDate || bhpDate > r.bhp) {
+    throw new Error(`у базі вже є період «${status}», кінець ${end}, BHP ${r.bhp || "—"} (history_id=${r.id}), а на листі BHP ${bhpDate} пізніший — не зливаю, перевірте вручну`);
+  }
+  const client = await db.pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`DELETE FROM worker_facility_history WHERE id = $1`, [r.id]);
+    await client.query(sql, params);
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+  console.log(`  HISTORY MERGE worker=${workerId} fac=${facilityId}: період BHP ${r.bhp} («${status}», кінець ${end}) уже входить у період з листа BHP ${bhpDate} — старий рядок history_id=${r.id} видалено`);
 }
 
 // ── CACHE ─────────────────────────────────────────────────────

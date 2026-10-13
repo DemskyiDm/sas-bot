@@ -499,15 +499,30 @@ async function importSource(source, facilityId, cache) {
   //  - НЕ видаляємо, якщо в періоді є внесені години (людина реально працювала);
   //  - НЕ видаляємо масово (>10% об'єкта або порожній лист) — лише лог,
   //    щоб битий CSV від Google не зніс цілий об'єкт.
+  // Виняток — ПЕРЕНЕСЕНО НА ІНШИЙ АРКУШ: у людини є відкритий період на іншому обʼєкті з тим самим BHP
+  // (напр. рядок перенесли з «CAINIAO Dipico» на «CAINIAO Dipico 2», зі «Action Zamienie SAS» на
+  // «… Przejęcie SAS»), а тут рядок просто видалили. Це дубль того самого періоду: години покриває
+  // період на новому аркуші, тож старий рядок видаляється навіть за наявності годин і не рахується
+  // в «забагато». Якщо відкритий період на іншому обʼєкті з ІНШИМ BHP — схоже на переведення:
+  // нічого не видаляємо, у попередженні — де людина тепер (треба дописати останній день на цьому аркуші).
   try {
     const openInDb = await db.query(
       `SELECT h.id, h.worker_id, w.login, w.full_name,
-              h.bhp_date, h.status::text AS status,
+              h.bhp_date, to_char(h.bhp_date, 'YYYY-MM-DD') AS bhp_txt, h.status::text AS status,
               EXISTS (
                 SELECT 1 FROM hours_log hl
                 WHERE hl.worker_id = h.worker_id
                   AND hl.work_date >= h.bhp_date
-              ) AS has_hours
+              ) AS has_hours,
+              (SELECT f2.name FROM worker_facility_history o JOIN facilities f2 ON f2.id = o.facility_id
+                WHERE o.worker_id = h.worker_id AND o.facility_id <> h.facility_id
+                  AND o.bhp_date = h.bhp_date AND o.last_work_date IS NULL
+                  AND o.status::text NOT IN ('rezygnacja')
+                LIMIT 1) AS moved_to,
+              (SELECT string_agg(f3.name || ' від ' || to_char(o3.bhp_date, 'DD.MM.YYYY'), ', ')
+                 FROM worker_facility_history o3 JOIN facilities f3 ON f3.id = o3.facility_id
+                WHERE o3.worker_id = h.worker_id AND o3.facility_id <> h.facility_id
+                  AND o3.last_work_date IS NULL AND o3.status::text NOT IN ('rezygnacja')) AS open_elsewhere
        FROM worker_facility_history h
        JOIN workers w ON w.id = h.worker_id
        WHERE h.facility_id = $1
@@ -517,9 +532,21 @@ async function importSource(source, facilityId, cache) {
       [facilityId],
     );
 
-    const missingFromSheet = openInDb.rows.filter(
+    const missingAll = openInDb.rows.filter(
       (r) => !processedWorkerIds.has(r.worker_id),
     );
+    // дата з бази текстом: toISOString() у польському часі давав день раніше (09.06 → «2026-06-08»)
+    const fmtBhp = (r) => r.bhp_txt || "—";
+
+    // Перенесено на інший аркуш з тим самим BHP — видаляємо дубль (лист не порожній)
+    const moved = processedWorkerIds.size > 0 ? missingAll.filter((r) => r.moved_to) : [];
+    for (const r of moved) {
+      await db.query(`DELETE FROM worker_facility_history WHERE id = $1`, [r.id]);
+      console.log(
+        `  REVERSE CHECK: ${r.login} ${r.full_name} перенесено на «${r.moved_to}» з тим самим BHP ${fmtBhp(r)} — дубль тут видалено (history_id=${r.id})`,
+      );
+    }
+    const missingFromSheet = missingAll.filter((r) => !moved.includes(r));
 
     if (missingFromSheet.length > 0) {
       const tooMany =
@@ -528,18 +555,20 @@ async function importSource(source, facilityId, cache) {
 
       if (tooMany) {
         console.warn(
-          `  ⚠ REVERSE CHECK: ${missingFromSheet.length}/${openInDb.rows.length} відкритих періодів відсутні на листі "${source.facilityName}" — ЗАБАГАТО, видалення пропущено (можливо битий CSV). Перевірте вручну.`,
+          `  ⚠ REVERSE CHECK: ${missingFromSheet.length}/${openInDb.rows.length} відкритих періодів відсутні на листі "${source.facilityName}" — ЗАБАГАТО, видалення пропущено (можливо битий CSV). Перевірте вручну: ` +
+            missingFromSheet.map((r) => `${r.login} ${r.full_name}`).join(", "),
         );
       } else {
         for (const r of missingFromSheet) {
-          const bhp = r.bhp_date
-            ? r.bhp_date.toISOString().substring(0, 10)
-            : "—";
+          const bhp = fmtBhp(r);
 
           if (r.has_hours) {
             // Є години → людина працювала, видаляти небезпечно
             console.warn(
-              `  ⚠ REVERSE CHECK: ${r.login} ${r.full_name} немає на листі, але МАЄ ГОДИНИ (bhp=${bhp}, history_id=${r.id}) — НЕ видалено, перевірте вручну`,
+              `  ⚠ REVERSE CHECK: ${r.login} ${r.full_name} немає на листі, але МАЄ ГОДИНИ (bhp=${bhp}, history_id=${r.id}) — НЕ видалено, ` +
+                (r.open_elsewhere
+                  ? `зараз відкритий також: ${r.open_elsewhere} — схоже на переведення: допишіть на цьому аркуші останній день і статус`
+                  : `інших відкритих періодів немає — перевірте, чи не видалили рядок помилково (або змінився паспорт)`),
             );
             continue;
           }

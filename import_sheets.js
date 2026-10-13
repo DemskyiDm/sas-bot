@@ -514,15 +514,23 @@ async function importSource(source, facilityId, cache) {
                 WHERE hl.worker_id = h.worker_id
                   AND hl.work_date >= h.bhp_date
               ) AS has_hours,
+              (SELECT to_char(max(hl3.work_date), 'DD.MM.YYYY') FROM hours_log hl3
+                WHERE hl3.worker_id = h.worker_id) AS last_hours,
+              -- той самий період на іншому обʼєкті: той самий BHP, не rezygnacja, і він покриває всі години
+              -- (без кінця або кінець не раніше за останні години; напр. «pracuje» з уже вписаним останнім днем)
               (SELECT f2.name FROM worker_facility_history o JOIN facilities f2 ON f2.id = o.facility_id
                 WHERE o.worker_id = h.worker_id AND o.facility_id <> h.facility_id
-                  AND o.bhp_date = h.bhp_date AND o.last_work_date IS NULL
+                  AND o.bhp_date = h.bhp_date
                   AND o.status::text NOT IN ('rezygnacja')
+                  AND (o.last_work_date IS NULL OR o.last_work_date >= COALESCE(
+                        (SELECT max(hl2.work_date) FROM hours_log hl2 WHERE hl2.worker_id = h.worker_id), CURRENT_DATE))
                 LIMIT 1) AS moved_to,
-              (SELECT string_agg(f3.name || ' від ' || to_char(o3.bhp_date, 'DD.MM.YYYY'), ', ')
+              (SELECT string_agg(f3.name || ' від ' || to_char(o3.bhp_date, 'DD.MM.YYYY')
+                                 || COALESCE(' до ' || to_char(o3.last_work_date, 'DD.MM.YYYY'), ''), ', ')
                  FROM worker_facility_history o3 JOIN facilities f3 ON f3.id = o3.facility_id
                 WHERE o3.worker_id = h.worker_id AND o3.facility_id <> h.facility_id
-                  AND o3.last_work_date IS NULL AND o3.status::text NOT IN ('rezygnacja')) AS open_elsewhere
+                  AND (o3.last_work_date IS NULL OR o3.last_work_date >= CURRENT_DATE)
+                  AND o3.status::text NOT IN ('rezygnacja')) AS open_elsewhere
        FROM worker_facility_history h
        JOIN workers w ON w.id = h.worker_id
        WHERE h.facility_id = $1
@@ -565,7 +573,7 @@ async function importSource(source, facilityId, cache) {
           if (r.has_hours) {
             // Є години → людина працювала, видаляти небезпечно
             console.warn(
-              `  ⚠ REVERSE CHECK: ${r.login} ${r.full_name} немає на листі, але МАЄ ГОДИНИ (bhp=${bhp}, history_id=${r.id}) — НЕ видалено, ` +
+              `  ⚠ REVERSE CHECK: ${r.login} ${r.full_name} немає на листі, але МАЄ ГОДИНИ (bhp=${bhp}, останні ${r.last_hours || "—"}, history_id=${r.id}) — НЕ видалено, ` +
                 (r.open_elsewhere
                   ? `зараз відкритий також: ${r.open_elsewhere} — схоже на переведення: допишіть на цьому аркуші останній день і статус`
                   : `інших відкритих періодів немає — перевірте, чи не видалили рядок помилково (або змінився паспорт)`),

@@ -7,13 +7,19 @@
 //   4) кого сняли с проверки (rezygnacja / BHP перенесли / период удалён из базы).
 //
 // Кто начал — берётся из worker_facility_history.bhp_date (то, что видит панель).
-// Сопоставление с таблицей: паспорт (workers.login) → если нет, по ФИО (без учёта порядка слов).
-// Состояние «кого не было» хранится в med_check_missing (db/migration_medcheck.sql).
+// Ищем сразу на нескольких листах (MED_SHEET_TAB через запятую). Колонки — по заголовкам:
+//   паспорт/PESEL — любая колонка, где в заголовке «paszport», «passport» или «pesel»
+//   («paszport», «Pesel», «Nr paszportu/ pesel»); фамилия — «nazwisko…»; имя — «imię»;
+//   даты — «odbiór…», «data …» (для пометки «старая запись»).
+// Сопоставление: паспорт (workers.login) или PESEL (workers.pesel) → если нет, по ФИО
+// (без учёта порядка слов). Состояние «кого не было» — в med_check_missing (db/migration_medcheck.sql).
 // Повторный запуск в тот же день идемпотентен.
 //
 // .env (рестарт pm2 после изменения):
 //   MED_SHEET_ID=1AbC...               — ID таблицы «badania lekarskie» (из URL между /d/ и /edit)
-//   MED_SHEET_TAB=Orzeczenia lekarskie — лист
+//   MED_SHEET_TAB=Orzeczenia lekarskie,SAL MED,ID Konin
+//                                      — листы через запятую (названия как на вкладках);
+//                                        лист из другой таблицы: <ID таблицы>!<лист>
 //   MED_CHECK_CHAT_ID=-100123,456      — куда слать (группа или люди, через запятую);
 //                                        пусто → админам панели с привязанным Telegram
 //   MED_CHECK_TIME=22:00
@@ -24,7 +30,10 @@
 //                                        но самая свежая дата его строки старше BHP на N дней (0 = выкл)
 //   MED_CHECK_SHOW_PASSPORT=1          — показывать паспорт у тех, кого нет (чтобы внести)
 //   MED_CHECK_SHOW_PRESENT=1           — перечислять поимённо тех, кто есть (0 = только число)
-//   MED_CHECK_MIN_ROWS=100             — если в таблице меньше строк — считаем, что чтение битое
+//   MED_CHECK_MIN_ROWS=100             — если на всех листах вместе меньше строк — считаем, что чтение битое
+//
+// Если какой-то лист не прочитался — сводка всё равно уходит, но с предупреждением сверху,
+// и состояние за этот день НЕ сохраняется (иначе завтра люди с того листа попали бы в «добавлены»).
 //   MED_CHECK_ENABLED=1                — 0 = выключить
 //
 // Таблица должна быть открыта на чтение для сервисного аккаунта из google-key.json (client_email).
@@ -46,7 +55,7 @@ const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
 const CFG = {
   enabled: String(process.env.MED_CHECK_ENABLED ?? "1").trim() !== "0",
   sheetId: String(process.env.MED_SHEET_ID || "").trim(),
-  sheetTab: String(process.env.MED_SHEET_TAB || "Orzeczenia lekarskie").trim(),
+  sheetTabs: csv(process.env.MED_SHEET_TAB || "Orzeczenia lekarskie"),
   time: String(process.env.MED_CHECK_TIME || "22:00").trim(),
   chatIds: csv(process.env.MED_CHECK_CHAT_ID),
   days: num(process.env.MED_CHECK_DAYS, 14),
@@ -54,6 +63,7 @@ const CFG = {
     ? String(process.env.MED_CHECK_FROM_DATE).trim()
     : null,
   skipStatuses: csv(process.env.MED_CHECK_SKIP_STATUSES ?? "rezygnacja"),
+  skipFacilities: csv(process.env.MED_CHECK_SKIP_FACILITIES).map((s) => s.toLowerCase() + "%"),
   oldDays: num(process.env.MED_CHECK_OLD_DAYS, 180),
   showPassport: String(process.env.MED_CHECK_SHOW_PASSPORT ?? "1").trim() !== "0",
   showPresent: String(process.env.MED_CHECK_SHOW_PRESENT ?? "1").trim() !== "0",
@@ -114,14 +124,21 @@ const CYR2LAT = {
   А: "A", В: "B", Е: "E", К: "K", М: "M", Н: "H", О: "O", Р: "P",
   С: "C", Т: "T", Х: "X", І: "I", Ї: "I", У: "Y",
 };
-// Два варианта ключа: как в import_sheets.cleanPassport (кириллица выбрасывается)
-// и с заменой похожих букв — чтобы совпало при любом из способов записи.
-function passportKeys(raw) {
+// Ключи для паспорта / PESEL. Варианты: как в import_sheets.cleanPassport (кириллица выбрасывается)
+// и с заменой похожих букв. PESEL (только цифры) дополняем нулём слева до 11 — Google Sheets
+// и импорт теряют ведущий ноль (03212911316 → 3212911316).
+function idKeys(raw) {
   const up = String(raw ?? "").toUpperCase();
   const stripped = up.replace(/[^A-Z0-9]/g, "");
   const mapped = up.replace(/./g, (ch) => CYR2LAT[ch] || ch).replace(/[^A-Z0-9]/g, "");
-  return [...new Set([stripped, mapped])].filter((k) => k.length >= 5);
+  const out = new Set();
+  for (const k of [stripped, mapped]) {
+    if (/^\d{9,11}$/.test(k)) out.add(k.padStart(11, "0"));
+    else if (k.length >= 5) out.add(k);
+  }
+  return [...out];
 }
+const passportKeys = idKeys; // старое имя
 // ФИО → набор слов без диакритики, отсортированный (порядок фамилия/имя не важен)
 function nameKey(...parts) {
   const s = parts
@@ -150,47 +167,65 @@ function getSheetsApi() {
   return sheetsApi;
 }
 
-async function fetchSheetRows() {
-  if (!CFG.sheetId) throw new Error("MED_SHEET_ID не задан в .env");
-  const tab = CFG.sheetTab.replace(/'/g, "''");
+// MED_SHEET_TAB: «Лист» (в таблице MED_SHEET_ID) или «<ID таблицы>!Лист»
+function tabSources() {
+  return CFG.sheetTabs.map((t) => {
+    const m = t.match(/^([A-Za-z0-9_-]{25,})!(.+)$/);
+    return m ? { ssId: m[1], tab: m[2].trim() } : { ssId: CFG.sheetId, tab: t };
+  });
+}
+
+async function fetchTab(ssId, tab) {
+  if (!ssId) throw new Error("MED_SHEET_ID не задан в .env");
   const resp = await getSheetsApi().spreadsheets.values.get({
-    spreadsheetId: CFG.sheetId,
-    range: `'${tab}'!A:Z`,
+    spreadsheetId: ssId,
+    range: `'${tab.replace(/'/g, "''")}'!A:Z`,
     valueRenderOption: "FORMATTED_VALUE",
   });
   return resp.data.values || [];
 }
 
-const hnorm = (s) => String(s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+// Все листы: [{ tab, rows }] или [{ tab, error }]
+async function fetchAllTabs() {
+  const out = [];
+  for (const s of tabSources()) {
+    try {
+      out.push({ tab: s.tab, rows: await fetchTab(s.ssId, s.tab) });
+    } catch (e) {
+      out.push({ tab: s.tab, error: e.message });
+    }
+  }
+  return out;
+}
 
-// Индекс таблицы: паспорт → строки, ФИО → строки
-function buildSheetIndex(rows) {
+const hnorm = (s) => String(s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+const isIdHeader = (x) => x.includes("paszport") || x.includes("passport") || x.includes("pesel");
+const isSurname = (x) => x.startsWith("nazwisko");
+
+// Один лист → в общий индекс. Возвращает число строк с данными; ошибка — throw.
+function indexTab(idx, rows, tab) {
   let h = -1;
   for (let i = 0; i < Math.min(10, rows.length); i++) {
-    if ((rows[i] || []).some((c) => hnorm(c).includes("paszport"))) {
+    const hr = (rows[i] || []).map(hnorm);
+    if (hr.some(isIdHeader) || hr.some(isSurname)) {
       h = i;
       break;
     }
   }
-  if (h < 0) throw new Error("в таблице не найден заголовок с колонкой «paszport»");
+  if (h < 0) throw new Error("нет строки заголовков (paszport / pesel / nazwisko)");
 
   const hdr = (rows[h] || []).map(hnorm);
-  const find = (pred) => hdr.findIndex(pred);
+  const all = (pred) => hdr.map((x, i) => (pred(x) ? i : -1)).filter((i) => i >= 0);
   const col = {
-    passport: find((x) => x.includes("paszport") || x.includes("passport")),
-    surname: find((x) => x === "nazwisko"),
-    name: find((x) => x === "imie" || x === "imię"),
-    facility: find((x) => x.startsWith("zakład") || x.startsWith("zaklad")),
-    pickup: find((x) => x.includes("odbiór") || x.includes("odbior")),
-    reported: find((x) => x.includes("zgłosz") || x.includes("zglosz")),
+    ids: all(isIdHeader),
+    surname: hdr.findIndex(isSurname),
+    name: hdr.findIndex((x) => x === "imie" || x === "imię"),
+    facility: hdr.findIndex((x) => x.startsWith("zakład") || x.startsWith("zaklad")),
+    dates: all((x) => x.startsWith("data") || x.includes("odbiór") || x.includes("odbior")),
   };
-  if (col.passport < 0 || col.surname < 0) {
-    throw new Error("в таблице нет колонок «paszport» / «nazwisko»");
-  }
+  if (!col.ids.length && col.surname < 0) throw new Error("нет колонок paszport / pesel / nazwisko");
 
   const cell = (r, i) => (i >= 0 ? String(r[i] ?? "").trim() : "");
-  const byPass = new Map();
-  const byName = new Map();
   const push = (map, k, v) => {
     if (!map.has(k)) map.set(k, []);
     map.get(k).push(v);
@@ -199,31 +234,58 @@ function buildSheetIndex(rows) {
   let dataRows = 0;
   for (let i = h + 1; i < rows.length; i++) {
     const r = rows[i] || [];
-    const pass = cell(r, col.passport);
+    const ids = col.ids.map((c) => cell(r, c)).filter(Boolean);
     const sur = cell(r, col.surname);
     const nm = cell(r, col.name);
-    if (!pass && !sur) continue;
+    if (!ids.length && !sur) continue;
     dataRows++;
-    const dates = [parseSheetDate(cell(r, col.pickup)), parseSheetDate(cell(r, col.reported))].filter(Boolean);
+    const dates = col.dates.map((c) => parseSheetDate(cell(r, c))).filter(Boolean);
     const entry = {
+      tab,
       row: i + 1,
-      passport: pass,
+      id: ids[0] || "",
       facility: cell(r, col.facility),
       date: dates.length ? dates.sort().pop() : null,
     };
-    for (const k of passportKeys(pass)) push(byPass, k, entry);
+    for (const v of ids) for (const k of idKeys(v)) push(idx.byId, k, entry);
     const nk = nameKey(sur, nm);
-    if (nk) push(byName, nk, entry);
+    if (nk) push(idx.byName, nk, entry);
   }
-  return { byPass, byName, dataRows, headerRow: h + 1 };
+  return dataRows;
 }
 
-// Ищем работника в таблице. null — нет в таблице.
+// Индекс по всем листам: ID (паспорт/PESEL) → строки, ФИО → строки.
+// input: [{ tab, rows } | { tab, error }] или просто rows одного листа (для тестов).
+function buildSheetIndex(input) {
+  const tabs = Array.isArray(input?.[0]) || !input?.length
+    ? [{ tab: CFG.sheetTabs[0] || "лист", rows: input || [] }]
+    : input;
+  const idx = { byId: new Map(), byName: new Map(), dataRows: 0, tabs: [], errors: [] };
+  for (const t of tabs) {
+    if (t.error) {
+      idx.errors.push({ tab: t.tab, error: t.error });
+      continue;
+    }
+    try {
+      const n = indexTab(idx, t.rows || [], t.tab);
+      idx.tabs.push({ tab: t.tab, rows: n });
+      idx.dataRows += n;
+    } catch (e) {
+      idx.errors.push({ tab: t.tab, error: e.message });
+    }
+  }
+  if (!idx.tabs.length) {
+    throw new Error(idx.errors.map((e) => `«${e.tab}»: ${e.error}`).join("; ") || "листы не заданы");
+  }
+  return idx;
+}
+
+// Ищем работника в таблице. null — нет ни на одном листе.
 function matchWorker(idx, w) {
   let how = null;
   let hits = [];
-  for (const k of passportKeys(w.login)) hits.push(...(idx.byPass.get(k) || []));
-  if (hits.length) how = "passport";
+  for (const k of [...idKeys(w.login), ...idKeys(w.pesel)]) hits.push(...(idx.byId.get(k) || []));
+  if (hits.length) how = "id";
   else {
     const nk = nameKey(w.full_name);
     if (nk && idx.byName.has(nk)) {
@@ -233,14 +295,16 @@ function matchWorker(idx, w) {
   }
   if (!hits.length) return null;
 
-  const uniq = [...new Map(hits.map((e) => [e.row, e])).values()].sort((a, b) => b.row - a.row);
+  const uniq = [...new Map(hits.map((e) => [`${e.tab}|${e.row}`, e])).values()];
   // «Старая запись»: у всех найденных строк есть дата, и самая свежая старше BHP на oldDays
   let old = null;
   if (CFG.oldDays > 0 && uniq.every((e) => e.date)) {
     const newest = uniq.map((e) => e.date).sort().pop();
     if (daysBetween(newest, w.bhp) > CFG.oldDays) old = newest;
   }
-  return { how, row: uniq[0].row, sheetPassport: uniq[0].passport, old };
+  // Показываем самую свежую строку (по дате, иначе последнюю)
+  const best = [...uniq].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || b.row - a.row)[0];
+  return { how, tab: best.tab, row: best.row, sheetId: best.id, old };
 }
 
 // ── База ─────────────────────────────────────────────────────
@@ -250,7 +314,7 @@ async function loadCandidates(fromIso, toIso) {
     SELECT h.worker_id,
            to_char(h.bhp_date, 'YYYY-MM-DD') AS bhp,
            h.status::text AS status,
-           w.full_name, w.login,
+           w.full_name, w.login, w.pesel,
            h.facility_id, f.name AS facility_name,
            (SELECT string_agg(DISTINCT c.full_name, ', ')
               FROM coordinator_facilities cf
@@ -261,10 +325,11 @@ async function loadCandidates(fromIso, toIso) {
     JOIN facilities f ON f.id = h.facility_id
     WHERE h.bhp_date BETWEEN $1::date AND $2::date
       AND NOT (h.status::text = ANY($3::text[]))
+      AND NOT (lower(f.name) LIKE ANY ($4::text[]))
       AND w.login NOT LIKE 'TEST_%'
     ORDER BY h.bhp_date, f.name, w.full_name
     `,
-    [fromIso, toIso, CFG.skipStatuses],
+   [fromIso, toIso, CFG.skipStatuses, CFG.skipFacilities],
   );
   // Один человек + одна дата BHP = одна запись (если периодов несколько — объекты через запятую)
   const map = new Map();
@@ -346,7 +411,7 @@ async function saveState(todayIso, missing, resolutions) {
     }
     await client.query("COMMIT");
   } catch (e) {
-    await client.query("ROLLBACK").catch(() => {});
+    await client.query("ROLLBACK").catch(() => { });
     throw e;
   } finally {
     client.release();
@@ -362,13 +427,15 @@ async function runCheck(opts = {}) {
   let winStart = addDays(today, -CFG.days);
   if (CFG.fromDate && CFG.fromDate > winStart) winStart = CFG.fromDate;
 
-  const rows = opts.rows || (await fetchSheetRows());
-  const idx = buildSheetIndex(rows);
+  const input = opts.tabs || opts.rows || (await fetchAllTabs());
+  const idx = buildSheetIndex(input);
   if (idx.dataRows < CFG.minRows) {
     throw new Error(
-      `в таблице всего ${idx.dataRows} строк (минимум ${CFG.minRows}) — похоже, чтение битое, сверку пропускаю`,
+      `на листах всего ${idx.dataRows} строк (минимум ${CFG.minRows}) — похоже, чтение битое, сверку пропускаю`,
     );
   }
+  // Не все листы прочитаны → отчёт неполный, состояние не сохраняем
+  const partial = idx.errors.length > 0;
 
   const candidates = winStart <= today ? await loadCandidates(winStart, today) : [];
   for (const c of candidates) c.match = matchWorker(idx, c);
@@ -393,13 +460,14 @@ async function runCheck(opts = {}) {
     else if (how === "expired") expired++;
   }
 
-  if (!opts.dryRun) await saveState(today, missingAll, resolutions);
+  if (!opts.dryRun && !partial) await saveState(today, missingAll, resolutions);
 
   const todayList = candidates.filter((c) => c.bhp === today);
   const res = {
     date: today,
     window: { from: winStart, to: today },
-    sheet: { rows: idx.dataRows, headerRow: idx.headerRow },
+    sheet: { rows: idx.dataRows, tabs: idx.tabs, errors: idx.errors },
+    partial,
     today: todayList,
     todayPresent: todayList.filter((c) => c.match),
     todayMissing: todayList.filter((c) => !c.match),
@@ -435,17 +503,25 @@ function groupByFacility(list) {
 const statusTag = (c) => (c.status && c.status !== "pracuje" ? ` <i>(${escHtml(c.status)})</i>` : "");
 const passTag = (c) => (CFG.showPassport && c.login ? ` · <code>${escHtml(c.login)}</code>` : "");
 const plural = (n) => `${n} дн.`;
+// Лист, где нашли, — если это не первый (основной) лист
+const tabTag = (m) => (m && m.tab && m.tab !== CFG.sheetTabs[0] ? ` · <i>${escHtml(m.tab)}</i>` : "");
+const fmtNum = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 
 function formatReport(r) {
   const d = parseIso(r.date);
   const L = [];
   L.push(`🩺 <b>Медосмотры · ${ddmmyyyy(r.date)} (${WD[d.getDay()]})</b>`);
   L.push("");
+  if (r.partial) {
+    for (const e of r.sheet.errors) L.push(`⚠️ Лист «${escHtml(e.tab)}» не прочитан: ${escHtml(e.error)}`);
+    L.push("⚠️ Сверка неполная: кто есть только на этом листе — показан как «нет». Состояние за сегодня не сохранено.");
+    L.push("");
+  }
   if (r.counts.today) {
     L.push(
       `BHP сегодня: <b>${r.counts.today}</b> — ✅ ${r.counts.todayPresent}` +
-        (r.counts.flagged ? ` (⚠️ проверить ${r.counts.flagged})` : "") +
-        ` · ❌ ${r.counts.todayMissing}`,
+      (r.counts.flagged ? ` (⚠️ проверить ${r.counts.flagged})` : "") +
+      ` · ❌ ${r.counts.todayMissing}`,
     );
   } else {
     L.push("BHP сегодня: никого.");
@@ -471,14 +547,14 @@ function formatReport(r) {
         if (c.match.how === "name") {
           flags.push(
             CFG.showPassport
-              ? `⚠️ найден по ФИО, в таблице паспорт <code>${escHtml(c.match.sheetPassport || "—")}</code>`
-              : "⚠️ найден по ФИО, паспорт не совпал",
+              ? `⚠️ найден по ФИО, в таблице <code>${escHtml(c.match.sheetId || "—")}</code>`
+              : "⚠️ найден по ФИО, паспорт/PESEL не совпал",
           );
         }
         if (c.match.old) flags.push(`⚠️ старая запись (${ddmmyyyy(c.match.old)})`);
         L.push(
-          `• ${escHtml(c.full_name)} — ${escHtml(c.facility_name)}${statusTag(c)}` +
-            (flags.length ? ` ${flags.join(", ")}` : ""),
+          `• ${escHtml(c.full_name)} — ${escHtml(c.facility_name)}${tabTag(c.match)}${statusTag(c)}` +
+          (flags.length ? ` ${flags.join(", ")}` : ""),
         );
       }
     } else {
@@ -486,7 +562,7 @@ function formatReport(r) {
       if (flagged.length) {
         L.push(`⚠️ <b>Есть в таблице, но проверить (${flagged.length})</b>`);
         for (const c of flagged) {
-          const why = c.match.how === "name" ? "по ФИО, паспорт не совпал" : `старая запись (${ddmmyyyy(c.match.old)})`;
+          const why = c.match.how === "name" ? "по ФИО, паспорт/PESEL не совпал" : `старая запись (${ddmmyyyy(c.match.old)})`;
           L.push(`• ${escHtml(c.full_name)} — ${escHtml(c.facility_name)}: ${why}`);
         }
       }
@@ -498,7 +574,7 @@ function formatReport(r) {
     L.push(`🟢 <b>Добавлены в таблицу сегодня (${r.added.length})</b>`);
     for (const c of r.added) {
       L.push(
-        `• ${escHtml(c.full_name)} — ${escHtml(c.facility_name)} · BHP ${ddmm(c.bhp)}, внесён через ${plural(daysBetween(c.bhp, r.date))}`,
+        `• ${escHtml(c.full_name)} — ${escHtml(c.facility_name)} · BHP ${ddmm(c.bhp)}, внесён через ${plural(daysBetween(c.bhp, r.date))}${tabTag(c.match)}`,
       );
     }
   }
@@ -527,6 +603,10 @@ function formatReport(r) {
 
   if (!r.counts.today && !r.counts.backlog && !r.counts.added && !r.counts.gone) {
     L.push("Хвостов нет ✅");
+  }
+  if (r.sheet.tabs.length > 1 || r.partial) {
+    L.push("");
+    L.push(`<i>Листы: ${r.sheet.tabs.map((t) => `${escHtml(t.tab)} ${fmtNum(t.rows)}`).join(" · ")}</i>`);
   }
   if (r.dryRun) {
     L.push("");
@@ -644,6 +724,7 @@ module.exports = {
   buildSheetIndex,
   matchWorker,
   passportKeys,
+  idKeys,
   nameKey,
   parseSheetDate,
 };

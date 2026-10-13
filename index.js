@@ -11,15 +11,11 @@ const {
   sendCoordinatorReports,
 } = require("./bot/handlers");
 const gaps = require("./bot/gaps");
+const medcheck = require("./bot/medcheck");
 const { requireAdmin } = require("./api/admin");
 const apiRoutes = require("./api/routes");
 const { router: adminRoutes } = require("./api/admin");
 const regional = require("./api/regional");
-const care = require("./api/care");
-const board = require("./api/board");
-const hoursReport = require("./bot/hours_report");
-const flow = require("./api/flow");
-const referral = require("./bot/referral");
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const app = express();
@@ -59,11 +55,6 @@ app.use(async (req, res, next) => {
 
 // ── API routes ────────────────────────────────────────────────
 app.use("/api/regional", regional.router);
-app.use("/api/care", care.router);
-app.use("/api/board", board.router);
-app.use("/api/flow", flow.router);
-app.use("/api/hours-report", hoursReport.router);
-app.use("/api/ref", require("./api/ref").router);
 app.use("/api", apiRoutes);
 app.use("/api", require("./api/reports"));
 app.use("/admin", adminRoutes);
@@ -72,9 +63,6 @@ app.use("/admin", adminRoutes);
 app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
   try {
-    // групи Telegram: запам'ятати чат для зведень «Wyjazdy / przyjazdy», боту працівників там робити нічого
-    if (await flow.onUpdate(req.body)) return;
-    if (await referral.onUpdate(bot, req.body)) return;
     await handleUpdate(bot, req.body);
   } catch (err) {
     console.error("Webhook error:", err.message);
@@ -155,6 +143,48 @@ app.post("/trigger/gap-spam", requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+// ── Медосмотры: BHP из базы ↔ таблица badania lekarskie ──────
+// Просмотр без отправки и без записи: GET /api/med-check/preview?session=<токен админа>[&date=2026-10-13]
+app.get("/api/med-check/preview", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || "")) ? req.query.date : undefined;
+    const r = await medcheck.runCheck({ date, dryRun: true });
+    res.json({ date: r.date, window: r.window, sheet: r.sheet, counts: r.counts, text: r.text });
+  } catch (e) {
+    console.error("[MedCheck] preview error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+// Отправить сводку сейчас: POST /trigger/med-check?session=<токен админа>  (&dry=1 — не сохранять состояние)
+app.post("/trigger/med-check", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    res.json(await medcheck.sendReport(bot, { dryRun: req.query.dry === "1" }));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Медосмотры: BHP из базы ↔ таблица badania lekarskie ──────
+// Просмотр без отправки и без записи: GET /api/med-check/preview?session=<токен админа>[&date=2026-10-13]
+app.get("/api/med-check/preview", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || "")) ? req.query.date : undefined;
+    const r = await medcheck.runCheck({ date, dryRun: true });
+    res.json({ date: r.date, window: r.window, sheet: r.sheet, counts: r.counts, text: r.text });
+  } catch (e) {
+    console.error("[MedCheck] preview error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+// Отправить сводку сейчас: POST /trigger/med-check?session=<токен админа>  (&dry=1 — не сохранять состояние)
+app.post("/trigger/med-check", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    res.json(await medcheck.sendReport(bot, { dryRun: req.query.dry === "1" }));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Start ─────────────────────────────────────────────────────
 // ── Start (HTTP + HTTPS) ──────────────────────────────────────
 const fs = require("fs");
@@ -220,7 +250,14 @@ function scheduleReminder() {
           await sendTabeleReminders(bot);
         }
       }
-      
+      if (current === "17:00") {
+        const key = `coord_report_${current}`;
+        if (!sentThisMinute.has(key)) {
+          await sendCoordinatorReports(bot);
+          sentThisMinute.add(key);
+          setTimeout(() => sentThisMinute.delete(key), 2 * 60 * 1000);
+        }
+      }
     } catch (e) {
       console.error("[Reminder] Error:", e.message);
     }
@@ -302,18 +339,8 @@ app.get("/api/facility-settings-all", requireAuth, async (req, res) => {
   }
 });
 
-app.patch("/api/facility-settings/:id", requireAuth, async (req, res) => {
+app.patch("/api/facility-settings/:id", async (req, res) => {
   const { field, value } = req.body;
-
-  // Admin — każdy zakład; koordynator — tylko z prawem edycji (główny / pomocniczy z edycją,
-  // Region → Przypisania). Pomocniczy „tylko podgląd” i regionalny widzą ustawienia, ale ich nie zmieniają.
-  if (!req.coordinator.is_admin) {
-    const can = await db.query(
-      `SELECT 1 FROM coordinator_facilities WHERE coordinator_id = $1 AND facility_id = $2 AND is_primary`,
-      [req.coordinator.coordinator_id, parseInt(req.params.id, 10) || 0],
-    );
-    if (!can.rows.length) return res.status(403).json({ error: "Tylko podgląd — brak prawa edycji na tym zakładzie" });
-  }
 
   const allowed = [
     "enable_advances",
@@ -356,9 +383,4 @@ app.patch("/api/facility-settings/:id", requireAuth, async (req, res) => {
 scheduleReminder();
 scheduleImport();
 regional.schedule(bot);
-require("./bot/care").schedule(bot);
-flow.schedule(bot);
-hoursReport.schedule(bot);
-referral.schedule(bot);
-
-//new
+medcheck.schedule(bot);

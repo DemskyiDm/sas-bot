@@ -191,6 +191,8 @@ const ARR_KINDS = {
   arr_unconf: `a.kind = 'new' AND a.status = 'unknown' AND a.move_date <= $4::date`,
   arr_rez: `a.kind = 'new' AND a.status = 'rezygnacja'`,
   tr_entered: `a.kind = 'transfer' AND a.status <> 'rezygnacja'`,
+  tr_fact: `a.kind = 'transfer' AND a.status NOT IN ('rezygnacja', 'unknown') AND a.move_date <= $4::date`,
+  arr_razem: `a.status NOT IN ('rezygnacja', 'unknown') AND a.move_date <= $4::date`,   // fakt + przeniesienia
   arr_all: `true`,
 };
 const DEP_KINDS = {
@@ -446,7 +448,7 @@ router.get("/orders", async (req, res) => {
     const cur = mondayOf(ck.today);
     const sites = await scopedSites(req.fscope, req.query);
     const keys = sites.map((s) => s.site_key);
-    const [ord, hc, dep, arr] = await Promise.all([
+    const [ord, hc, dep, arr, wk, st] = await Promise.all([
       query(`SELECT site_key, to_char(week_start, 'YYYY-MM-DD') AS week, qty, entered_at >= ($3::date)::timestamp AT TIME ZONE 'Europe/Warsaw' AS confirmed,
                     to_char(entered_at AT TIME ZONE 'Europe/Warsaw', 'YYYY-MM-DD HH24:MI') AS entered_at
                FROM flow.v_orders WHERE site_key = ANY($1::text[]) AND week_start BETWEEN $2::date AND $2::date + 21`,
@@ -460,7 +462,17 @@ router.get("/orders", async (req, res) => {
       query(`SELECT site_key, to_char(date_trunc('week', move_date), 'YYYY-MM-DD') AS week, count(*)::int AS n
                FROM flow.arrivals($2::date, $2::date + 27)
               WHERE site_key = ANY($1::text[]) AND kind = 'new' AND status <> 'rezygnacja' GROUP BY 1, 2`, [keys, cur]),
+      // bieżący tydzień: plan i fakt przyjazdów — jak w tabeli tygodnia i na obrazkach
+      weekData(cur, keys, ck.today),
+      getSettings(),
     ]);
+    const pace = paceOf(st, ck.today);
+    const W = Object.fromEntries(wk.rows.map((x) => [x.site_key, x]));
+    const weekOf = (x) => {
+      const fact = nz(x.arr_fact), tr = nz(x.tr_fact), plan = x.order_qty == null ? null : Number(x.order_qty);
+      return { plan, entered: nz(x.arr_entered), fact, tr, razem: fact + tr, unconf: nz(x.arr_unconf), rez: nz(x.arr_rez),
+        lag: isLagging(fact + tr, plan, pace) };
+    };
     const key = (s, w) => s + "|" + w;
     const O = Object.fromEntries(ord.rows.map((x) => [key(x.site_key, x.week), x]));
     const D = Object.fromEntries(dep.rows.map((x) => [key(x.site_key, x.week), x.n]));
@@ -476,11 +488,13 @@ router.get("/orders", async (req, res) => {
         site_key: s.site_key, region_name: s.region_name, coordinator_name: s.coordinator_name, coordinator_id: s.coordinator_id,
         headcount: H[s.site_key] || 0, current: cells[0], weeks: cells.slice(1),
         confirmed: cells.slice(1).every((c) => c.confirmed),
+        cw: weekOf(W[s.site_key] || {}),
       };
     });
-    const st = await getSettings();
+    const tw = totals(wk.rows);
+    const cwTotal = weekOf({ ...tw, order_qty: tw.sites_with_order ? tw.order_qty : null });
     res.json({ ok: true, today: ck.today, current_week: cur, weeks, deadline: st.orders_deadline,
-      confirm_from: confirmFrom(ck.today), can_edit_current: req.fscope.role === "all", rows });
+      confirm_from: confirmFrom(ck.today), can_edit_current: req.fscope.role === "all", pace, cw_total: cwTotal, rows });
   } catch (e) { fail(res, e); }
 });
 

@@ -64,6 +64,9 @@ const CFG = {
     : null,
   skipStatuses: csv(process.env.MED_CHECK_SKIP_STATUSES ?? "rezygnacja"),
   skipFacilities: csv(process.env.MED_CHECK_SKIP_FACILITIES).map((s) => s.toLowerCase() + "%"),
+  transferDays: num(process.env.MED_CHECK_TRANSFER_DAYS, 30),
+  freshDays: num(process.env.MED_CHECK_FRESH_DAYS, 3),
+  transferTag: String(process.env.MED_CHECK_TRANSFER_TAG || "").trim(),
   oldDays: num(process.env.MED_CHECK_OLD_DAYS, 180),
   showPassport: String(process.env.MED_CHECK_SHOW_PASSPORT ?? "1").trim() !== "0",
   showPresent: String(process.env.MED_CHECK_SHOW_PRESENT ?? "1").trim() !== "0",
@@ -133,7 +136,8 @@ function idKeys(raw) {
   const mapped = up.replace(/./g, (ch) => CYR2LAT[ch] || ch).replace(/[^A-Z0-9]/g, "");
   const out = new Set();
   for (const k of [stripped, mapped]) {
-    if (/^\d{9,11}$/.test(k)) out.add(k.padStart(11, "0"));
+    const dig = k.replace(/O/g, "0"); // PESEL, набранный с буквой O вместо нуля
+    if (/^\d{9,11}$/.test(dig)) out.add(dig.padStart(11, "0"));
     else if (k.length >= 5) out.add(k);
   }
   return [...out];
@@ -222,6 +226,7 @@ function indexTab(idx, rows, tab) {
     name: hdr.findIndex((x) => x === "imie" || x === "imię"),
     facility: hdr.findIndex((x) => x.startsWith("zakład") || x.startsWith("zaklad")),
     dates: all((x) => x.startsWith("data") || x.includes("odbiór") || x.includes("odbior")),
+    reported: hdr.findIndex((x) => x.includes("zgłosz") || x.includes("zglosz")),
   };
   if (!col.ids.length && col.surname < 0) throw new Error("нет колонок paszport / pesel / nazwisko");
 
@@ -240,12 +245,15 @@ function indexTab(idx, rows, tab) {
     if (!ids.length && !sur) continue;
     dataRows++;
     const dates = col.dates.map((c) => parseSheetDate(cell(r, c))).filter(Boolean);
+    const newest = dates.length ? dates.sort().pop() : null;
     const entry = {
       tab,
       row: i + 1,
       id: ids[0] || "",
       facility: cell(r, col.facility),
-      date: dates.length ? dates.sort().pop() : null,
+      date: newest,
+      // дата заявки: «data zgłoszenia przez koordyntora»; пустая или такой колонки нет — другие даты строки
+      fresh: (col.reported >= 0 && parseSheetDate(cell(r, col.reported))) || newest,
     };
     for (const v of ids) for (const k of idKeys(v)) push(idx.byId, k, entry);
     const nk = nameKey(sur, nm);
@@ -304,7 +312,8 @@ function matchWorker(idx, w) {
   }
   // Показываем самую свежую строку (по дате, иначе последнюю)
   const best = [...uniq].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || b.row - a.row)[0];
-  return { how, tab: best.tab, row: best.row, sheetId: best.id, old };
+  const freshest = uniq.map((e) => e.fresh).filter(Boolean).sort().pop() || null;
+  return { how, tab: best.tab, row: best.row, sheetId: best.id, old, freshest };
 }
 
 // ── База ─────────────────────────────────────────────────────
@@ -329,7 +338,7 @@ async function loadCandidates(fromIso, toIso) {
       AND w.login NOT LIKE 'TEST_%'
     ORDER BY h.bhp_date, f.name, w.full_name
     `,
-   [fromIso, toIso, CFG.skipStatuses, CFG.skipFacilities],
+    [fromIso, toIso, CFG.skipStatuses, CFG.skipFacilities],
   );
   // Один человек + одна дата BHP = одна запись (если периодов несколько — объекты через запятую)
   const map = new Map();
@@ -417,7 +426,98 @@ async function saveState(todayIso, missing, resolutions) {
     client.release();
   }
 }
+// ── Переводы с другого объекта ───────────────────────────────
+// Перевод = у человека есть период на ДРУГОМ объекте, который начался раньше нового BHP,
+// не rezygnacja и закончился не раньше чем за MED_CHECK_TRANSFER_DAYS до нового BHP (или ещё открыт).
+// Тот же BHP на другом объекте — это перенос строки между листами, не перевод.
+async function markTransfers(cands) {
+  if (!cands.length || CFG.transferDays <= 0) return;
+  const r = await db.query(
+    `
+    SELECT DISTINCT ON (t.worker_id, t.bhp)
+           t.worker_id, to_char(t.bhp, 'YYYY-MM-DD') AS bhp,
+           f.name AS from_facility, o.status::text AS from_status,
+                      to_char(o.last_work_date, 'YYYY-MM-DD') AS from_last,
+           to_char(o.bhp_date, 'YYYY-MM-DD') AS from_bhp
+    FROM unnest($1::int[], $2::date[], $3::text[]) AS t(worker_id, bhp, facs)
+    JOIN worker_facility_history o ON o.worker_id = t.worker_id
+    JOIN facilities f ON f.id = o.facility_id
+    WHERE NOT (f.name = ANY (string_to_array(t.facs, ', ')))
+      AND o.bhp_date < t.bhp
+      AND o.status::text <> 'rezygnacja'
+      AND (o.last_work_date IS NULL OR o.last_work_date >= t.bhp - $4::int)
+    ORDER BY t.worker_id, t.bhp, o.last_work_date DESC NULLS FIRST, o.bhp_date DESC
+    `,
+    [cands.map((c) => c.worker_id), cands.map((c) => c.bhp), cands.map((c) => c.facility_name), CFG.transferDays],
+  );
+  const m = new Map(r.rows.map((x) => [`${x.worker_id}|${x.bhp}`, x]));
+  for (const c of cands) {
+    const t = m.get(c.key);
+       if (t) c.transfer = { from: t.from_facility, bhp: t.from_bhp, status: t.from_status, last: t.from_last };
+  }
+}
 
+// Каждый перевод показываем один раз — в первый вечер, когда он попал в окно.
+// Повторный запуск в тот же день показывает тот же список.
+async function trackTransfers(todayIso, transfers, save) {
+  if (!transfers.length) return [];
+  const r = await db.query(
+    `SELECT m.worker_id, to_char(m.bhp_date, 'YYYY-MM-DD') AS bhp, to_char(m.first_seen, 'YYYY-MM-DD') AS first_seen
+       FROM med_check_transfer m
+       JOIN unnest($1::int[], $2::date[]) AS t(worker_id, bhp)
+         ON t.worker_id = m.worker_id AND t.bhp = m.bhp_date`,
+    [transfers.map((c) => c.worker_id), transfers.map((c) => c.bhp)],
+  );
+  const seen = new Map(r.rows.map((x) => [`${x.worker_id}|${x.bhp}`, x.first_seen]));
+  const show = transfers.filter((c) => !seen.has(c.key) || seen.get(c.key) === todayIso);
+  const fresh = show.filter((c) => !seen.has(c.key));
+  if (save && fresh.length) {
+    await db.query(
+      `INSERT INTO med_check_transfer (worker_id, bhp_date, first_seen)
+       SELECT t.worker_id, t.bhp, $3::date FROM unnest($1::int[], $2::date[]) AS t(worker_id, bhp)
+       ON CONFLICT DO NOTHING`,
+      [fresh.map((c) => c.worker_id), fresh.map((c) => c.bhp), todayIso],
+    );
+  }
+  return show.sort((a, b) => a.bhp.localeCompare(b.bhp) || a.facility_name.localeCompare(b.facility_name));
+}
+
+// «Есть в таблице» = есть строка, и дата заявки (data zgłoszenia) не раньше чем за MED_CHECK_FRESH_DAYS до BHP
+function formatTransfers(r) {
+  if (!r.transfers.length) return [];
+  const isFresh = (c) => !!(c.match && c.match.freshest && c.match.freshest >= addDays(c.bhp, -CFG.freshDays));
+  const yes = r.transfers.filter(isFresh);
+  const no = r.transfers.filter((c) => !isFresh(c));
+  const route = (c) =>
+    `${bold(c.transfer.from)}${c.transfer.bhp ? ` (BHP ${ddmmyyyy(c.transfer.bhp)})` : ""}` +
+    ` → ${bold(c.facility_name)} (BHP ${ddmmyyyy(c.bhp)})`;
+  const L = [
+    "",
+    `🔁 <b>Переведены с другого объекта (${r.transfers.length})</b> — проверить, нужен ли он вообще` +
+      (CFG.transferTag ? ` · ${escHtml(CFG.transferTag)}` : ""),
+  ];
+  if (yes.length) {
+    L.push(`✅ <b>Есть в таблице (${yes.length})</b>`);
+    for (const c of yes) {
+      L.push(
+        `• ${bold(c.full_name)} — ${route(c)} · zgłoszenie ${ddmmyyyy(c.match.freshest)}${tabTag(c.match)}` +
+          (c.match.how === "name" ? " ⚠️ по ФИО" : ""),
+      );
+    }
+  }
+  if (no.length) {
+    L.push(`❌ <b>Нет в таблице (${no.length})</b>`);
+    for (const c of no) {
+      const note = !c.match
+        ? ""
+        : c.match.freshest
+          ? ` <i>(в таблице только старая запись ${ddmmyyyy(c.match.freshest)})</i>`
+          : " <i>(в таблице есть, но без даты)</i>";
+      L.push(`• ${bold(c.full_name)}${passTag(c)} — ${route(c)}${note}`);
+    }
+  }
+  return L;
+}
 // ── Сверка ───────────────────────────────────────────────────
 // opts.date  — дата сверки (YYYY-MM-DD), по умолчанию сегодня
 // opts.dryRun — ничего не записывать в med_check_missing
@@ -437,8 +537,13 @@ async function runCheck(opts = {}) {
   // Не все листы прочитаны → отчёт неполный, состояние не сохраняем
   const partial = idx.errors.length > 0;
 
-  const candidates = winStart <= today ? await loadCandidates(winStart, today) : [];
-  for (const c of candidates) c.match = matchWorker(idx, c);
+  const all = winStart <= today ? await loadCandidates(winStart, today) : [];
+  for (const c of all) c.match = matchWorker(idx, c);
+  await markTransfers(all);
+  // Переведённые — отдельным разделом на проверку, в ❌ / хвосты не попадают
+  const transfersAll = all.filter((c) => c.transfer);
+  const transferKeys = new Set(transfersAll.map((c) => c.key));
+  const candidates = all.filter((c) => !c.transfer);
   const candByKey = new Map(candidates.map((c) => [c.key, c]));
 
   const missingAll = candidates.filter((c) => !c.match);
@@ -452,6 +557,11 @@ async function runCheck(opts = {}) {
   let expired = 0;
   for (const t of tracked) {
     if (missingKeys.has(t.key)) continue; // всё ещё нет — останется открытым
+    if (transferKeys.has(t.key)) {
+      // оказался переводом — дальше только в разделе 🔁
+      resolutions.push({ worker_id: t.worker_id, bhp: t.bhp, how: "gone" });
+      continue;
+    }
     const c = candByKey.get(t.key);
     const how = c ? "sheet" : t.bhp < winStart ? "expired" : "gone";
     resolutions.push({ worker_id: t.worker_id, bhp: t.bhp, how });
@@ -460,7 +570,9 @@ async function runCheck(opts = {}) {
     else if (how === "expired") expired++;
   }
 
-  if (!opts.dryRun && !partial) await saveState(today, missingAll, resolutions);
+  const save = !opts.dryRun && !partial;
+  if (save) await saveState(today, missingAll, resolutions);
+  const transfers = await trackTransfers(today, transfersAll, save);
 
   const todayList = candidates.filter((c) => c.bhp === today);
   const res = {
@@ -475,6 +587,7 @@ async function runCheck(opts = {}) {
     added,
     gone,
     expired,
+    transfers,
     dryRun: !!opts.dryRun,
   };
   res.counts = {
@@ -486,6 +599,7 @@ async function runCheck(opts = {}) {
     added: added.length,
     gone: gone.length,
     expired,
+    transfers: transfers.length,
   };
   res.text = formatReport(res);
   return res;
@@ -501,6 +615,7 @@ function groupByFacility(list) {
   return m;
 }
 const statusTag = (c) => (c.status && c.status !== "pracuje" ? ` <i>(${escHtml(c.status)})</i>` : "");
+const bold = (s) => `<b>${escHtml(s)}</b>`;
 const passTag = (c) => (CFG.showPassport && c.login ? ` · <code>${escHtml(c.login)}</code>` : "");
 const plural = (n) => `${n} дн.`;
 // Лист, где нашли, — если это не первый (основной) лист
@@ -520,21 +635,22 @@ function formatReport(r) {
   if (r.counts.today) {
     L.push(
       `BHP сегодня: <b>${r.counts.today}</b> — ✅ ${r.counts.todayPresent}` +
-      (r.counts.flagged ? ` (⚠️ проверить ${r.counts.flagged})` : "") +
-      ` · ❌ ${r.counts.todayMissing}`,
+        (r.counts.flagged ? ` (⚠️ проверить ${r.counts.flagged})` : "") +
+        ` · ❌ ${r.counts.todayMissing}`,
     );
   } else {
     L.push("BHP сегодня: никого.");
   }
   if (r.counts.added) L.push(`🟢 Добавлены сегодня: <b>${r.counts.added}</b>`);
   if (r.counts.backlog) L.push(`🔴 С прошлых дней всё ещё нет: <b>${r.counts.backlog}</b>`);
+  if (r.counts.transfers) L.push(`🔁 Переведены с другого объекта: <b>${r.counts.transfers}</b> — на проверку`);
 
   if (r.todayMissing.length) {
     L.push("");
     L.push(`❌ <b>BHP сегодня — нет в таблице (${r.todayMissing.length})</b>`);
     for (const [fac, g] of groupByFacility(r.todayMissing)) {
       L.push(`🏭 <b>${escHtml(fac)}</b>${g.coords ? ` — ${escHtml(g.coords)}` : ""}`);
-      for (const c of g.items) L.push(`• ${escHtml(c.full_name)}${passTag(c)}${statusTag(c)}`);
+      for (const c of g.items) L.push(`• ${bold(c.full_name)}${passTag(c)}${statusTag(c)}`);
     }
   }
 
@@ -553,8 +669,8 @@ function formatReport(r) {
         }
         if (c.match.old) flags.push(`⚠️ старая запись (${ddmmyyyy(c.match.old)})`);
         L.push(
-          `• ${escHtml(c.full_name)} — ${escHtml(c.facility_name)}${tabTag(c.match)}${statusTag(c)}` +
-          (flags.length ? ` ${flags.join(", ")}` : ""),
+          `• ${bold(c.full_name)} — ${bold(c.facility_name)}${tabTag(c.match)}${statusTag(c)}` +
+            (flags.length ? ` ${flags.join(", ")}` : ""),
         );
       }
     } else {
@@ -563,18 +679,20 @@ function formatReport(r) {
         L.push(`⚠️ <b>Есть в таблице, но проверить (${flagged.length})</b>`);
         for (const c of flagged) {
           const why = c.match.how === "name" ? "по ФИО, паспорт/PESEL не совпал" : `старая запись (${ddmmyyyy(c.match.old)})`;
-          L.push(`• ${escHtml(c.full_name)} — ${escHtml(c.facility_name)}: ${why}`);
+          L.push(`• ${bold(c.full_name)} — ${bold(c.facility_name)}: ${why}`);
         }
       }
     }
   }
+
+  L.push(...formatTransfers(r));
 
   if (r.added.length) {
     L.push("");
     L.push(`🟢 <b>Добавлены в таблицу сегодня (${r.added.length})</b>`);
     for (const c of r.added) {
       L.push(
-        `• ${escHtml(c.full_name)} — ${escHtml(c.facility_name)} · BHP ${ddmm(c.bhp)}, внесён через ${plural(daysBetween(c.bhp, r.date))}${tabTag(c.match)}`,
+        `• ${bold(c.full_name)} — ${bold(c.facility_name)} · BHP ${ddmm(c.bhp)}, внесён через ${plural(daysBetween(c.bhp, r.date))}${tabTag(c.match)}`,
       );
     }
   }
@@ -587,7 +705,7 @@ function formatReport(r) {
       L.push(`🏭 <b>${escHtml(fac)}</b>${g.coords ? ` — ${escHtml(g.coords)}` : ""}`);
       for (const c of g.items) {
         L.push(
-          `• ${escHtml(c.full_name)}${passTag(c)} — BHP ${ddmm(c.bhp)} (${plural(daysBetween(c.bhp, r.date))})${statusTag(c)}`,
+          `• ${bold(c.full_name)}${passTag(c)} — BHP ${ddmm(c.bhp)} (${plural(daysBetween(c.bhp, r.date))})${statusTag(c)}`,
         );
       }
     }
@@ -597,11 +715,11 @@ function formatReport(r) {
     L.push("");
     L.push(`➖ <b>Сняты с проверки (${r.gone.length})</b> — rezygnacja, BHP перенесли или период удалён из базы`);
     for (const t of r.gone) {
-      L.push(`• ${escHtml(t.full_name || `#${t.worker_id}`)}${t.facility_name ? ` — ${escHtml(t.facility_name)}` : ""} · BHP ${ddmm(t.bhp)}`);
+      L.push(`• ${bold(t.full_name || `#${t.worker_id}`)}${t.facility_name ? ` — ${bold(t.facility_name)}` : ""} · BHP ${ddmm(t.bhp)}`);
     }
   }
 
-  if (!r.counts.today && !r.counts.backlog && !r.counts.added && !r.counts.gone) {
+  if (!r.counts.today && !r.counts.backlog && !r.counts.added && !r.counts.gone && !r.counts.transfers) {
     L.push("Хвостов нет ✅");
   }
   if (r.sheet.tabs.length > 1 || r.partial) {

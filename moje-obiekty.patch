@@ -1,0 +1,485 @@
+--- a/api/regional.js
++++ b/api/regional.js
+@@ -13,6 +13,8 @@
+ 
+ // ── Доступ ────────────────────────────────────────────────────────────
+ // Адмін бачить усе. Регіональний — тільки регіони, де він призначений.
++// Координатор об'єкта (role = 'coord') — тільки перегляд: свої об'єкти (поточна прив'язка
++// в reg.site_owner) і об'єкти, де він відповідальний за відкриту картку. Може додавати нотатки.
+ async function getScope(coordinator) {
+   const r = await db.query(
+     `SELECT r.id, r.name,
+@@ -27,13 +29,30 @@
+       ORDER BY r.name`,
+     [!!coordinator.is_admin, coordinator.coordinator_id],
+   );
+-  return { isAdmin: !!coordinator.is_admin, regions: r.rows, regionIds: r.rows.map((x) => x.id) };
++  const isAdmin = !!coordinator.is_admin;
++  const regionIds = r.rows.map((x) => x.id);
++  let siteKeys = [];
++  if (!isAdmin && regionIds.length === 0) {
++    const s = await db.query(
++      `SELECT site_key FROM reg.site_owner WHERE valid_to IS NULL AND coordinator_id = $1
++       UNION
++       SELECT site_key FROM reg.red_cards WHERE status <> 'closed' AND owner_coordinator_id = $1
++       ORDER BY 1`,
++      [coordinator.coordinator_id],
++    );
++    siteKeys = s.rows.map((x) => x.site_key);
++  }
++  const role = isAdmin ? "admin" : regionIds.length ? "lead" : siteKeys.length ? "coord" : "none";
++  return {
++    isAdmin, role, me: coordinator.coordinator_id,
++    regions: role === "coord" ? [] : r.rows, regionIds, siteKeys,
++  };
+ }
+ 
+ async function requireRegional(req, res, next) {
+   try {
+     req.scope = await getScope(req.coordinator);
+-    if (!req.scope.isAdmin && req.scope.regionIds.length === 0)
++    if (req.scope.role === "none")
+       return res.status(403).json({ ok: false, error: "Brak dostępu do sekcji Region" });
+     next();
+   } catch (e) {
+@@ -41,13 +60,26 @@
+   }
+ }
+ 
++// Адмін і регіональні: заповнення карток, порівняння координаторів
++function requireManager(req, res, next) {
++  if (req.scope.role === "coord")
++    return res.status(403).json({ ok: false, error: "Dostępne dla koordynatorów regionalnych" });
++  next();
++}
++
+ function requireAdminOnly(req, res, next) {
+   if (!req.coordinator.is_admin) return res.status(403).json({ ok: false, error: "Admin only" });
+   next();
+ }
+ 
+-// region=all | none | <id>  →  { sql, params } для умови по region_id
+-function regionClause(scope, region, col, params) {
++// region=all | none | <id>  →  { sql, params } для умови по region_id.
++// Для координатора об'єкта — умова по об'єктах (siteCol); без siteCol він не бачить нічого.
++function regionClause(scope, region, col, params, siteCol) {
++  if (scope.role === "coord") {
++    if (!siteCol) return "false";
++    params.push(scope.siteKeys);
++    return `${siteCol} = ANY($${params.length}::text[])`;
++  }
+   if (region === "none") {
+     if (!scope.isAdmin) return "false";
+     return `${col} IS NULL`;
+@@ -95,6 +127,7 @@
+ // Доступ до конкретного об'єкта: регіон зі знімку тижня або поточна прив'язка
+ async function siteAllowed(scope, siteKey) {
+   if (scope.isAdmin) return true;
++  if (scope.role === "coord") return scope.siteKeys.includes(siteKey);
+   const r = await db.query(
+     `SELECT 1 FROM reg.site_owner
+       WHERE site_key = $1 AND valid_to IS NULL AND region_id = ANY($2::int[])
+@@ -134,7 +167,10 @@
+ router.get("/me", async (req, res) => {
+   try {
+     const scope = await getScope(req.coordinator);
+-    res.json({ ok: true, is_admin: scope.isAdmin, regions: scope.regions, has_access: scope.isAdmin || scope.regionIds.length > 0 });
++    res.json({
++      ok: true, is_admin: scope.isAdmin, role: scope.role, me: scope.me,
++      regions: scope.regions, sites: scope.siteKeys.length, has_access: scope.role !== "none",
++    });
+   } catch (e) {
+     res.status(500).json({ ok: false, error: e.message });
+   }
+@@ -162,7 +198,7 @@
+   }
+ });
+ 
+-router.get("/coordinators-list", async (req, res) => {
++router.get("/coordinators-list", requireManager, async (req, res) => {
+   try {
+     const r = await db.query(
+       `SELECT id, full_name FROM public.coordinators
+@@ -182,7 +218,7 @@
+     const week = isDate(req.query.week) ? req.query.week : await latestWeek();
+     if (!week) return res.json({ ok: true, week: null, sites: [], kpi: null });
+     const params = [week];
+-    const where = regionClause(req.scope, req.query.region, "s.region_id", params);
++    const where = regionClause(req.scope, req.query.region, "s.region_id", params, "s.site_key");
+ 
+     const sites = await db.query(
+       `SELECT s.site_key, s.region_id, rg.name AS region_name,
+@@ -195,7 +231,7 @@
+               (SELECT json_agg(json_build_object('w', to_char(h.week_end,'YYYY-MM-DD'), 's', h.status) ORDER BY h.week_end)
+                  FROM reg.v_snap h
+                 WHERE h.site_key = s.site_key AND h.week_end BETWEEN $1::date - 49 AND $1::date) AS trend,
+-              card.id AS card_id, card.status AS card_status,
++              card.id AS card_id, card.status AS card_status, card.owner_coordinator_id AS card_owner_id,
+               to_char(card.due_at, 'YYYY-MM-DD HH24:MI') AS card_due,
+               (card.status = 'open' AND card.due_at < now()) AS card_overdue
+          FROM reg.v_snap s
+@@ -217,8 +253,8 @@
+ 
+     // ── Показники регіону (квартал тижня) ──
+     const kp = [week];
+-    const kWhere = regionClause(req.scope, req.query.region, "s.region_id", kp);
+-    const kWhereCards = kWhere.replace(/s\.region_id/g, "c.region_id");
++    const kWhere = regionClause(req.scope, req.query.region, "s.region_id", kp, "s.site_key");
++    const kWhereCards = kWhere.replace(/s\.region_id/g, "c.region_id").replace(/s\.site_key/g, "c.site_key");
+     const kpi = await db.query(
+       `WITH q AS (SELECT date_trunc('quarter', $1::date)::date AS qs),
+        wk AS (
+@@ -280,7 +316,7 @@
+ async function boardPeriod(req, res, per) {
+   try {
+     const params = [per.from, per.to];
+-    const where = regionClause(req.scope, req.query.region, "o.region_id", params);
++    const where = regionClause(req.scope, req.query.region, "o.region_id", params, "r.site_key");
+     const sites = await db.query(
+       `WITH r AS (SELECT * FROM reg.rag_period($1::date, $2::date))
+        SELECT r.site_key, o.region_id, rg.name AS region_name,
+@@ -298,7 +334,7 @@
+                  FROM (SELECT to_char(h.week_end, 'YYYY-MM-DD') AS w, h.status AS s FROM reg.v_snap h
+                         WHERE h.site_key = r.site_key AND h.week_end BETWEEN $1::date AND $2::date
+                         ORDER BY h.week_end DESC LIMIT 26) x) AS trend,
+-              card.id AS card_id, card.status AS card_status,
++              card.id AS card_id, card.status AS card_status, card.owner_coordinator_id AS card_owner_id,
+               to_char(card.due_at, 'YYYY-MM-DD HH24:MI') AS card_due,
+               (card.status = 'open' AND card.due_at < now()) AS card_overdue
+          FROM r
+@@ -321,8 +357,8 @@
+ 
+     // Показники за період: частка людей у червоних — із тижневих знімків усередині періоду
+     const kp = [per.from, per.to];
+-    const kWhere = regionClause(req.scope, req.query.region, "s.region_id", kp);
+-    const kWhereCards = kWhere.replace(/s\.region_id/g, "c.region_id");
++    const kWhere = regionClause(req.scope, req.query.region, "s.region_id", kp, "s.site_key");
++    const kWhereCards = kWhere.replace(/s\.region_id/g, "c.region_id").replace(/s\.site_key/g, "c.site_key");
+     const kpi = await db.query(
+       `WITH wk AS (
+          SELECT s.week_end,
+@@ -530,7 +566,7 @@
+ });
+ 
+ // ── Координатори регіону ──────────────────────────────────────────────
+-router.get("/coordinators", async (req, res) => {
++router.get("/coordinators", requireManager, async (req, res) => {
+   try {
+     const per = periodOf(req.query);
+     if (per) {
+@@ -593,7 +629,7 @@
+ router.get("/cards", async (req, res) => {
+   try {
+     const params = [];
+-    const where = regionClause(req.scope, req.query.region, "rc.region_id", params);
++    const where = regionClause(req.scope, req.query.region, "rc.region_id", params, "rc.site_key");
+     const st = req.query.status || "active";
+     const stWhere = {
+       active: `rc.status <> 'closed'`,
+@@ -602,7 +638,7 @@
+       all: `true`,
+     }[st] || `rc.status <> 'closed'`;
+     const r = await db.query(
+-      `SELECT rc.id, rc.site_key, rc.status, rg.name AS region_name,
++      `SELECT rc.id, rc.site_key, rc.status, rg.name AS region_name, rc.owner_coordinator_id,
+               to_char(rc.opened_week,'YYYY-MM-DD') AS opened_week,
+               to_char(rc.due_at,'YYYY-MM-DD HH24:MI') AS due_at,
+               to_char(rc.filled_at,'YYYY-MM-DD HH24:MI') AS filled_at,
+@@ -633,11 +669,12 @@
+   const r = await db.query(`SELECT * FROM reg.red_cards WHERE id = $1`, [id]);
+   const card = r.rows[0];
+   if (!card) return { error: 404 };
++  if (scope.role === "coord") return scope.siteKeys.includes(card.site_key) ? { card } : { error: 403 };
+   if (!scope.isAdmin && !scope.regionIds.includes(card.region_id)) return { error: 403 };
+   return { card };
+ }
+ 
+-router.patch("/cards/:id", async (req, res) => {
++router.patch("/cards/:id", requireManager, async (req, res) => {
+   try {
+     const { card, error } = await cardInScope(req.scope, req.params.id);
+     if (error) return res.status(error).json({ ok: false, error: error === 404 ? "Not found" : "Forbidden" });
+@@ -651,16 +688,31 @@
+     if (!owner_coordinator_id) missing.push("odpowiedzialny");
+     if (missing.length) return res.status(400).json({ ok: false, error: "Uzupełnij: " + missing.join(", ") });
+ 
++    const owner = parseInt(owner_coordinator_id, 10);
++    const plan = String(action_plan).trim();
++    const prev = await db.query(
++      `SELECT owner_coordinator_id, status, reason_code, action_plan,
++              to_char(action_due, 'YYYY-MM-DD') AS action_due
++         FROM reg.red_cards WHERE id = $1`,
++      [card.id],
++    );
++    const p = prev.rows[0];
+     const r = await db.query(
+       `UPDATE reg.red_cards SET
+           reason_code = $2, reason_note = NULLIF($3, ''), action_plan = $4, action_due = $5::date,
+           owner_coordinator_id = $6, status = 'filled',
+           filled_at = COALESCE(filled_at, now()), filled_by = COALESCE(filled_by, $7)
+         WHERE id = $1 RETURNING id, status, to_char(filled_at,'YYYY-MM-DD HH24:MI') AS filled_at`,
+-      [card.id, reason_code, reason_note || "", String(action_plan).trim(), action_due,
+-        parseInt(owner_coordinator_id, 10), req.coordinator.coordinator_id],
++      [card.id, reason_code, reason_note || "", plan, action_due, owner, req.coordinator.coordinator_id],
+     );
+     res.json({ ok: true, data: r.rows[0] });
++
++    // Telegram відповідальному: призначили або змінили причину / план / термін (себе не повідомляємо)
++    const assigned = p.owner_coordinator_id !== owner || p.status === "open";
++    const changed = p.reason_code !== reason_code || p.action_plan !== plan || p.action_due !== action_due;
++    if (owner !== req.coordinator.coordinator_id && (assigned || changed))
++      notifyCardOwner(card.id, assigned ? "assigned" : "updated", req.coordinator.coordinator_id)
++        .catch((e) => console.error("[regional] notify owner", e.message));
+   } catch (e) {
+     res.status(500).json({ ok: false, error: e.message });
+   }
+@@ -676,6 +728,10 @@
+       card.id, req.coordinator.coordinator_id, text.slice(0, 2000),
+     ]);
+     res.json({ ok: true });
++    // нотатку координатора об'єкта бачить регіональний — і в Telegram
++    if (req.scope.role === "coord")
++      notifyLeadsNote(card, req.coordinator.coordinator_id, text.slice(0, 2000))
++        .catch((e) => console.error("[regional] notify note", e.message));
+   } catch (e) {
+     res.status(500).json({ ok: false, error: e.message });
+   }
+@@ -909,6 +965,54 @@
+   }
+ }
+ 
++// Бот для повідомлень одразу після дії в панелі (задається в schedule / setBot)
++let BOT = null;
++function setBot(bot) { BOT = bot; }
++
++// Відповідальному за картку: призначили або змінили причину / план / термін
++async function notifyCardOwner(cardId, kind, byId) {
++  if (!BOT) return;
++  const r = await db.query(
++    `SELECT rc.site_key, rc.action_plan, rc.reason_note, to_char(rc.action_due, 'DD.MM.YYYY') AS due,
++            rs.label AS reason, o.telegram_chat_id AS chat, b.full_name AS by_name
++       FROM reg.red_cards rc
++       JOIN public.coordinators o ON o.id = rc.owner_coordinator_id AND o.is_active
++       LEFT JOIN reg.reasons rs ON rs.code = rc.reason_code
++       LEFT JOIN public.coordinators b ON b.id = $2
++      WHERE rc.id = $1`,
++    [cardId, byId],
++  );
++  const x = r.rows[0];
++  if (!x || !x.chat) return;
++  const lines = [
++    kind === "assigned"
++      ? `📋 Вас призначено відповідальним за червоний об'єкт ${x.site_key}.`
++      : `📋 Оновлено картку червоного об'єкта ${x.site_key}, де ви відповідальний.`,
++    "",
++    `Причина: ${x.reason || "—"}${x.reason_note ? " — " + x.reason_note : ""}`,
++    `План: ${x.action_plan || "—"}`,
++    `Термін: ${x.due || "—"}`,
++  ];
++  if (x.by_name) lines.push(`${kind === "assigned" ? "Призначив" : "Оновив"}: ${x.by_name}`);
++  lines.push("", "Показники, люди під ризиком і нотатки про хід роботи — у панелі: 🚦 Region → об'єкт.");
++  await safeSend(BOT, x.chat, lines.join("\n"));
++}
++
++// Регіональним: координатор об'єкта додав нотатку до картки
++async function notifyLeadsNote(card, byId, text) {
++  if (!BOT || !card.region_id) return;
++  const r = await db.query(
++    `SELECT c.telegram_chat_id AS chat,
++            (SELECT full_name FROM public.coordinators WHERE id = $2) AS author
++       FROM reg.region_leads rl
++       JOIN public.coordinators c ON c.id = rl.coordinator_id AND c.is_active
++      WHERE rl.region_id = $1 AND c.telegram_chat_id IS NOT NULL AND c.id <> $2`,
++    [card.region_id, byId],
++  );
++  for (const x of r.rows)
++    await safeSend(BOT, x.chat, `💬 ${x.author || "Координатор"} — нотатка по об'єкту ${card.site_key}:\n${text}`);
++}
++
+ async function adminChats() {
+   const r = await db.query(
+     `SELECT DISTINCT c.telegram_chat_id FROM public.coordinator_auth ca
+@@ -992,6 +1096,7 @@
+ 
+ // Планувальник: пн 06:00 — знімок минулого тижня; пн–пт 09:00 — нагадування
+ function schedule(bot) {
++  setBot(bot);
+   const done = new Set();
+   setInterval(async () => {
+     const now = new Date();
+@@ -1017,4 +1122,4 @@
+   }, 30 * 1000);
+ }
+ 
+-module.exports = { router, schedule, takeSnapshot, sendCardReminders, notifyNewRed };
++module.exports = { router, schedule, setBot, takeSnapshot, sendCardReminders, notifyNewRed };
+--- a/public/js/region.js
++++ b/public/js/region.js
+@@ -86,13 +86,20 @@
+     document.querySelector(".rg-toolbar").style.display = "none";
+     document.querySelectorAll(".nav-item[data-view]").forEach((el) => (el.style.display = "none"));
+     document.getElementById("content").innerHTML =
+-      `<div class="noaccess">🚦 Sekcja <b>Region</b> jest dostępna dla koordynatorów regionalnych.<br>
+-       Jeśli prowadzisz region, poproś kierownika działu o przypisanie w ustawieniach sekcji.</div>`;
++      `<div class="noaccess">🚦 Sekcja <b>Region</b> jest dostępna dla koordynatorów regionalnych
++       i koordynatorów przypisanych do obiektów.<br>
++       Jeśli prowadzisz region lub obiekt, poproś kierownika działu o przypisanie w ustawieniach sekcji.</div>`;
+     return;
+   }
++  // koordynator obiektu: tylko podgląd swoich obiektów + notatki do kart
++  ST.ro = me.role === "coord";
+   const selR = document.getElementById("selRegion");
+   const opts = [];
+-  if (me.is_admin) {
++  if (ST.ro) {
++    opts.push(`<option value="all">Moje obiekty</option>`);
++    selR.disabled = true;
++    document.querySelector('.nav-item[data-view="coords"]').style.display = "none";
++  } else if (me.is_admin) {
+     opts.push(`<option value="all">Wszystkie regiony</option>`);
+     opts.push(`<option value="none">Bez regionu</option>`);
+   } else if (me.regions.length > 1) {
+@@ -107,7 +114,7 @@
+   if (savedRegion && [...selR.options].some((o) => o.value === savedRegion)) selR.value = savedRegion;
+   if (me.is_admin) document.getElementById("navSettings").style.display = "";
+ 
+-  const [weeks, reasons, coords] = await Promise.all([api("/weeks"), api("/reasons"), api("/coordinators-list")]);
++  const [weeks, reasons, coords] = await Promise.all([api("/weeks"), api("/reasons"), ST.ro ? null : api("/coordinators-list")]);
+   ST.reasons = (reasons && reasons.data) || [];
+   ST.coordinators = (coords && coords.data) || [];
+   const selW = document.getElementById("selWeek");
+@@ -198,12 +205,14 @@
+ 
+ function showView(v) {
+   if (v === "settings" && !(ST.me && ST.me.is_admin)) v = "board";
++  if (v === "coords" && ST.ro) v = "board";
+   ST.view = v;
+   location.hash = v;
+   document.querySelectorAll(".rg-view").forEach((el) => el.classList.toggle("active", el.id === "view-" + v));
+   document.querySelectorAll(".nav-item[data-view]").forEach((el) => el.classList.toggle("active", el.dataset.view === v));
+-  document.getElementById("topTitle").textContent =
+-    { board: "Region — tablica", coords: "Region — koordynatorzy", cards: "Region — karty", settings: "Region — ustawienia" }[v];
++  document.getElementById("topTitle").textContent = (ST.ro
++    ? { board: "Moje obiekty", cards: "Moje obiekty — karty" }
++    : { board: "Region — tablica", coords: "Region — koordynatorzy", cards: "Region — karty", settings: "Region — ustawienia" })[v];
+   loadView();
+ }
+ 
+@@ -266,9 +275,11 @@
+ 
+ function cardTag(s) {
+   if (!s.card_id) return `<span class="muted">—</span>`;
+-  if (s.card_status === "filled") return `<span class="card-tag filled">✓ wypełniona</span>`;
+-  if (s.card_overdue) return `<span class="card-tag late">po terminie</span>`;
+-  return `<span class="card-tag open">do ${dd(s.card_due.substring(0, 10))}</span>`;
++  const mine = ST.ro && s.card_owner_id != null && s.card_owner_id === ST.me.me
++    ? ` <span class="card-tag mine" title="Jesteś odpowiedzialny za plan">👤 Ty</span>` : "";
++  if (s.card_status === "filled") return `<span class="card-tag filled">✓ wypełniona</span>${mine}`;
++  if (s.card_overdue) return `<span class="card-tag late">po terminie</span>${mine}`;
++  return `<span class="card-tag open">do ${dd(s.card_due.substring(0, 10))}</span>${mine}`;
+ }
+ 
+ function trendHtml(t, week) {
+@@ -466,6 +477,7 @@
+     ? `<span class="card-tag filled">✓ wypełniona ${esc(c.filled_at_txt)}</span>`
+     : c.overdue ? `<span class="card-tag late">po terminie (${esc(c.due_at_txt)})</span>`
+     : `<span class="card-tag open">termin: ${esc(c.due_at_txt)}</span>`;
++  if (ST.ro) return renderCardView(c, state);
+   const reasonOpts = [`<option value="">— wybierz —</option>`]
+     .concat(ST.reasons.map((x) => `<option value="${x.code}" ${x.code === c.reason_code ? "selected" : ""}>${esc(x.label)}</option>`)).join("");
+   const ownerId = c.owner_coordinator_id || (ST.board && (ST.board.sites.find((x) => x.site_key === c.site_key) || {}).coordinator_id);
+@@ -497,6 +509,37 @@
+     </div>`;
+ }
+ 
++// Koordynator obiektu: karta tylko do odczytu, może dopisywać notatki o postępie
++function notesHtml(c) {
++  return `<div class="notes">
++      ${(c.notes || []).map((n) => `<div class="note"><div class="meta">${esc(n.at)} · ${esc(n.by || "")}</div>${esc(n.text)}</div>`).join("")
++        || `<div class="note" style="color:var(--text3)">Brak notatek o postępie</div>`}
++      <div class="note-add"><input type="text" id="cNewNote" placeholder="Notatka o postępie — co zrobiono, z kim rozmawiano…" onkeydown="if(event.key==='Enter')addNote(${c.id})" />
++        <button class="btn btn-ghost btn-sm" onclick="addNote(${c.id})">Dodaj</button></div>
++    </div>`;
++}
++function renderCardView(c, state) {
++  const mine = c.owner_coordinator_id != null && c.owner_coordinator_id === ST.me.me;
++  const reason = (ST.reasons.find((x) => x.code === c.reason_code) || {}).label || c.reason_code || "";
++  const row = (label, v) => `<div class="${label === "Plan działań" || label === "Komentarz do przyczyny" ? "full" : ""}">
++      <label>${label}</label><div class="ro">${v ? esc(v) : `<span class="muted">—</span>`}</div></div>`;
++  return `
++    <div class="h3">Karta czerwonego obiektu <span class="c">otwarta w tygodniu do ${ddy(c.opened_week)}</span></div>
++    <div class="redcard ${c.status === "filled" ? "filled" : ""}${mine ? " mine" : ""}">
++      <div class="top"><b>Co się dzieje i co robimy</b> ${state}
++        ${mine ? `<span class="card-tag mine">👤 jesteś odpowiedzialny</span>` : ""}</div>
++      ${c.status === "filled" ? `<div class="form">
++        ${row("Przyczyna", reason)}
++        ${row("Odpowiedzialny", (c.owner_name || "") + (mine ? " (Ty)" : ""))}
++        ${row("Komentarz do przyczyny", c.reason_note)}
++        ${row("Plan działań", c.action_plan)}
++        ${row("Termin wykonania", c.action_due ? ddy(c.action_due) : "")}
++      </div>` : `<div class="muted" style="font-size:12px;margin:6px 0 10px">Kartę wypełnia koordynator regionalny: przyczyna, plan działań, termin i odpowiedzialny.
++        Możesz już dopisać notatkę — co widzisz na obiekcie i co robisz.</div>`}
++      ${notesHtml(c)}
++    </div>`;
++}
++
+ async function saveCard(id) {
+   const body = {
+     reason_code: document.getElementById("cReason").value,
+@@ -594,7 +637,8 @@
+         <td><b>${esc(c.site_key)}</b></td><td>${esc(c.region_name || "—")}</td>
+         <td class="num">${dd(c.opened_week)}</td><td class="num">${dd(c.due_at.substring(0, 10))}</td>
+         <td>${stTag(c)}</td><td>${esc(c.reason || "")}</td>
+-        <td style="max-width:280px">${esc(c.action_plan || "")}</td><td>${esc(c.owner_name || "")}</td>
++        <td style="max-width:280px">${esc(c.action_plan || "")}</td>
++        <td>${esc(c.owner_name || "")}${ST.ro && c.owner_coordinator_id != null && c.owner_coordinator_id === ST.me.me ? ` <span class="card-tag mine">(Ty)</span>` : ""}</td>
+         <td class="num">${dd(c.action_due)}</td><td class="num">${c.red_weeks || ""}</td></tr>`).join("")}
+     </tbody></table>`;
+ }
+--- a/public/region.html
++++ b/public/region.html
+@@ -104,6 +104,10 @@
+     .redcard .top b { font-size: 13px; }
+     .form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+     .form .full { grid-column: 1 / -1; }
++    .form .ro { font-size: 13px; line-height: 1.5; white-space: pre-wrap; padding: 7px 10px; background: var(--surface2);
++      border: 1px solid var(--border); border-radius: 6px; min-height: 32px; }
++    .redcard.mine { box-shadow: 0 0 0 1px var(--accent) inset; }
++    .card-tag.mine { color: var(--accent); font-weight: 600; }
+     .form label { display: block; font-size: 11px; color: var(--text2); margin-bottom: 4px; }
+     .form select, .form input, .form textarea { width: 100%; }
+     textarea, input[type="date"], input[type="number"] { background: var(--surface2); border: 1px solid var(--border);
+--- a/docs/REGION.md
++++ b/docs/REGION.md
+@@ -124,11 +124,14 @@
+ - Открываются автоматически, когда объект становится красным. Срок — 3 рабочих дня (праздники не учитываются).
+ - Обязательные поля: причина из списка, план действий, срок, ответственный.
+ - Закрываются сами, когда объект выходит из красного.
+-- Telegram (нужен `telegram_chat_id` у регионального; при нескольких региональных пишем каждому):
++- Telegram (нужен `telegram_chat_id`; при нескольких региональных пишем каждому):
+   - пн после расчёта — региональным список новых красных;
+   - пн–пт 9:00 — напоминание, если до срока меньше суток;
+   - просрочено — сообщение админам и региональному (один раз);
+-  - объект красный 6 недель подряд — сообщение админам.
++  - объект красный 6 недель подряд — сообщение админам;
++  - сразу после сохранения карточки — ответственному, если его назначили или поменяли причину, план или срок
++    (кроме случая, когда ответственный сам сохраняет карточку);
++  - координатор объекта добавил заметку — региональным этого региона.
+ 
+ ## Доступ
+ 
+@@ -136,6 +139,14 @@
+ - **Региональный** — только регионы, где он назначен в `reg.region_leads`.
+   У одного региона может быть несколько региональных: все видят регион, получают уведомления и заполняют карточки.
+   Отдельная роль в `coordinators.role` не нужна.
++- **Координатор объекта** — только просмотр, раздел называется «Moje obiekty»:
++  - видит объекты, где он координатор по текущей привязке (Ustawienia → Obiekty),
++    и объекты, где он ответственный по незакрытой карточке;
++  - доска, карточка объекта (показатели, история, кто подходит к 30/80 дням, уходы, NN) и вкладка «Karty» — по этим объектам;
++  - карточку красного объекта видит без редактирования: причина, план, срок, ответственный;
++    если ответственный он, это отмечено «👤 Ty»;
++  - может добавлять заметки о ходе работы, региональный получает их в Telegram;
++  - не видит вкладку «Koordynatorzy», другие объекты и настройки.
+ - Остальные раздел не видят.
+ 
+ ## Важно

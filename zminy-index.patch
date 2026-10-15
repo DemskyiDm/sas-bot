@@ -1,0 +1,57 @@
+--- a/index.js
++++ b/index.js
+@@ -17,6 +17,7 @@
+ const regional = require("./api/regional");
+ const care = require("./api/care");
+ const board = require("./api/board");
++const flow = require("./api/flow");
+ 
+ const bot = new Telegraf(process.env.BOT_TOKEN);
+ const app = express();
+@@ -58,6 +59,7 @@
+ app.use("/api/regional", regional.router);
+ app.use("/api/care", care.router);
+ app.use("/api/board", board.router);
++app.use("/api/flow", flow.router);
+ app.use("/api", apiRoutes);
+ app.use("/api", require("./api/reports"));
+ app.use("/admin", adminRoutes);
+@@ -66,6 +68,8 @@
+ app.post("/webhook", async (req, res) => {
+   res.sendStatus(200);
+   try {
++    // групи Telegram: запам'ятати чат для зведень «Wyjazdy / przyjazdy», боту працівників там робити нічого
++    if (await flow.onUpdate(req.body)) return;
+     await handleUpdate(bot, req.body);
+   } catch (err) {
+     console.error("Webhook error:", err.message);
+@@ -344,4 +348,5 @@
+ scheduleReminder();
+ scheduleImport();
+ regional.schedule(bot);
+-require("./bot/care").schedule(bot);
+\ No newline at end of file
++require("./bot/care").schedule(bot);
++flow.schedule(bot);
+\ No newline at end of file
+--- a/public/index.html
++++ b/public/index.html
+@@ -34,6 +34,7 @@
+       <div id="rozmowyLink" class="nav-item" onclick="location.href='rozmowy.html'" style="display: none">📞 Rozmowy</div>
+       <div id="regionLink" class="nav-item" onclick="location.href='region.html'" style="display: none">🚦 Region</div>
+       <div id="boardLink" class="nav-item" onclick="location.href='zarzad.html'" style="display: none">📊 Pulpit kierownika</div>
++      <div id="flowLink" class="nav-item" onclick="location.href='wyjazdy.html'" style="display: none">🚌 Wyjazdy / przyjazdy</div>
+       <div class="nav-item" onclick="showPage('settings')">⚙️ Ustawienia</div>
+       <div id="adminLink" class="nav-item" onclick="window.location = '/admin.html'" style="display: none">
+         ⚙️ Admin panel
+@@ -1073,6 +1074,10 @@
+   .then(function (r) { return r.ok ? r.json() : null; })
+   .then(function (d) { if (d && d.has_access) document.getElementById('boardLink').style.display = ''; })
+   .catch(function () {});
++fetch('/api/flow/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
++  .then(function (r) { return r.ok ? r.json() : null; })
++  .then(function (d) { if (d && d.has_access) document.getElementById('flowLink').style.display = ''; })
++  .catch(function () {});
+ fetch('/api/care/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+   .then(function (r) { return r.ok ? r.json() : null; })
+   .then(function (d) { if (d && d.has_access) document.getElementById('rozmowyLink').style.display = ''; })

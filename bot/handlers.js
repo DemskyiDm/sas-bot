@@ -201,6 +201,12 @@ async function handleUpdate(bot, update) {
     const payload = String(cq.data || "");
     if (!chatId) return;
 
+    // Розділ «Rozmowy»: завдання координаторам, анкети, перевірки
+    if (/^(CR_|SV_|SC_)/.test(payload)) {
+      await require("./care").handleCallback(bot, cq);
+      return;
+    }
+
     const session = await getSessionSafe(chatId);
 
     let settings = null;
@@ -252,6 +258,8 @@ async function handleUpdate(bot, update) {
             T(session, "id_saved", worker.full_name),
           );
           await sendDayKeyboard(bot, chatId, session);
+          // «Poleć znajomego»: історія Telegram-ID і анкета для нових
+          await require("./referral").onLogin(bot, worker, chatId, cq.from);
         }
       } else {
         // Нет ID — просим
@@ -628,8 +636,8 @@ async function handleUpdate(bot, update) {
       }
 
       const hrs = parseFloat(payload.substring(2).replace(",", "."));
-      if (isNaN(hrs) || hrs <= 0 || hrs > 13) {
-        await answer("0.25-13");
+      if (isNaN(hrs) || hrs <= 0 || hrs > 17) {
+        await answer("0.25-16");
         return;
       }
 
@@ -884,7 +892,7 @@ async function handleUpdate(bot, update) {
       else dec = 24;
     } else {
       const n = parseFloat(s.replace(",", "."));
-      if (!isNaN(n) && n >= 0 && n <= 13) dec = n;
+      if (!isNaN(n) && n >= 0 && n <= 16) dec = n;
     }
 
     if (dec === null || dec <= 0) {
@@ -932,6 +940,8 @@ async function handleUpdate(bot, update) {
     await linkTelegram(worker.id, chatId);
     await sendMessage(bot, chatId, T(session, "id_saved", worker.full_name));
     await sendDayKeyboard(bot, chatId, session, settings);
+    // «Poleć znajomego»: історія Telegram-ID і анкета для нових
+    await require("./referral").onLogin(bot, worker, chatId, update.message.from);
     return;
   }
 
@@ -1067,7 +1077,8 @@ async function sendCoordinatorReports(bot) {
 
       if (coord.role !== "head") {
         const facRes = await db.query(
-          `SELECT facility_id FROM coordinator_facilities WHERE coordinator_id = $1`,
+          // свої = з правом редагування (головний / допоміжний з редагуванням); перегляд регіону — ні
+          `SELECT facility_id FROM coordinator_facilities WHERE coordinator_id = $1 AND is_primary`,
           [coord.id]
         );
         const facIds = facRes.rows.map(r => r.facility_id);

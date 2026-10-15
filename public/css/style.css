@@ -298,7 +298,7 @@ body.sidebar-hidden .main { margin-left: 0; }
 #pageHours {
   flex: 1;
   min-height: 0;
-  display: flex !important;
+  display: flex;
   flex-direction: column;
 }
 #pageHours .card:has(.table-wrap) {

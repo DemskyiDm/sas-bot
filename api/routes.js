@@ -25,17 +25,51 @@ async function getFacilityFilter(coordinator) {
   return result.rows.map((r) => r.facility_id);
 }
 
-// true, если работник в зоне ответственности координатора (админ — всегда)
-async function workerInScope(coordinator, workerId) {
-  if (coordinator.is_admin) return true;
-  const r = await db.query(
-    `SELECT 1
-     FROM v_worker_current w
-     JOIN coordinator_facilities cf ON cf.facility_id = w.facility_id
-     WHERE w.id = $1 AND cf.coordinator_id = $2
-     LIMIT 1`,
-    [workerId, coordinator.coordinator_id],
+// Obiekty z prawem edycji: główny albo pomocniczy z edycją (coordinator_facilities.is_primary).
+// Pomocniczy „tylko podgląd” i regionalny (podgląd regionu) widzą dane, ale nie zmieniają ich.
+// Przypisania: Region → 👥 Przypisania (db/migration_przypisania.sql). null = admin (wszystko).
+const VIEW_ONLY = "Tylko podgląd — na tym obiekcie nie masz prawa edycji (Region → Przypisania)";
+async function getEditFacilityFilter(coordinator) {
+  if (coordinator.is_admin) return null;
+  const result = await db.query(
+    `SELECT facility_id FROM coordinator_facilities WHERE coordinator_id = $1 AND is_primary`,
+    [coordinator.coordinator_id],
   );
+  return result.rows.map((r) => r.facility_id);
+}
+// Працівник на обʼєкті координатора: його поточний обʼєкт (v_worker_current) АБО — для правки годин
+// за конкретну дату — запис історії на обʼєкті координатора (крім rezygnacja), що покриває цю дату.
+// Друге потрібне, коли «поточним» рахується інший заклад: напр. працівник повернувся з відрядження,
+// а там BHP пізніший (запис rezygnacja / закінчений) — у списку годин він у свого координатора, а правка давала 403.
+const isoDate = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(String(d || "")) ? String(d) : null);
+const scopeSql = (edit) => `
+  SELECT 1
+    FROM coordinator_facilities cf
+   WHERE cf.coordinator_id = $2${edit ? " AND cf.is_primary" : ""}
+     AND (EXISTS (SELECT 1 FROM v_worker_current w WHERE w.id = $1 AND w.facility_id = cf.facility_id)
+          OR ($3::date IS NOT NULL AND EXISTS (
+                SELECT 1 FROM worker_facility_history h
+                 WHERE h.worker_id = $1 AND h.facility_id = cf.facility_id
+                   AND h.status::text <> 'rezygnacja'
+                   AND h.bhp_date <= $3::date
+                   AND (h.last_work_date IS NULL OR h.last_work_date >= $3::date))))
+   LIMIT 1`;
+async function workerInEditScope(coordinator, workerId, workDate) {
+  if (coordinator.is_admin) return true;
+  const r = await db.query(scopeSql(true), [workerId, coordinator.coordinator_id, isoDate(workDate)]);
+  return r.rows.length > 0;
+}
+// null — można zmieniać; inaczej tekst błędu (widzi, ale tylko podgląd / w ogóle nie jego)
+async function editDenied(coordinator, workerId, workDate) {
+  if (await workerInEditScope(coordinator, workerId, workDate)) return null;
+  return (await workerInScope(coordinator, workerId, workDate)) ? VIEW_ONLY : "Forbidden";
+}
+
+// true, если работник в зоне ответственности координатора (админ — всегда);
+// workDate — для правки годин: также если на эту дату он был на объекте координатора (см. scopeSql)
+async function workerInScope(coordinator, workerId, workDate) {
+  if (coordinator.is_admin) return true;
+  const r = await db.query(scopeSql(false), [workerId, coordinator.coordinator_id, isoDate(workDate)]);
   return r.rows.length > 0;
 }
 
@@ -182,8 +216,8 @@ router.get("/stats", requireAuth, async (req, res) => {
 router.post("/hours", requireAuth, async (req, res) => {
   try {
     const { worker_id, work_date, hours, absence_type } = req.body;
-    if (!(await workerInScope(req.coordinator, worker_id)))
-      return res.status(403).json({ ok: false, error: "Forbidden" });
+    const denied = await editDenied(req.coordinator, worker_id, work_date);
+    if (denied) return res.status(403).json({ ok: false, error: denied });
 
     const h =
       hours === "" || hours === null || hours === undefined ? null : Number(hours);
@@ -229,8 +263,8 @@ router.post("/hours", requireAuth, async (req, res) => {
 router.post("/remind/:worker_id", requireAuth, async (req, res) => {
   try {
     const { worker_id } = req.params;
-    if (!(await workerInScope(req.coordinator, worker_id)))
-      return res.status(403).json({ ok: false, error: "Forbidden" });
+    const denied = await editDenied(req.coordinator, worker_id);
+    if (denied) return res.status(403).json({ ok: false, error: denied });
     const w = await db.query(`SELECT * FROM workers WHERE id = $1`, [
       worker_id,
     ]);
@@ -291,7 +325,7 @@ router.patch("/advances/:id", requireAuth, async (req, res) => {
            OR EXISTS (
              SELECT 1 FROM v_worker_current vw
              JOIN coordinator_facilities cf ON cf.facility_id = vw.facility_id
-             WHERE vw.id = a.worker_id AND cf.coordinator_id = $3
+             WHERE vw.id = a.worker_id AND cf.coordinator_id = $3 AND cf.is_primary
            )
          )
        RETURNING worker_id`,
@@ -300,7 +334,7 @@ router.patch("/advances/:id", requireAuth, async (req, res) => {
     );
 
     if (!result.rows.length)
-      return res.status(404).json({ ok: false, error: "Not found or forbidden" });
+      return res.status(404).json({ ok: false, error: "Nie znaleziono albo brak prawa edycji (tylko podgląd)" });
 
     const { worker_id } = result.rows[0];
 
@@ -620,7 +654,10 @@ router.get("/workers", requireAuth, async (req, res) => {
 // ── Import ────────────────────────────────────────────────────
 router.post("/import", requireAuth, async (req, res) => {
   try {
-    const allowedFacilities = await getFacilityFilter(req.coordinator);
+    // tylko obiekty z prawem edycji; pusta lista NIE może oznaczać „wszystko” (runImport([]) = pełny import)
+    const allowedFacilities = await getEditFacilityFilter(req.coordinator);
+    if (allowedFacilities !== null && !allowedFacilities.length)
+      return res.status(403).json({ ok: false, error: VIEW_ONLY });
     const { runImport } = require("../import_sheets");
     await runImport(allowedFacilities);
     res.json({ ok: true, message: "Import finished" });
@@ -738,7 +775,7 @@ router.patch("/day-off/:id", requireAuth, async (req, res) => {
            OR EXISTS (
              SELECT 1 FROM v_worker_current vw
              JOIN coordinator_facilities cf ON cf.facility_id = vw.facility_id
-             WHERE vw.id = d.worker_id AND cf.coordinator_id = $3
+             WHERE vw.id = d.worker_id AND cf.coordinator_id = $3 AND cf.is_primary
            )
          )
        RETURNING worker_id, days`,
@@ -747,7 +784,7 @@ router.patch("/day-off/:id", requireAuth, async (req, res) => {
     );
 
     if (!result.rows.length)
-      return res.status(404).json({ ok: false, error: "Not found or forbidden" });
+      return res.status(404).json({ ok: false, error: "Nie znaleziono albo brak prawa edycji (tylko podgląd)" });
 
     const { worker_id, days } = result.rows[0];
 
@@ -1206,7 +1243,9 @@ router.get("/analytics/drill", requireAuth, async (req, res) => {
 // ── Trigger reminders (тільки об'єкти координатора) ───────────
 router.post("/remind-missing", requireAuth, async (req, res) => {
   try {
-    const allowedFacilities = await getFacilityFilter(req.coordinator);
+    const allowedFacilities = await getEditFacilityFilter(req.coordinator);
+    if (allowedFacilities !== null && !allowedFacilities.length)
+      return res.status(403).json({ ok: false, error: VIEW_ONLY });
     res.json({ ok: true, status: "started" });
 
     // null = адмін (усі об'єкти), масив = тільки об'єкти координатора
@@ -1221,7 +1260,7 @@ router.post("/remind-missing", requireAuth, async (req, res) => {
 router.get("/tabele/download-all", requireAuth, async (req, res) => {
   try {
     const fs = require("fs");
-    const { month } = req.query;
+    const { month, facility } = req.query;
     const m = month || new Date().toISOString().substring(0, 7);
 
     const allowedFacilities = await getFacilityFilter(req.coordinator);
@@ -1229,20 +1268,31 @@ router.get("/tabele/download-all", requireAuth, async (req, res) => {
     // Збираємо табелі за місяць у зоні координатора
     const params = [m];
     let facFilter = "";
+    let selectedFacilityFilter = "";
     if (allowedFacilities !== null) {
       if (allowedFacilities.length === 0)
         return res.status(404).json({ ok: false, error: "Brak obiektów" });
       params.push(allowedFacilities);
       facFilter = `AND t.facility_id = ANY($${params.length})`;
     }
+    if (facility) {
+      params.push(facility);
 
+      selectedFacilityFilter =
+        `AND f.name = $${params.length}`;
+    }
+
+    console.log("facility =", facility);
+    console.log("typeof =", typeof facility);
     const rows = await db.query(
       `SELECT t.file_path, t.file_number, w.full_name, w.login,
               f.name AS facility_name
        FROM timesheets t
        JOIN workers w ON w.id = t.worker_id
        JOIN facilities f ON f.id = t.facility_id
-       WHERE t.month = $1 ${facFilter}
+       WHERE t.month = $1
+       ${facFilter}
+        ${selectedFacilityFilter}
        ORDER BY f.name, w.full_name, t.file_number`,
       params,
     );
@@ -1296,14 +1346,14 @@ router.post("/advances/batch", requireAuth, async (req, res) => {
     if (!Array.isArray(ids) || !ids.length || !["approve", "reject"].includes(action))
       return res.status(400).json({ ok: false, error: "Bad request" });
 
-    const allowedFacilities = await getFacilityFilter(req.coordinator);
+    const allowedFacilities = await getEditFacilityFilter(req.coordinator);
     const newStatus = action === "approve" ? "approved" : "rejected";
 
     const params = [newStatus, req.coordinator.coordinator_id, ids];
     let facFilter = "";
     if (allowedFacilities !== null) {
       if (!allowedFacilities.length)
-        return res.status(403).json({ ok: false, error: "Brak obiektów" });
+        return res.status(403).json({ ok: false, error: VIEW_ONLY });
       params.push(allowedFacilities);
       facFilter = `AND a.worker_id IN (
         SELECT id FROM v_worker_current WHERE facility_id = ANY($4)
@@ -1368,14 +1418,14 @@ router.post("/day-off/batch", requireAuth, async (req, res) => {
     if (!Array.isArray(ids) || !ids.length || !["approve", "reject"].includes(action))
       return res.status(400).json({ ok: false, error: "Bad request" });
 
-    const allowedFacilities = await getFacilityFilter(req.coordinator);
+    const allowedFacilities = await getEditFacilityFilter(req.coordinator);
     const newStatus = action === "approve" ? "approved" : "rejected";
 
     const params = [newStatus, req.coordinator.coordinator_id, ids];
     let facFilter = "";
     if (allowedFacilities !== null) {
       if (!allowedFacilities.length)
-        return res.status(403).json({ ok: false, error: "Brak obiektów" });
+        return res.status(403).json({ ok: false, error: VIEW_ONLY });
       params.push(allowedFacilities);
       facFilter = `AND d.worker_id IN (
         SELECT id FROM v_worker_current WHERE facility_id = ANY($4)

@@ -1,0 +1,532 @@
+--- a/api/board.js
++++ b/api/board.js
+@@ -3,7 +3,8 @@
+ //  і операційного директора. Тільки читання.
+ //  Монтується в index.js:  app.use("/api/board", board.router)
+ //
+-//  Доступ: адмін панелі або роль head.
++//  Доступ: адмін панелі і роль head — уся компанія; регіональні координатори
++//  (Region → Ustawienia) — тільки свої регіони, як у розділі Region.
+ //  Фільтри в кожному запиті: region (all | none | id), client, coord,
+ //  period (7 | 28 | 91 днів), to (неділя — кінець періоду).
+ //  Регіон і координатор об'єкта — поточна прив'язка з reg.site_owner.
+@@ -15,12 +16,26 @@
+ 
+ router.use(requireAuth);
+ 
+-function hasAccess(c) {
+-  return !!(c && (c.is_admin || c.role === "head"));
++// Хто що бачить: all = уся компанія; regionIds = регіони регіонального координатора
++async function scopeOf(c) {
++  if (c && (c.is_admin || c.role === "head")) return { all: true, regionIds: [], me: c.coordinator_id, key: "all" };
++  const r = await db.query(
++    `SELECT rl.region_id FROM reg.region_leads rl JOIN reg.regions rg ON rg.id = rl.region_id
++      WHERE rl.coordinator_id = $1 AND rg.is_active ORDER BY 1`,
++    [c.coordinator_id],
++  );
++  const ids = r.rows.map((x) => Number(x.region_id));
++  return { all: false, regionIds: ids, me: c.coordinator_id, key: "r" + ids.join(",") };
+ }
+-router.use((req, res, next) => {
++const hasAccess = (sc) => sc.all || sc.regionIds.length > 0;
++router.use(async (req, res, next) => {
++  try {
++    req.bscope = await scopeOf(req.coordinator);
++  } catch (e) {
++    return res.status(500).json({ ok: false, error: e.message });
++  }
+   if (req.path === "/me") return next();
+-  if (!hasAccess(req.coordinator)) return res.status(403).json({ ok: false, error: "Brak dostępu" });
++  if (!hasAccess(req.bscope)) return res.status(403).json({ ok: false, error: "Brak dostępu" });
+   next();
+ });
+ 
+@@ -47,7 +62,7 @@
+ const TTL_MS = 60 * 1000;
+ router.use((req, res, next) => {
+   if (req.method !== "GET" || req.path === "/me") return next();
+-  const key = req.originalUrl;
++  const key = req.bscope.key + "|" + req.originalUrl;   // різні регіональні бачать різні дані
+   const hit = CACHE.get(key);
+   if (hit && hit.t > Date.now() - TTL_MS) return res.json(hit.v);
+   const send = res.json.bind(res);
+@@ -79,18 +94,28 @@
+ };
+ 
+ // Об'єкти в межах фільтра: завжди $1 регіон, $2 клієнт, $3 координатор
+-const SC = `sc AS (SELECT * FROM board.sites($1::int, $2::text, $3::int))`;
++// Для регіонального — ще й тільки його регіони (id з бази, не з запиту).
++const SC = (f) => `sc AS (SELECT * FROM board.sites($1::int, $2::text, $3::int)${f.scopeSql || ""})`;
+ 
+-function filters(q) {
++function filters(q, scope) {
+   let region = null;
+   if (q.region === "none") region = -1;
+   else if (q.region && q.region !== "all") region = parseInt(q.region, 10) || null;
++  let scopeSql = "";
++  if (scope && !scope.all) {
++    // регіональний: чужий регіон або «без регіону» → усі його регіони
++    if (region != null && !scope.regionIds.includes(region)) region = null;
++    scopeSql = ` WHERE region_id IN (${scope.regionIds.map((x) => Number(x)).join(",") || "NULL"})`;
++  }
+   const client = q.client ? String(q.client).slice(0, 200) : null;
+   const coord = parseInt(q.coord, 10) || null;
+   const period = [7, 28, 91].includes(Number(q.period)) ? Number(q.period) : 28;
+   // Довільний період «від–до» має пріоритет над тижнем / 4 тижнями
+   const from = isDate(q.from) && isDate(q.to) && q.from <= q.to ? q.from : null;
+-  return { region, client, coord, period, from, to: isDate(q.to) ? q.to : null };
++  return {
++    region, client, coord, period, from, to: isDate(q.to) ? q.to : null, scopeSql,
++    all: !scope || scope.all, me: scope ? scope.me : null,
++  };
+ }
+ 
+ // Кінець (A) і довжина (L, днів) періоду. Без «від–до» — остання повна неділя
+@@ -132,8 +157,8 @@
+ // ══════════════════════════════════════════════════════════════════════
+ router.get("/me", async (req, res) => {
+   try {
+-    const ok = hasAccess(req.coordinator);
+-    if (!ok) return res.json({ ok: true, has_access: false });
++    const sc = req.bscope;
++    if (!hasAccess(sc)) return res.json({ ok: true, has_access: false });
+     const c = req.coordinator;
+     const [regions, clients, weeks, mod, lead] = await Promise.all([
+       regionsWithLeads(true).then((rows) => ({ rows })),
+@@ -153,7 +178,9 @@
+     const isLead = lead.rows[0].lead;
+     res.json({
+       ok: true, has_access: true,
+-      regions: regions.rows, clients: clients.rows.map((x) => x.name),
++      scope_all: sc.all,          // false = регіональний: тільки свої регіони
++      regions: sc.all ? regions.rows : regions.rows.filter((r) => sc.regionIds.includes(Number(r.id))),
++      clients: clients.rows.map((x) => x.name),
+       weeks: weeks.rows.map((x) => x.w),
+       module_on: mod.rows[0].on, risk_min: mod.rows[0].risk_min,
+       links: { region: !!c.is_admin || isLead, rozmowy: !!c.is_admin || isLead || lead.rows[0].on },
+@@ -166,7 +193,7 @@
+ // ══════════════════════════════════════════════════════════════════════
+ async function kpis(f, A, L) {
+   const r = await query(
+-    `WITH ${SC},
++    `WITH ${SC(f)},
+      per AS (SELECT v.* FROM reg.v_periods v WHERE v.facility_id IN (SELECT facility_id FROM sc)),
+      sp AS (SELECT * FROM board.v_spells),
+      hc AS (
+@@ -249,7 +276,7 @@
+ 
+ async function tenureBuckets(f, A, L) {
+   const r = await query(
+-    `WITH ${SC}
++    `WITH ${SC(f)}
+      SELECT b, COUNT(*)::int AS n FROM (
+        SELECT CASE WHEN t <= 7 THEN 1 WHEN t <= 14 THEN 2 WHEN t <= 30 THEN 3 WHEN t <= 60 THEN 4
+                    WHEN t <= 80 THEN 5 WHEN t <= 180 THEN 6 ELSE 7 END AS b
+@@ -273,7 +300,7 @@
+   const p = base(f);
+   const [red, sig, cat, early, spot, late, leav, noCoord, noTg, cfg] = await Promise.all([
+     query(
+-      `WITH ${SC}
++      `WITH ${SC(f)}
+        SELECT s.site_key, s.red_weeks, s.headcount_end, c.full_name AS coord, rg.name AS region,
+               rc.status AS card_status, rc.due_at < now() AS card_late, rc.filled_at,
+               to_char(rc.due_at, 'YYYY-MM-DD') AS card_due,
+@@ -287,7 +314,7 @@
+           AND s.site_key IN (SELECT site_key FROM sc)
+         ORDER BY s.red_weeks DESC, s.headcount_end DESC`, p),
+     query(
+-      `WITH ${SC}
++      `WITH ${SC(f)}
+        SELECT x.site_key,
+               COUNT(DISTINCT x.worker_id) FILTER (WHERE x.k = 'leaving')::int AS leaving,
+               COUNT(DISTINCT x.worker_id) FILTER (WHERE x.k = 'problem')::int AS problem,
+@@ -301,7 +328,7 @@
+         WHERE x.site_key IN (SELECT site_key FROM sc)
+         GROUP BY x.site_key HAVING COUNT(DISTINCT x.worker_id) >= 3 ORDER BY n DESC`, p),
+     query(
+-      `WITH ${SC}
++      `WITH ${SC(f)}
+        SELECT x.site_key, x.cat, COUNT(DISTINCT x.worker_id)::int AS n,
+               (SELECT COUNT(*) FROM care.v_active a WHERE a.site_key = x.site_key)::int AS hc
+          FROM (SELECT t.site_key, t.worker_id, CASE t.problem_code WHEN 'money' THEN 'pay' ELSE t.problem_code END AS cat
+@@ -323,7 +350,7 @@
+         WHERE x.site_key IN (SELECT site_key FROM sc) AND x.cat IN ('housing','pay','transport','team','schedule')
+         GROUP BY x.site_key, x.cat HAVING COUNT(DISTINCT x.worker_id) >= 3 ORDER BY x.site_key, n DESC`, p),
+     query(
+-      `WITH ${SC},
++      `WITH ${SC(f)},
+        sp AS MATERIALIZED (SELECT * FROM board.v_spells),
+        hi AS (SELECT start_site, COUNT(*)::int AS n FROM sp WHERE start_date > care.today() - 56 GROUP BY 1)
+        SELECT sp.end_site AS site_key, COUNT(*)::int AS n, COALESCE(MAX(hi.n), 0)::int AS hires
+@@ -333,7 +360,7 @@
+           AND sp.end_date - sp.start_date < 30
+         GROUP BY sp.end_site HAVING COUNT(*) >= 3 ORDER BY n DESC`, p),
+     query(
+-      `WITH ${SC}
++      `WITH ${SC(f)}
+        SELECT c.id, c.full_name AS coord, COUNT(*)::int AS n,
+               COUNT(*) FILTER (WHERE sp.answer = 'no')::int AS no
+          FROM care.spot_checks sp JOIN public.coordinators c ON c.id = sp.coordinator_id
+@@ -342,26 +369,26 @@
+         GROUP BY c.id, c.full_name HAVING COUNT(*) FILTER (WHERE sp.answer = 'no') >= 2
+         ORDER BY no DESC`, p),
+     query(
+-      `WITH ${SC}
++      `WITH ${SC(f)}
+        SELECT c.id, c.full_name AS coord, COUNT(*)::int AS n
+          FROM care.tasks t JOIN public.coordinators c ON c.id = t.coordinator_id
+         WHERE t.status = 'open' AND t.escalated_at IS NOT NULL
+           AND t.coordinator_id IN (SELECT coordinator_id FROM sc)
+         GROUP BY c.id, c.full_name HAVING COUNT(*) >= 3 ORDER BY n DESC`, p),
+     query(
+-      `WITH ${SC}
++      `WITH ${SC(f)}
+        SELECT COUNT(*)::int AS n, COUNT(DISTINCT t.site_key)::int AS sites
+          FROM care.tasks t
+         WHERE t.outcome = 'leaving' AND t.done_at > now() - INTERVAL '7 days'
+           AND t.facility_id IN (SELECT facility_id FROM sc)`, p),
+     query(
+-      `WITH ${SC},
++      `WITH ${SC(f)},
+        act AS (SELECT site_key, COUNT(*)::int AS n FROM care.v_active GROUP BY site_key)
+        SELECT COUNT(*)::int AS sites, COALESCE(SUM(x.n), 0)::int AS people
+          FROM (SELECT DISTINCT sc.site_key, act.n FROM sc JOIN act ON act.site_key = sc.site_key
+                 WHERE sc.coordinator_id IS NULL) x`, p),
+     query(
+-      `WITH ${SC}
++      `WITH ${SC(f)}
+        SELECT string_agg(c.full_name, ', ' ORDER BY c.full_name) AS names, COUNT(*)::int AS n
+          FROM care.coordinators cc JOIN public.coordinators c ON c.id = cc.coordinator_id
+         WHERE cc.enabled AND c.is_active AND c.telegram_chat_id IS NULL
+@@ -409,6 +436,7 @@
+   }
+   for (const c of spot.rows) {
+     if (c.no / c.n < 0.15) continue;
++    if (!f.all && c.id === f.me) continue;
+     out.push({ sev: 2, text: `${c.coord}: ${c.no}× pracownik mówi, że rozmowy nie było`, sub: `z ${c.n} sprawdzonych w 30 dni`, coord: c.id });
+   }
+   for (const c of late.rows) {
+@@ -431,7 +459,7 @@
+ 
+ router.get("/summary", async (req, res) => {
+   try {
+-    const f = filters(req.query);
++    const f = filters(req.query, req.bscope);
+     const { A, L, custom } = await resolve(f);
+     const prevA = await query(`SELECT to_char($1::date - $2::int, 'YYYY-MM-DD') AS d, to_char($1::date - $2::int + 1, 'YYYY-MM-DD') AS from`, [A, L]);
+     const [cur, prev, tenure, dec] = await Promise.all([
+@@ -483,13 +511,13 @@
+ 
+ router.get("/rag", async (req, res) => {
+   try {
+-    const f = filters(req.query);
++    const f = filters(req.query, req.bscope);
+     const { A, L } = await resolve(f);
+     // tygodnie: co najmniej 12, a przy dłuższym okresie — cały okres (maks. 26)
+     const nWeeks = Math.min(Math.max(parseInt(req.query.weeks, 10) || Math.ceil(L / 7), 12), 26);
+     const [snap, s, names] = await Promise.all([
+       query(
+-        `WITH ${SC},
++        `WITH ${SC(f)},
+          sk AS (SELECT DISTINCT site_key, region_id, coordinator_id FROM sc),
+          wk AS (SELECT DISTINCT week_end FROM reg.rag_snapshots WHERE week_end <= $4::date
+                  ORDER BY week_end DESC LIMIT $5::int)
+@@ -512,7 +540,7 @@
+     });
+     const rows = [];
+     if (f.region == null) {
+-      rows.push({ type: "company", key: "all", label: "Cała firma", cells: byW(snap.rows) });
++      rows.push({ type: "company", key: "all", label: f.all ? "Cała firma" : "Moje regiony", cells: byW(snap.rows) });
+       const regs = [...new Set(snap.rows.map((x) => x.region_id))];
+       regs.sort((a, b) => (a == null) - (b == null) || String(regName[a]).localeCompare(String(regName[b])));
+       for (const id of regs) {
+@@ -554,11 +582,11 @@
+ // ══════════════════════════════════════════════════════════════════════
+ router.get("/regions", async (req, res) => {
+   try {
+-    const f = filters(req.query);
++    const f = filters(req.query, req.bscope);
+     const { A, L } = await resolve(f);
+     const [r, regs] = await Promise.all([
+       query(
+-        `WITH ${SC},
++        `WITH ${SC(f)},
+          per AS (SELECT v.*, sc.region_id FROM reg.v_periods v JOIN sc ON sc.facility_id = v.facility_id),
+          st AS (SELECT region_id, COUNT(DISTINCT site_key)::int AS sites,
+                        COUNT(DISTINCT coordinator_id)::int AS coords FROM sc GROUP BY 1),
+@@ -666,11 +694,11 @@
+ // ══════════════════════════════════════════════════════════════════════
+ router.get("/trend", async (req, res) => {
+   try {
+-    const f = filters(req.query);
++    const f = filters(req.query, req.bscope);
+     const { A, L } = await resolve(f);
+     const nWeeks = Math.min(Math.max(Math.ceil(L / 7), 12), 52);
+     const r = await query(
+-      `WITH ${SC},
++      `WITH ${SC(f)},
+        wk AS (SELECT (ws.d)::date AS w FROM generate_series($4::date - 7 * ($5::int - 1), $4::date, INTERVAL '7 days') ws(d)),
+        sp AS MATERIALIZED (SELECT * FROM board.v_spells),
+        per AS MATERIALIZED (SELECT v.* FROM reg.v_periods v WHERE v.facility_id IN (SELECT facility_id FROM sc)),
+@@ -698,9 +726,9 @@
+ // ══════════════════════════════════════════════════════════════════════
+ router.get("/cohorts", async (req, res) => {
+   try {
+-    const f = filters(req.query);
++    const f = filters(req.query, req.bscope);
+     const r = await query(
+-      `WITH ${SC},
++      `WITH ${SC(f)},
+        sp AS (SELECT * FROM board.v_spells
+                WHERE start_facility IN (SELECT facility_id FROM sc)
+                  AND start_date >= date_trunc('month', care.today()) - INTERVAL '6 months')
+@@ -743,12 +771,12 @@
+ };
+ router.get("/reasons", async (req, res) => {
+   try {
+-    const f = filters(req.query);
++    const f = filters(req.query, req.bscope);
+     const days = Math.min(Math.max(parseInt(req.query.days, 10) || 90, 7), 365);
+     const p = [...base(f), days];
+     const [exit, prob, tasks, cards] = await Promise.all([
+       query(
+-        `WITH ${SC}
++        `WITH ${SC(f)}
+          SELECT a.option_code AS code, COUNT(*)::int AS n
+            FROM care.answers a JOIN care.survey_sends s ON s.id = a.send_id
+            JOIN care.questions q ON q.id = a.question_id
+@@ -756,7 +784,7 @@
+             AND a.answered_at > now() - make_interval(days => $4::int)
+           GROUP BY 1`, p),
+       query(
+-        `WITH ${SC}
++        `WITH ${SC(f)}
+          SELECT a.option_code AS code, COUNT(*)::int AS n
+            FROM care.answers a JOIN care.survey_sends s ON s.id = a.send_id
+            JOIN care.questions q ON q.id = a.question_id
+@@ -764,14 +792,14 @@
+             AND a.answered_at > now() - make_interval(days => $4::int)
+           GROUP BY 1`, p),
+       query(
+-        `WITH ${SC}
++        `WITH ${SC(f)}
+          SELECT COALESCE(t.problem_code, 'none') AS code, t.outcome, COUNT(*)::int AS n
+            FROM care.tasks t
+           WHERE t.outcome IN ('problem','leaving') AND t.facility_id IN (SELECT facility_id FROM sc)
+             AND t.done_at > now() - make_interval(days => $4::int)
+           GROUP BY 1, 2`, p),
+       query(
+-        `WITH ${SC}
++        `WITH ${SC(f)}
+          SELECT COALESCE(c.reason_code, 'none') AS code, COUNT(*)::int AS n
+            FROM reg.red_cards c
+           WHERE c.site_key IN (SELECT site_key FROM sc) AND c.opened_at > now() - make_interval(days => $4::int)
+@@ -810,20 +838,21 @@
+ // ══════════════════════════════════════════════════════════════════════
+ router.get("/voice", async (req, res) => {
+   try {
+-    const f = filters(req.query);
++    const f = filters(req.query, req.bscope);
+     const days = Math.min(Math.max(parseInt(req.query.days, 10) || 90, 7), 365);
+     const p = [...base(f), days];
+     const [ans, sends, names] = await Promise.all([
+       query(
+-        `WITH ${SC}
++        `WITH ${SC(f)}
+          SELECT sc.region_id, q.code AS q, a.option_code AS c, COUNT(*)::int AS n
+            FROM care.answers a JOIN care.survey_sends s ON s.id = a.send_id
+            JOIN care.questions q ON q.id = a.question_id
+            JOIN sc ON sc.facility_id = s.facility_id
+           WHERE a.answered_at > now() - make_interval(days => $4::int)
++            ${f.all ? "" : `AND NOT (q.visibility = 'manager' AND s.coordinator_id IS NOT DISTINCT FROM ${Number(f.me)})`}
+           GROUP BY 1, 2, 3`, p),
+       query(
+-        `WITH ${SC}
++        `WITH ${SC(f)}
+          SELECT sc.region_id,
+                 COUNT(*) FILTER (WHERE s.status IN ('sent','done','expired'))::int AS sent,
+                 COUNT(*) FILTER (WHERE s.status = 'done')::int AS done,
+@@ -874,10 +903,10 @@
+ // ══════════════════════════════════════════════════════════════════════
+ router.get("/coordinators", async (req, res) => {
+   try {
+-    const f = filters(req.query);
++    const f = filters(req.query, req.bscope);
+     const { A, L } = await resolve(f);
+     const r = await query(
+-      `WITH ${SC},
++      `WITH ${SC(f)},
+        co AS (SELECT DISTINCT coordinator_id FROM sc WHERE coordinator_id IS NOT NULL),
+        per AS (SELECT v.*, sc.coordinator_id FROM reg.v_periods v JOIN sc ON sc.facility_id = v.facility_id),
+        sites AS (SELECT sc.coordinator_id, COUNT(DISTINCT sc.site_key)::int AS sites,
+@@ -1003,6 +1032,12 @@
+       const ok80 = l.reduce((a, x) => a + x.ok80, 0);
+       return { coords: l.length, hc: Math.round(hc), dep, rot: hc ? +(dep / hc).toFixed(4) : null, n80, ok80, s80: n80 ? +(ok80 / n80).toFixed(4) : null };
+     };
++    // Як у Rozmowy: регіональний не бачить відповідей працівників про себе і перевірок своїх розмов
++    if (!f.all) {
++      r.rows.forEach((x) => {
++        if (x.id === f.me) Object.assign(x, { c5_n: null, c5_avg: null, cy_n: null, cy_yes: null, spot_n: null, spot_no: null });
++      });
++    }
+     res.json({ ok: true, anchor: A, period: L, data: r.rows, compare: { on: grp(true), off: grp(false) } });
+   } catch (e) { fail(res, e); }
+ });
+@@ -1012,7 +1047,7 @@
+ // ══════════════════════════════════════════════════════════════════════
+ router.get("/detail", async (req, res) => {
+   try {
+-    const f = filters(req.query);
++    const f = filters(req.query, req.bscope);
+     const { A, L } = await resolve(f);
+     let kind = String(req.query.kind || "");
+     // «early_now» — з «Do decyzji»: останні 28 днів до сьогодні, як у самому сигналі
+@@ -1031,7 +1066,7 @@
+ 
+     if (kind === "departures" || kind === "early") {
+       if (site) p.push(site);
+-      q = `WITH ${SC}
++      q = `WITH ${SC(f)}
+         SELECT w.full_name AS name, w.login, sp.end_site AS site, ${COORD} AS coord,
+                to_char(sp.start_date, 'YYYY-MM-DD') AS start, to_char(sp.end_date, 'YYYY-MM-DD') AS "end",
+                (sp.end_date - sp.start_date + 1) AS tenure,
+@@ -1048,7 +1083,7 @@
+            ${site ? "AND sp.end_site = $6" : ""}
+          ORDER BY sp.end_date DESC, w.full_name`;
+     } else if (kind === "hires") {
+-      q = `WITH ${SC}
++      q = `WITH ${SC(f)}
+         SELECT w.full_name AS name, w.login, sp.start_site AS site, ${COORD} AS coord,
+                to_char(sp.start_date, 'YYYY-MM-DD') AS start,
+                CASE WHEN sp.end_date IS NULL OR sp.end_date > care.today() THEN 'pracuje'
+@@ -1059,7 +1094,7 @@
+          WHERE sp.start_date > $4::date - $5::int AND sp.start_date <= $4::date
+          ORDER BY sp.start_date DESC, w.full_name`;
+     } else if (kind === "rez") {
+-      q = `WITH ${SC}
++      q = `WITH ${SC(f)}
+         SELECT DISTINCT ON (h.worker_id) w.full_name AS name, w.login, sc.site_key AS site, ${COORD} AS coord,
+                to_char(h.bhp_date, 'YYYY-MM-DD') AS start
+           FROM public.worker_facility_history h JOIN sc ON sc.facility_id = h.facility_id
+@@ -1069,7 +1104,7 @@
+          ORDER BY h.worker_id, h.bhp_date DESC`;
+     } else if (kind === "sites") {
+       // По об'єктах: чисельність, рух, дожиття, NN
+-      q = `WITH ${SC},
++      q = `WITH ${SC(f)},
+         per AS (SELECT v.* FROM reg.v_periods v WHERE v.facility_id IN (SELECT facility_id FROM sc)),
+         sk AS (SELECT site_key, MIN(region_id) AS region_id, MIN(coordinator_id) AS coordinator_id FROM sc GROUP BY 1),
+         hc AS (SELECT site_key,
+@@ -1117,13 +1152,13 @@
+          WHERE COALESCE(hc.hc_end, 0) + COALESCE(hc.hc_start, 0) + COALESCE(dep.dep, 0) + COALESCE(hi.hires, 0) > 0
+          ORDER BY hc_end DESC, sk.site_key`;
+     } else if (kind === "nocoord") {
+-      q = `WITH ${SC},
++      q = `WITH ${SC(f)},
+         act AS (SELECT site_key, COUNT(*)::int AS n FROM care.v_active GROUP BY site_key)
+         SELECT DISTINCT sc.site_key AS site, ${REG} AS region, act.n AS hc_end
+           FROM sc JOIN act ON act.site_key = sc.site_key WHERE sc.coordinator_id IS NULL
+          ORDER BY hc_end DESC`;
+     } else if (kind === "risk") {
+-      q = `WITH ${SC}
++      q = `WITH ${SC(f)}
+         SELECT w.full_name AS name, w.login, r.site_key AS site, ${COORD} AS coord, r.tenure, r.score,
+                array_to_string(r.reasons, ' ') AS reasons,
+                (SELECT t.status FROM care.tasks t WHERE t.worker_id = r.worker_id ORDER BY t.created_at DESC LIMIT 1) AS task
+@@ -1136,7 +1171,7 @@
+       const cond = kind === "leaving7"
+         ? `t.done_at > now() - INTERVAL '7 days'`
+         : `care.ldate(t.done_at) > $4::date - $5::int AND care.ldate(t.done_at) <= $4::date`;
+-      q = `WITH ${SC}
++      q = `WITH ${SC(f)}
+         SELECT w.full_name AS name, w.login, t.site_key AS site, (SELECT full_name FROM public.coordinators WHERE id = t.coordinator_id) AS coord,
+                to_char(t.done_at AT TIME ZONE 'Europe/Warsaw', 'YYYY-MM-DD') AS date, t.problem_code AS problem, t.comment,
+                (SELECT CASE WHEN MIN(s.end_date) IS NOT NULL THEN 'odszedł ' || to_char(MIN(s.end_date), 'DD.MM') END
+@@ -1147,7 +1182,7 @@
+          WHERE t.outcome = 'leaving' AND t.facility_id IN (SELECT facility_id FROM sc) AND ${cond}
+          ORDER BY t.done_at DESC`;
+     } else if (kind === "s80") {
+-      q = `WITH ${SC}
++      q = `WITH ${SC(f)}
+         SELECT w.full_name AS name, w.login, sp.start_site AS site, ${COORD} AS coord,
+                to_char(sp.start_date, 'YYYY-MM-DD') AS start, to_char(sp.start_date + 80, 'YYYY-MM-DD') AS day80,
+                CASE WHEN sp.end_date IS NULL OR sp.end_date >= sp.start_date + 80 THEN 'tak'
+--- a/public/js/zarzad.js
++++ b/public/js/zarzad.js
+@@ -111,7 +111,8 @@
+     document.getElementById("toolbar").style.display = "none";
+     document.querySelectorAll(".nav-item[data-sec]").forEach((el) => (el.style.display = "none"));
+     document.getElementById("content").innerHTML =
+-      `<div class="noaccess">📊 <b>Pulpit kierownika</b> jest dostępny dla kierownika działu i administratorów panelu.</div>`;
++      `<div class="noaccess">📊 <b>Pulpit kierownika</b> jest dostępny dla kierownika działu, administratorów panelu
++       i koordynatorów regionalnych (przypisanych w Region → Ustawienia).</div>`;
+     return;
+   }
+   ST.me = me;
+@@ -120,9 +121,13 @@
+   if (me.links.rozmowy) document.getElementById("navRozmowy").style.display = "";
+   const selR = document.getElementById("selRegion");
+   ST.leads = Object.fromEntries(me.regions.map((r) => [String(r.id), (r.leads || []).map((x) => x.name).join(", ")]));
+-  selR.innerHTML = `<option value="all">Wszystkie regiony</option>` +
+-    me.regions.map((r) => `<option value="${r.id}">${esc(r.name)}${ST.leads[r.id] ? " — " + esc(ST.leads[r.id]) : ""}</option>`).join("") +
+-    `<option value="none">Bez regionu</option>`;
++  const regOpts = me.regions.map((r) => `<option value="${r.id}">${esc(r.name)}${ST.leads[r.id] ? " — " + esc(ST.leads[r.id]) : ""}</option>`).join("");
++  // regionalny widzi tylko swoje regiony (jak w sekcji Region)
++  ST.topLabel = me.scope_all ? "Cała firma" : "Moje regiony";
++  ST.canUp = me.scope_all || me.regions.length > 1;
++  selR.innerHTML = me.scope_all
++    ? `<option value="all">Wszystkie regiony</option>${regOpts}<option value="none">Bez regionu</option>`
++    : me.regions.length > 1 ? `<option value="all">Moje regiony</option>${regOpts}` : regOpts;
+   const selC = document.getElementById("selClient");
+   selC.innerHTML = `<option value="">Wszyscy klienci</option>` +
+     me.clients.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+@@ -245,7 +250,9 @@
+   const reg = document.getElementById("selRegion");
+   const cli = document.getElementById("selClient").value;
+   const parts = [`Okres: <b>${dd(s.from)}–${ddy(s.anchor)}</b> (${periodName(s)}), porównanie z poprzednim okresem tej samej długości`];
+-  if (reg.value !== "all" && reg.selectedIndex >= 0) parts.push(`<span class="crumb"><a onclick="setRegion('all')">Cała firma</a> › <b>${esc(reg.options[reg.selectedIndex].text)}</b></span>`);
++  if (reg.value !== "all" && reg.selectedIndex >= 0) parts.push(ST.canUp
++    ? `<span class="crumb"><a onclick="setRegion('all')">${ST.topLabel}</a> › <b>${esc(reg.options[reg.selectedIndex].text)}</b></span>`
++    : `region: <b>${esc(reg.options[reg.selectedIndex].text)}</b>`);
+   if (cli) parts.push(`klient: <b>${esc(cli)}</b>`);
+   if (ST.coord) parts.push(`koordynator: <b>${esc(ST.coord.name)}</b>`);
+   let html = parts.join(" · ");
+@@ -329,8 +336,9 @@
+ function renderRag(r) {
+   const reg = document.getElementById("selRegion");
+   document.getElementById("ragCrumb").innerHTML = reg.value === "all" || reg.selectedIndex < 0
+-    ? "cała firma i regiony"
+-    : `<span class="crumb"><a onclick="setRegion('all')">Cała firma</a> › ${esc(reg.options[reg.selectedIndex].text)}</span>`;
++    ? (ST.me.scope_all ? "cała firma i regiony" : "moje regiony")
++    : ST.canUp ? `<span class="crumb"><a onclick="setRegion('all')">${ST.topLabel}</a> › ${esc(reg.options[reg.selectedIndex].text)}</span>`
++    : esc(reg.options[reg.selectedIndex].text);
+   if (!r.weeks.length) {
+     document.getElementById("ragTable").innerHTML = `<div class="empty">Brak przeliczonych tygodni w sekcji Region.</div>`;
+     return;
+@@ -429,7 +437,7 @@
+   document.getElementById("flowChart").innerHTML = s;
+ 
+   // Чисельність — окремий графік (своя шкала, без другої осі)
+-  const H2 = 80, pT = 16, pB = 6;
++  const H2 = 92, pT = 30, pB = 6;   // górny pas na podpis, żeby nie nachodził na wartości
+   const hv = data.map((d) => d.hc);
+   const mn = Math.min(...hv), mx = Math.max(...hv);
+   const span = Math.max(mx - mn, 10);
+--- a/docs/PULPIT.md
++++ b/docs/PULPIT.md
+@@ -5,8 +5,13 @@
+ Без подробностей на первом экране, но любую цифру можно открыть до списка людей.
+ 
+ Страница: `zarzad.html`, ссылка «📊 Pulpit kierownika» в главном меню панели.
+-Доступ: администраторы панели и координаторы с ролью `head`. Остальные видят сообщение «нет доступа»,
+-API отвечает 403. Панель только читает данные, ничего не меняет.
++Доступ:
++- администраторы панели и координаторы с ролью `head` — вся компания;
++- региональные координаторы (назначенные в Region → Ustawienia) — только свои регионы, как в разделе Region;
++  отзывы работников о самом региональном и проверки его собственных разговоров ему не показываются (как в Rozmowy);
++- остальные видят сообщение «нет доступа», API отвечает 403.
++
++Панель только читает данные, ничего не меняет.
+ 
+ ## Установка
+ 

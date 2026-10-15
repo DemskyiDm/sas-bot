@@ -1,0 +1,2421 @@
+--- a/index.js
++++ b/index.js
+@@ -16,6 +16,7 @@
+ const { router: adminRoutes } = require("./api/admin");
+ const regional = require("./api/regional");
+ const care = require("./api/care");
++const board = require("./api/board");
+ 
+ const bot = new Telegraf(process.env.BOT_TOKEN);
+ const app = express();
+@@ -56,6 +57,7 @@
+ // ── API routes ────────────────────────────────────────────────
+ app.use("/api/regional", regional.router);
+ app.use("/api/care", care.router);
++app.use("/api/board", board.router);
+ app.use("/api", apiRoutes);
+ app.use("/api", require("./api/reports"));
+ app.use("/admin", adminRoutes);
+--- a/public/index.html
++++ b/public/index.html
+@@ -33,6 +33,7 @@
+       <div class="nav-item" onclick="location.href='raporty.html'">📑 Raporty</div>
+       <div id="rozmowyLink" class="nav-item" onclick="location.href='rozmowy.html'" style="display: none">📞 Rozmowy</div>
+       <div id="regionLink" class="nav-item" onclick="location.href='region.html'" style="display: none">🚦 Region</div>
++      <div id="boardLink" class="nav-item" onclick="location.href='zarzad.html'" style="display: none">📊 Pulpit kierownika</div>
+       <div class="nav-item" onclick="showPage('settings')">⚙️ Ustawienia</div>
+       <div id="adminLink" class="nav-item" onclick="window.location = '/admin.html'" style="display: none">
+         ⚙️ Admin panel
+@@ -1068,6 +1069,10 @@
+   .then(function (r) { return r.ok ? r.json() : null; })
+   .then(function (d) { if (d && d.has_access) document.getElementById('regionLink').style.display = ''; })
+   .catch(function () {});
++fetch('/api/board/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
++  .then(function (r) { return r.ok ? r.json() : null; })
++  .then(function (d) { if (d && d.has_access) document.getElementById('boardLink').style.display = ''; })
++  .catch(function () {});
+ fetch('/api/care/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+   .then(function (r) { return r.ok ? r.json() : null; })
+   .then(function (d) { if (d && d.has_access) document.getElementById('rozmowyLink').style.display = ''; })
+--- a/public/js/region.js
++++ b/public/js/region.js
+@@ -115,6 +115,12 @@
+     return;
+   }
+   const h = location.hash.replace("#", "");
++  // region.html#site=<obiekt> — odnośnik z pulpitu kierownika: od razu karta obiektu
++  if (h.startsWith("site=")) {
++    showView("board");
++    openSite(h.slice(5));
++    return;
++  }
+   showView(["board", "coords", "cards", "settings"].includes(h) ? h : "board");
+ }
+ 
+--- /dev/null
++++ b/api/board.js
+@@ -0,0 +1,1035 @@
++// ══════════════════════════════════════════════════════════════════════
++//  «Pulpit kierownika» — зведена панель для керівника відділу
++//  і операційного директора. Тільки читання.
++//  Монтується в index.js:  app.use("/api/board", board.router)
++//
++//  Доступ: адмін панелі або роль head.
++//  Фільтри в кожному запиті: region (all | none | id), client, coord,
++//  period (7 | 28 | 91 днів), to (неділя — кінець періоду).
++//  Регіон і координатор об'єкта — поточна прив'язка з reg.site_owner.
++// ══════════════════════════════════════════════════════════════════════
++const express = require("express");
++const router = express.Router();
++const db = require("../db");
++const { requireAuth } = require("./admin");
++
++router.use(requireAuth);
++
++function hasAccess(c) {
++  return !!(c && (c.is_admin || c.role === "head"));
++}
++router.use((req, res, next) => {
++  if (req.path === "/me") return next();
++  if (!hasAccess(req.coordinator)) return res.status(403).json({ ok: false, error: "Brak dostępu" });
++  next();
++});
++
++// Не більше 3 одночасних запитів пульта: пул з'єднань спільний з ботом,
++// працівник, що вносить години, не повинен чекати на звіти.
++const MAX_PARALLEL = 3;
++let running = 0;
++const waiting = [];
++async function query(text, params) {
++  if (running >= MAX_PARALLEL) await new Promise((r) => waiting.push(r));
++  running++;
++  try {
++    return await db.query(text, params);
++  } finally {
++    running--;
++    const next = waiting.shift();
++    if (next) next();
++  }
++}
++
++// Відповіді однакові для всіх, хто має доступ (бачать усе) — кешуємо на хвилину:
++// повторне відкриття і швидке перемикання фільтрів не навантажують базу.
++const CACHE = new Map();
++const TTL_MS = 60 * 1000;
++router.use((req, res, next) => {
++  if (req.method !== "GET" || req.path === "/me") return next();
++  const key = req.originalUrl;
++  const hit = CACHE.get(key);
++  if (hit && hit.t > Date.now() - TTL_MS) return res.json(hit.v);
++  const send = res.json.bind(res);
++  res.json = (v) => {
++    if (v && v.ok) {
++      CACHE.set(key, { t: Date.now(), v });
++      if (CACHE.size > 300) CACHE.delete(CACHE.keys().next().value);
++    }
++    return send(v);
++  };
++  next();
++});
++
++const fail = (res, e, code = 500) => {
++  if (code === 500) console.error("[board api]", e);
++  res.status(code).json({ ok: false, error: e.message || String(e) });
++};
++// Польська множина: 1 skarga, 2–4 skargi, 5+ skarg
++function pl(n, one, few, many) {
++  const a = Math.abs(n) % 100, b = a % 10;
++  if (n === 1) return one;
++  if (b >= 2 && b <= 4 && !(a >= 12 && a <= 14)) return few;
++  return many;
++}
++const isDate = (s) => {
++  if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
++  const d = new Date(s + "T00:00:00Z");
++  return !isNaN(d) && d.toISOString().slice(0, 10) === s && s >= "2020-01-01";
++};
++
++// Об'єкти в межах фільтра: завжди $1 регіон, $2 клієнт, $3 координатор
++const SC = `sc AS (SELECT * FROM board.sites($1::int, $2::text, $3::int))`;
++
++function filters(q) {
++  let region = null;
++  if (q.region === "none") region = -1;
++  else if (q.region && q.region !== "all") region = parseInt(q.region, 10) || null;
++  const client = q.client ? String(q.client).slice(0, 200) : null;
++  const coord = parseInt(q.coord, 10) || null;
++  const period = [7, 28, 91].includes(Number(q.period)) ? Number(q.period) : 28;
++  return { region, client, coord, period, to: isDate(q.to) ? q.to : null };
++}
++
++// Кінець періоду: остання повна неділя (або обрана, не пізніше за сьогодні)
++async function anchor(to) {
++  const r = await query(
++    `SELECT to_char(care.today() - EXTRACT(ISODOW FROM care.today())::int, 'YYYY-MM-DD') AS def,
++            to_char(care.today(), 'YYYY-MM-DD') AS today`,
++  );
++  const { def, today } = r.rows[0];
++  if (to && to <= today) return to;
++  return def;
++}
++const base = (f) => [f.region, f.client, f.coord];
++
++// ══════════════════════════════════════════════════════════════════════
++//  Хто я + довідники фільтрів
++// ══════════════════════════════════════════════════════════════════════
++router.get("/me", async (req, res) => {
++  try {
++    const ok = hasAccess(req.coordinator);
++    if (!ok) return res.json({ ok: true, has_access: false });
++    const c = req.coordinator;
++    const [regions, clients, weeks, mod, lead] = await Promise.all([
++      query(`SELECT id, name FROM reg.regions WHERE is_active ORDER BY name`),
++      query(`SELECT DISTINCT client_name AS name FROM public.facilities
++                 WHERE client_name IS NOT NULL AND btrim(client_name) <> '' ORDER BY 1`),
++      query(`SELECT to_char(d, 'YYYY-MM-DD') AS w
++                  FROM generate_series(care.today() - EXTRACT(ISODOW FROM care.today())::int,
++                                       care.today() - EXTRACT(ISODOW FROM care.today())::int - 7 * 25,
++                                       INTERVAL '-7 days') d`),
++      query(`SELECT COUNT(*) FILTER (WHERE enabled)::int AS on,
++                       (SELECT value FROM care.settings WHERE key = 'risk_min')::int AS risk_min
++                  FROM care.coordinators`),
++      query(`SELECT EXISTS (SELECT 1 FROM reg.region_leads WHERE coordinator_id = $1) AS lead,
++                    care.is_on($1) AS on`, [c.coordinator_id]),
++    ]);
++    // Посилання в розділи Region і Rozmowy — тільки якщо там є доступ
++    const isLead = lead.rows[0].lead;
++    res.json({
++      ok: true, has_access: true,
++      regions: regions.rows, clients: clients.rows.map((x) => x.name),
++      weeks: weeks.rows.map((x) => x.w),
++      module_on: mod.rows[0].on, risk_min: mod.rows[0].risk_min,
++      links: { region: !!c.is_admin || isLead, rozmowy: !!c.is_admin || isLead || lead.rows[0].on },
++    });
++  } catch (e) { fail(res, e); }
++});
++
++// ══════════════════════════════════════════════════════════════════════
++//  Показники за період (A − L, A]
++// ══════════════════════════════════════════════════════════════════════
++async function kpis(f, A, L) {
++  const r = await query(
++    `WITH ${SC},
++     per AS (SELECT v.* FROM reg.v_periods v WHERE v.facility_id IN (SELECT facility_id FROM sc)),
++     sp AS (SELECT * FROM board.v_spells),
++     hc AS (
++       SELECT COUNT(DISTINCT worker_id) FILTER (
++                WHERE bhp_date <= $4::date AND (last_work_date IS NULL OR last_work_date > $4::date))::int AS hc_end,
++              COUNT(DISTINCT worker_id) FILTER (
++                WHERE bhp_date <= $4::date - $5::int
++                  AND (last_work_date IS NULL OR last_work_date > $4::date - $5::int))::int AS hc_start
++         FROM per),
++     dep_l AS (
++       SELECT sp.* FROM sp
++        WHERE sp.end_facility IN (SELECT facility_id FROM sc) AND sp.end_status <> 'przeniesiony'
++          AND sp.end_date > $4::date - $5::int AND sp.end_date <= $4::date),
++     dep AS (
++       SELECT COUNT(*)::int AS dep,
++              COUNT(*) FILTER (WHERE end_date - start_date < 30)::int AS dep_early
++         FROM dep_l),
++     hires AS (
++       SELECT COUNT(*)::int AS hires FROM sp
++        WHERE sp.start_facility IN (SELECT facility_id FROM sc)
++          AND sp.start_date > $4::date - $5::int AND sp.start_date <= $4::date),
++     rez AS (
++       SELECT COUNT(DISTINCT h.worker_id)::int AS rez
++         FROM public.worker_facility_history h JOIN public.workers w ON w.id = h.worker_id
++        WHERE h.facility_id IN (SELECT facility_id FROM sc) AND h.status::text = 'rezygnacja'
++          AND h.bhp_date > $4::date - $5::int AND h.bhp_date <= $4::date
++          AND COALESCE(w.login, '') NOT LIKE 'TEST_%'),
++     s80 AS (
++       SELECT COUNT(*)::int AS n80,
++              COUNT(*) FILTER (WHERE sp.end_date IS NULL OR sp.end_date >= sp.start_date + 80)::int AS ok80
++         FROM sp
++        WHERE sp.start_facility IN (SELECT facility_id FROM sc)
++          AND sp.start_date + 80 >  $4::date - GREATEST($5::int, 28)
++          AND sp.start_date + 80 <= $4::date
++          AND NOT COALESCE(sp.end_status = 'przeniesiony' AND sp.end_date < sp.start_date + 80, false)),
++     ab AS (
++       SELECT COUNT(*) FILTER (WHERE d.abs = 'NN')::int AS nn,
++              COUNT(*) FILTER (WHERE d.worked OR d.abs IN ('NN','UN','L4','URL'))::int AS nn_base
++         FROM (SELECT DISTINCT ON (hl.worker_id, hl.work_date)
++                      (hl.hours IS NOT NULL AND hl.hours > 0) AS worked, hl.absence_type::text AS abs
++                 FROM public.hours_log hl
++                 JOIN per p ON p.worker_id = hl.worker_id AND hl.work_date >= p.bhp_date
++                           AND (p.last_work_date IS NULL OR hl.work_date <= p.last_work_date)
++                WHERE hl.work_date > $4::date - $5::int AND hl.work_date <= $4::date
++                ORDER BY hl.worker_id, hl.work_date) d),
++     rday AS (SELECT MAX(day) AS d FROM care.risk_daily WHERE day <= $4::date + 7 AND day > $4::date - 7),
++     risk AS (
++       SELECT COUNT(*) FILTER (WHERE r.score >= care.setting('risk_min'))::int AS risk_n,
++              COUNT(*)::int AS risk_all,
++              to_char(MAX(r.day), 'YYYY-MM-DD') AS risk_day
++         FROM care.risk_daily r, rday
++        WHERE r.day = rday.d AND r.facility_id IN (SELECT facility_id FROM sc)),
++     prec AS (
++       SELECT COUNT(*) FILTER (WHERE z.cov)::int AS dep_cov,
++              COUNT(*) FILTER (WHERE z.cov AND z.flagged)::int AS dep_flagged
++         FROM (SELECT
++                 EXISTS (SELECT 1 FROM care.risk_daily r WHERE r.worker_id = d.worker_id
++                           AND r.day BETWEEN d.end_date - 21 AND d.end_date - 3) AS cov,
++                 EXISTS (SELECT 1 FROM care.risk_daily r WHERE r.worker_id = d.worker_id
++                           AND r.day BETWEEN d.end_date - 21 AND d.end_date - 3
++                           AND r.score >= care.setting('risk_min')) AS flagged
++                 FROM dep_l d) z),
++     leav AS (
++       SELECT COUNT(*)::int AS leaving,
++              COUNT(*) FILTER (WHERE x.left_d IS NOT NULL)::int AS leaving_left,
++              COUNT(*) FILTER (WHERE x.left_d IS NULL AND x.d + 30 <= care.today())::int AS leaving_stayed
++         FROM (SELECT t.worker_id, care.ldate(t.done_at) AS d,
++                      (SELECT MIN(s.end_date) FROM board.v_spells s
++                        WHERE s.worker_id = t.worker_id AND s.end_status <> 'przeniesiony'
++                          AND s.end_date >= care.ldate(t.done_at) - 7
++                          AND s.end_date <= LEAST(care.ldate(t.done_at) + 30, care.today())) AS left_d
++                 FROM care.tasks t
++                WHERE t.outcome = 'leaving' AND t.facility_id IN (SELECT facility_id FROM sc)
++                  AND care.ldate(t.done_at) > $4::date - $5::int AND care.ldate(t.done_at) <= $4::date) x)
++     SELECT * FROM hc, dep, hires, rez, s80, ab, risk, prec, leav`,
++    [...base(f), A, L],
++  );
++  return r.rows[0];
++}
++
++async function tenureBuckets(f, A, L) {
++  const r = await query(
++    `WITH ${SC}
++     SELECT b, COUNT(*)::int AS n FROM (
++       SELECT CASE WHEN t <= 7 THEN 1 WHEN t <= 14 THEN 2 WHEN t <= 30 THEN 3 WHEN t <= 60 THEN 4
++                   WHEN t <= 80 THEN 5 WHEN t <= 180 THEN 6 ELSE 7 END AS b
++         FROM (SELECT sp.end_date - sp.start_date + 1 AS t FROM board.v_spells sp
++                WHERE sp.end_facility IN (SELECT facility_id FROM sc) AND sp.end_status <> 'przeniesiony'
++                  AND sp.end_date > $4::date - $5::int AND sp.end_date <= $4::date) x) y
++     GROUP BY b ORDER BY b`,
++    [...base(f), A, L],
++  );
++  const labels = ["do 7 dni", "8–14", "15–30", "31–60", "61–80", "81–180", "ponad 180"];
++  const m = Object.fromEntries(r.rows.map((x) => [x.b, x.n]));
++  return labels.map((l, i) => ({ label: l, n: m[i + 1] || 0 }));
++}
++
++// ── «Do decyzji»: що потребує рішення керівника зараз ─────────────────
++const CAT_LABEL = {
++  housing: "Zakwaterowanie", pay: "Wynagrodzenie", transport: "Dojazd", team: "Zespół / brygadzista",
++  schedule: "Grafik / godziny",
++};
++async function decisions(f) {
++  const p = base(f);
++  const [red, sig, cat, early, spot, late, leav, noCoord, noTg, cfg] = await Promise.all([
++    query(
++      `WITH ${SC}
++       SELECT s.site_key, s.red_weeks, s.headcount_end, c.full_name AS coord, rg.name AS region,
++              rc.status AS card_status, rc.due_at < now() AS card_late, rc.filled_at,
++              to_char(rc.due_at, 'YYYY-MM-DD') AS card_due,
++              NULLIF(btrim(COALESCE(rc.action_plan, '')), '') IS NOT NULL AS has_plan,
++              to_char(rc.action_due, 'YYYY-MM-DD') AS action_due, rc.action_due < care.today() AS plan_late
++         FROM reg.v_snap s
++         LEFT JOIN reg.red_cards rc ON rc.site_key = s.site_key AND rc.status <> 'closed'
++         LEFT JOIN public.coordinators c ON c.id = s.coordinator_id
++         LEFT JOIN reg.regions rg ON rg.id = s.region_id
++        WHERE s.week_end = (SELECT MAX(week_end) FROM reg.rag_snapshots) AND s.status = 'R'
++          AND s.site_key IN (SELECT site_key FROM sc)
++        ORDER BY s.red_weeks DESC, s.headcount_end DESC`, p),
++    query(
++      `WITH ${SC}
++       SELECT x.site_key,
++              COUNT(DISTINCT x.worker_id) FILTER (WHERE x.k = 'leaving')::int AS leaving,
++              COUNT(DISTINCT x.worker_id) FILTER (WHERE x.k = 'problem')::int AS problem,
++              COUNT(DISTINCT x.worker_id) FILTER (WHERE x.k = 'survey')::int AS survey,
++              COUNT(DISTINCT x.worker_id)::int AS n
++         FROM (SELECT t.site_key, t.worker_id, t.outcome AS k FROM care.tasks t
++                WHERE t.outcome IN ('leaving','problem') AND t.done_at > now() - INTERVAL '7 days'
++               UNION ALL
++               SELECT s.site_key, s.worker_id, 'survey' FROM care.answers a JOIN care.survey_sends s ON s.id = a.send_id
++                WHERE a.flag = 'high' AND a.answered_at > now() - INTERVAL '7 days') x
++        WHERE x.site_key IN (SELECT site_key FROM sc)
++        GROUP BY x.site_key HAVING COUNT(DISTINCT x.worker_id) >= 3 ORDER BY n DESC`, p),
++    query(
++      `WITH ${SC}
++       SELECT x.site_key, x.cat, COUNT(DISTINCT x.worker_id)::int AS n,
++              (SELECT COUNT(*) FROM care.v_active a WHERE a.site_key = x.site_key)::int AS hc
++         FROM (SELECT t.site_key, t.worker_id, CASE t.problem_code WHEN 'money' THEN 'pay' ELSE t.problem_code END AS cat
++                 FROM care.tasks t
++                WHERE t.problem_code IS NOT NULL AND t.done_at > now() - INTERVAL '14 days'
++               UNION ALL
++               SELECT s.site_key, s.worker_id,
++                      CASE WHEN q.code IN ('housing3','housing5') THEN 'housing'
++                           WHEN q.code = 'transport3' THEN 'transport'
++                           WHEN a.option_code = 'money' THEN 'pay'
++                           ELSE a.option_code END
++                 FROM care.answers a
++                 JOIN care.survey_sends s ON s.id = a.send_id
++                 JOIN care.questions q ON q.id = a.question_id
++                WHERE a.answered_at > now() - INTERVAL '14 days'
++                  AND ((q.code IN ('housing3','transport3') AND a.option_code IN ('no','partly'))
++                    OR (q.code = 'housing5' AND a.option_code IN ('1','2','3'))
++                    OR (q.code IN ('problem','reason') AND a.option_code IN ('housing','money','pay','transport','team','schedule')))) x
++        WHERE x.site_key IN (SELECT site_key FROM sc) AND x.cat IN ('housing','pay','transport','team','schedule')
++        GROUP BY x.site_key, x.cat HAVING COUNT(DISTINCT x.worker_id) >= 3 ORDER BY x.site_key, n DESC`, p),
++    query(
++      `WITH ${SC},
++       sp AS MATERIALIZED (SELECT * FROM board.v_spells),
++       hi AS (SELECT start_site, COUNT(*)::int AS n FROM sp WHERE start_date > care.today() - 56 GROUP BY 1)
++       SELECT sp.end_site AS site_key, COUNT(*)::int AS n, COALESCE(MAX(hi.n), 0)::int AS hires
++         FROM sp LEFT JOIN hi ON hi.start_site = sp.end_site
++        WHERE sp.end_facility IN (SELECT facility_id FROM sc) AND sp.end_status <> 'przeniesiony'
++          AND sp.end_date > care.today() - 28 AND sp.end_date <= care.today()
++          AND sp.end_date - sp.start_date < 30
++        GROUP BY sp.end_site HAVING COUNT(*) >= 3 ORDER BY n DESC`, p),
++    query(
++      `WITH ${SC}
++       SELECT c.id, c.full_name AS coord, COUNT(*)::int AS n,
++              COUNT(*) FILTER (WHERE sp.answer = 'no')::int AS no
++         FROM care.spot_checks sp JOIN public.coordinators c ON c.id = sp.coordinator_id
++        WHERE sp.status = 'answered' AND sp.answered_at > now() - INTERVAL '30 days'
++          AND sp.coordinator_id IN (SELECT coordinator_id FROM sc)
++        GROUP BY c.id, c.full_name HAVING COUNT(*) FILTER (WHERE sp.answer = 'no') >= 2
++        ORDER BY no DESC`, p),
++    query(
++      `WITH ${SC}
++       SELECT c.id, c.full_name AS coord, COUNT(*)::int AS n
++         FROM care.tasks t JOIN public.coordinators c ON c.id = t.coordinator_id
++        WHERE t.status = 'open' AND t.escalated_at IS NOT NULL
++          AND t.coordinator_id IN (SELECT coordinator_id FROM sc)
++        GROUP BY c.id, c.full_name HAVING COUNT(*) >= 3 ORDER BY n DESC`, p),
++    query(
++      `WITH ${SC}
++       SELECT COUNT(*)::int AS n, COUNT(DISTINCT t.site_key)::int AS sites
++         FROM care.tasks t
++        WHERE t.outcome = 'leaving' AND t.done_at > now() - INTERVAL '7 days'
++          AND t.facility_id IN (SELECT facility_id FROM sc)`, p),
++    query(
++      `WITH ${SC},
++       act AS (SELECT site_key, COUNT(*)::int AS n FROM care.v_active GROUP BY site_key)
++       SELECT COUNT(*)::int AS sites, COALESCE(SUM(x.n), 0)::int AS people
++         FROM (SELECT DISTINCT sc.site_key, act.n FROM sc JOIN act ON act.site_key = sc.site_key
++                WHERE sc.coordinator_id IS NULL) x`, p),
++    query(
++      `WITH ${SC}
++       SELECT string_agg(c.full_name, ', ' ORDER BY c.full_name) AS names, COUNT(*)::int AS n
++         FROM care.coordinators cc JOIN public.coordinators c ON c.id = cc.coordinator_id
++        WHERE cc.enabled AND c.is_active AND c.telegram_chat_id IS NULL
++          AND c.id IN (SELECT coordinator_id FROM sc)`, p),
++    query(`SELECT value::int AS v FROM reg.settings WHERE key = 'escalate_red_weeks'`),
++  ]);
++  const escWeeks = (cfg.rows[0] && cfg.rows[0].v) || 6;
++  const out = [];
++  const dd = (s) => (s ? s.slice(8, 10) + "." + s.slice(5, 7) : "");
++
++  for (const s of red.rows) {
++    const who = [s.region, s.coord].filter(Boolean).join(" · ");
++    if (s.card_status === "open" && s.card_late && !s.filled_at) {
++      out.push({ sev: 1, text: `${s.site_key}: czerwona karta niewypełniona`, sub: `termin minął ${dd(s.card_due)} · ${who}`, site: s.site_key });
++    } else if (s.has_plan && s.plan_late) {
++      out.push({ sev: s.red_weeks >= escWeeks ? 1 : 2, text: `${s.site_key}: termin planu minął ${dd(s.action_due)}, nadal czerwony (${s.red_weeks} tyg.)`, sub: who, site: s.site_key });
++    } else if (s.red_weeks >= escWeeks) {
++      out.push({ sev: s.has_plan ? 2 : 1, text: `${s.site_key}: czerwony ${s.red_weeks} tyg. z rzędu`,
++        sub: `${s.headcount_end} ${pl(s.headcount_end, "osoba", "osoby", "osób")} · ${s.has_plan ? "plan do " + dd(s.action_due) : "karta bez planu"} · ${who}`, site: s.site_key });
++    } else if (s.red_weeks >= 3 && !s.has_plan) {
++      out.push({ sev: 2, text: `${s.site_key}: czerwony ${s.red_weeks} tyg., karta bez planu`, sub: who, site: s.site_key });
++    }
++  }
++  for (const s of sig.rows) {
++    const parts = [];
++    if (s.leaving) parts.push(`${s.leaving}× chce odejść`);
++    if (s.problem) parts.push(`${s.problem}× problem`);
++    if (s.survey) parts.push(`${s.survey}× niepokojąca ankieta`);
++    out.push({ sev: 2, text: `${s.site_key}: sygnały od ${s.n} ${pl(s.n, "osoby", "osób", "osób")} w 7 dni`, sub: parts.join(", ") + " — możliwy problem całego obiektu", site: s.site_key });
++  }
++  // skargi: jeden wpis na obiekt; próg rośnie z wielkością obiektu (min. 3, min. 5% pracujących)
++  const bySite = {};
++  for (const c of cat.rows) {
++    if (c.n < Math.max(3, Math.ceil((c.hc || 0) * 0.05))) continue;
++    (bySite[c.site_key] = bySite[c.site_key] || []).push(c);
++  }
++  for (const [site, l] of Object.entries(bySite)) {
++    const tot = l.reduce((a, x) => a + x.n, 0);
++    out.push({ sev: 2, text: `${site}: skargi w 14 dni`, sub: l.map((x) => `${(CAT_LABEL[x.cat] || x.cat).toLowerCase()} — ${x.n} ${pl(x.n, "osoba", "osoby", "osób")}`).join(", ") + " (rozmowy i ankiety)", site, n: tot });
++  }
++  for (const s of early.rows) {
++    if (s.hires > 0 && s.n / s.hires < 0.15) continue;
++    out.push({ sev: 2, text: `${s.site_key}: ${s.n} ${pl(s.n, "odejście", "odejścia", "odejść")} przed 30. dniem w 4 tyg.`,
++      sub: `przyjęto ${s.hires} w 8 tyg. — sprawdź rekrutację i pierwsze dni`, site: s.site_key, detail: "early_now" });
++  }
++  for (const c of spot.rows) {
++    if (c.no / c.n < 0.15) continue;
++    out.push({ sev: 2, text: `${c.coord}: ${c.no}× pracownik mówi, że rozmowy nie było`, sub: `z ${c.n} sprawdzonych w 30 dni`, coord: c.id });
++  }
++  for (const c of late.rows) {
++    out.push({ sev: 3, text: `${c.coord}: ${c.n} ${pl(c.n, "rozmowa", "rozmowy", "rozmów")} po terminie`, sub: "regionalny już dostał powiadomienie", coord: c.id });
++  }
++  if (leav.rows[0].n > 0) {
++    const l = leav.rows[0];
++    out.push({ sev: 3, text: `${l.n} ${pl(l.n, "osoba zgłosiła", "osoby zgłosiły", "osób zgłosiło")} „chce odejść” w 7 dni`, sub: `${l.sites} ${pl(l.sites, "obiekt", "obiekty", "obiektów")}`, detail: "leaving7" });
++  }
++  if (noCoord.rows[0].sites > 0) {
++    const x = noCoord.rows[0];
++    out.push({ sev: 3, text: `${x.sites} ${pl(x.sites, "obiekt", "obiekty", "obiektów")} bez koordynatora`, sub: `${x.people} ${pl(x.people, "osoba pracuje", "osoby pracują", "osób pracuje")} — przypisz w Region → Ustawienia`, detail: "nocoord" });
++  }
++  if (noTg.rows[0].n > 0) {
++    out.push({ sev: 3, text: `${noTg.rows[0].n} ${pl(noTg.rows[0].n, "koordynator", "koordynatorów", "koordynatorów")} z modułem Rozmowy bez Telegrama`, sub: noTg.rows[0].names });
++  }
++  out.sort((a, b) => a.sev - b.sev);
++  return out;
++}
++
++router.get("/summary", async (req, res) => {
++  try {
++    const f = filters(req.query);
++    const A = await anchor(f.to);
++    const prevA = await query(`SELECT to_char($1::date - $2::int, 'YYYY-MM-DD') AS d, to_char($1::date - $2::int + 1, 'YYYY-MM-DD') AS from`, [A, f.period]);
++    const [cur, prev, tenure, dec] = await Promise.all([
++      kpis(f, A, f.period),
++      kpis(f, prevA.rows[0].d, f.period),
++      tenureBuckets(f, A, f.period),
++      decisions(f),
++    ]);
++    res.json({ ok: true, anchor: A, from: prevA.rows[0].from, period: f.period, cur, prev, tenure, decisions: dec });
++  } catch (e) { fail(res, e); }
++});
++
++// ══════════════════════════════════════════════════════════════════════
++//  Світлофор регіонів за тижнями (зі знімків Region)
++// ══════════════════════════════════════════════════════════════════════
++async function regSettings() {
++  const r = await query(`SELECT key, value FROM reg.settings`);
++  const s = {};
++  for (const x of r.rows) s[x.key] = Number(x.value);
++  return s;
++}
++// Регіон (або вся компанія) як один великий об'єкт: ті самі пороги, що в Region
++function aggStatus(list, s) {
++  const use = list.filter((x) => x.status !== "S");
++  let hcW = 0, rotW = 0, pos = 0, ach = 0, nn = 0, bs = 0, hc = 0, dep = 0;
++  const cnt = { R: 0, A: 0, G: 0, S: 0, N: 0 };
++  for (const x of list) cnt[x.status] = (cnt[x.status] || 0) + 1;
++  for (const x of use) {
++    const h = Number(x.headcount_avg) || 0;
++    hc += h; dep += x.departures || 0;
++    if (x.rotation != null) { hcW += h; rotW += Number(x.rotation) * h; }
++    pos += x.ret_possible || 0; ach += x.ret_achieved || 0;
++    nn += x.abs_nn || 0; bs += x.abs_base || 0;
++  }
++  const rot = hcW > 0 ? rotW / hcW : null;
++  const ret = pos >= (s.ret_min_weight || 8) ? ach / pos : null;
++  const abs = s.abs_enabled && bs >= (s.abs_min_days || 50) ? nn / bs : null;
++  const st = [];
++  if (rot != null) st.push(rot <= s.rot_green_max ? "G" : rot <= s.rot_amber_max ? "A" : "R");
++  if (ret != null) st.push(ret >= s.ret_green_min ? "G" : ret >= s.ret_amber_min ? "A" : "R");
++  if (abs != null) st.push(abs <= s.abs_green_max ? "G" : abs <= s.abs_amber_max ? "A" : "R");
++  const status = st.includes("R") ? "R" : st.includes("A") ? "A" : st.includes("G") ? "G" : use.length ? "N" : "S";
++  return {
++    status, rot: rot == null ? null : +rot.toFixed(4), ret: ret == null ? null : +ret.toFixed(4),
++    abs: bs > 0 ? +(nn / bs).toFixed(4) : null, hc: Math.round(hc), dep, sites: list.length,
++    red: cnt.R, amber: cnt.A, green: cnt.G,
++  };
++}
++
++router.get("/rag", async (req, res) => {
++  try {
++    const f = filters(req.query);
++    const A = await anchor(f.to);
++    const nWeeks = Math.min(Math.max(parseInt(req.query.weeks, 10) || 12, 4), 26);
++    const [snap, s, names] = await Promise.all([
++      query(
++        `WITH ${SC},
++         sk AS (SELECT DISTINCT site_key, region_id, coordinator_id FROM sc),
++         wk AS (SELECT DISTINCT week_end FROM reg.rag_snapshots WHERE week_end <= $4::date
++                 ORDER BY week_end DESC LIMIT $5::int)
++         SELECT to_char(v.week_end, 'YYYY-MM-DD') AS w, v.site_key, sk.region_id, sk.coordinator_id,
++                v.status, v.red_weeks, v.headcount_avg, v.headcount_end, v.departures, v.rotation,
++                v.ret_possible, v.ret_achieved, v.abs_nn, v.abs_base, v.window_days
++           FROM reg.v_snap v JOIN wk ON wk.week_end = v.week_end
++           JOIN sk ON sk.site_key = v.site_key
++          ORDER BY v.week_end`,
++        [...base(f), A, nWeeks]),
++      regSettings(),
++      query(`SELECT id, name FROM reg.regions`),
++    ]);
++    const weeks = [...new Set(snap.rows.map((x) => x.w))];
++    const regName = Object.fromEntries(names.rows.map((x) => [x.id, x.name]));
++    const byW = (rows) => weeks.map((w) => {
++      const l = rows.filter((x) => x.w === w);
++      return l.length ? Object.assign({ w }, aggStatus(l, s)) : { w, status: null };
++    });
++    const rows = [];
++    if (f.region == null) {
++      rows.push({ type: "company", key: "all", label: "Cała firma", cells: byW(snap.rows) });
++      const regs = [...new Set(snap.rows.map((x) => x.region_id))];
++      regs.sort((a, b) => (a == null) - (b == null) || String(regName[a]).localeCompare(String(regName[b])));
++      for (const id of regs) {
++        rows.push({
++          type: "region", key: id == null ? "none" : String(id), label: id == null ? "Bez regionu" : regName[id],
++          cells: byW(snap.rows.filter((x) => x.region_id === id)),
++        });
++      }
++    } else {
++      rows.push({ type: "region", key: String(f.region), label: f.region === -1 ? "Bez regionu" : regName[f.region] || "Region", cells: byW(snap.rows) });
++      const last = weeks[weeks.length - 1];
++      const sites = [...new Set(snap.rows.map((x) => x.site_key))];
++      const hcLast = (k) => { const x = snap.rows.find((r) => r.site_key === k && r.w === last); return x ? Number(x.headcount_end) : 0; };
++      sites.sort((a, b) => hcLast(b) - hcLast(a));
++      for (const k of sites) {
++        rows.push({
++          type: "site", key: k, label: k,
++          cells: weeks.map((w) => {
++            const x = snap.rows.find((r) => r.site_key === k && r.w === w);
++            if (!x) return { w, status: null };
++            return {
++              w, status: x.status, red_weeks: x.red_weeks, hc: Math.round(Number(x.headcount_avg)), dep: x.departures, win: x.window_days,
++              rot: x.rotation == null ? null : Number(x.rotation),
++              ret: x.ret_possible ? x.ret_achieved / x.ret_possible : null,
++              abs: x.abs_base ? x.abs_nn / x.abs_base : null,
++            };
++          }),
++        });
++      }
++    }
++    res.json({ ok: true, weeks, rows, abs_enabled: !!s.abs_enabled });
++  } catch (e) { fail(res, e); }
++});
++
++// ══════════════════════════════════════════════════════════════════════
++//  Рух кадрів по тижнях: прийняті, відходи, чисельність
++// ══════════════════════════════════════════════════════════════════════
++router.get("/trend", async (req, res) => {
++  try {
++    const f = filters(req.query);
++    const A = await anchor(f.to);
++    const r = await query(
++      `WITH ${SC},
++       wk AS (SELECT (ws.d)::date AS w FROM generate_series($4::date - 7 * 11, $4::date, INTERVAL '7 days') ws(d)),
++       sp AS MATERIALIZED (SELECT * FROM board.v_spells),
++       per AS MATERIALIZED (SELECT v.* FROM reg.v_periods v WHERE v.facility_id IN (SELECT facility_id FROM sc)),
++       hi AS (SELECT wk.w, COUNT(*)::int AS n FROM wk
++                JOIN sp ON sp.start_date > wk.w - 7 AND sp.start_date <= wk.w
++               WHERE sp.start_facility IN (SELECT facility_id FROM sc) GROUP BY 1),
++       de AS (SELECT wk.w, COUNT(*)::int AS n, COUNT(*) FILTER (WHERE sp.end_date - sp.start_date < 30)::int AS early
++                FROM wk JOIN sp ON sp.end_date > wk.w - 7 AND sp.end_date <= wk.w
++               WHERE sp.end_facility IN (SELECT facility_id FROM sc) AND sp.end_status <> 'przeniesiony' GROUP BY 1),
++       hc AS (SELECT wk.w, COUNT(DISTINCT per.worker_id)::int AS n FROM wk
++                JOIN per ON per.bhp_date <= wk.w AND (per.last_work_date IS NULL OR per.last_work_date > wk.w)
++               GROUP BY 1)
++       SELECT to_char(wk.w, 'YYYY-MM-DD') AS w, COALESCE(hi.n, 0) AS hires, COALESCE(de.n, 0) AS dep,
++              COALESCE(de.early, 0) AS dep_early, COALESCE(hc.n, 0) AS hc
++         FROM wk LEFT JOIN hi ON hi.w = wk.w LEFT JOIN de ON de.w = wk.w LEFT JOIN hc ON hc.w = wk.w
++        ORDER BY wk.w`,
++      [...base(f), A],
++    );
++    res.json({ ok: true, data: r.rows });
++  } catch (e) { fail(res, e); }
++});
++
++// ══════════════════════════════════════════════════════════════════════
++//  Когорти: з прийнятих у місяці — скільки працюють на 7/14/30/60/80 день
++// ══════════════════════════════════════════════════════════════════════
++router.get("/cohorts", async (req, res) => {
++  try {
++    const f = filters(req.query);
++    const r = await query(
++      `WITH ${SC},
++       sp AS (SELECT * FROM board.v_spells
++               WHERE start_facility IN (SELECT facility_id FROM sc)
++                 AND start_date >= date_trunc('month', care.today()) - INTERVAL '6 months')
++       SELECT to_char(date_trunc('month', sp.start_date), 'YYYY-MM') AS m, d.days,
++              COUNT(*)::int AS hired,
++              COUNT(*) FILTER (WHERE sp.start_date + d.days <= care.today() - 1
++                                 AND NOT COALESCE(sp.end_status = 'przeniesiony' AND sp.end_date < sp.start_date + d.days, false))::int AS elig,
++              COUNT(*) FILTER (WHERE sp.start_date + d.days <= care.today() - 1
++                                 AND (sp.end_date IS NULL OR sp.end_date >= sp.start_date + d.days))::int AS ok
++         FROM sp CROSS JOIN (VALUES (7), (14), (30), (60), (80)) d(days)
++        GROUP BY 1, 2 ORDER BY 1, 2`,
++      base(f),
++    );
++    const months = [...new Set(r.rows.map((x) => x.m))];
++    const DAYS = [7, 14, 30, 60, 80];
++    const rows = months.map((m) => {
++      const l = r.rows.filter((x) => x.m === m);
++      return {
++        m, hired: l[0] ? l[0].hired : 0,
++        cells: DAYS.map((d) => { const x = l.find((y) => y.days === d); return x ? { d, elig: x.elig, ok: x.ok } : { d, elig: 0, ok: 0 }; }),
++      };
++    });
++    const total = {
++      m: "all", hired: rows.reduce((a, x) => a + x.hired, 0),
++      cells: DAYS.map((d, i) => ({ d, elig: rows.reduce((a, x) => a + x.cells[i].elig, 0), ok: rows.reduce((a, x) => a + x.cells[i].ok, 0) })),
++    };
++    res.json({ ok: true, days: DAYS, rows, total });
++  } catch (e) { fail(res, e); }
++});
++
++// ══════════════════════════════════════════════════════════════════════
++//  Причини: відходи (анкета), «що заважає» (анкета), розмови, червоні картки
++// ══════════════════════════════════════════════════════════════════════
++const CAT = {
++  pay: "Wynagrodzenie", money: "Wynagrodzenie", housing: "Zakwaterowanie", transport: "Dojazd",
++  schedule: "Grafik / godziny", team: "Zespół / brygadzista", work: "Praca / warunki u klienta",
++  conditions: "Praca / warunki u klienta", other_job: "Inna praca", family: "Sprawy rodzinne",
++  documents: "Dokumenty / legalizacja", legal: "Dokumenty / legalizacja", recruit: "Rekrutacja",
++  coord: "Koordynator", client: "Klient / sezon", other: "Inne", none: "Bez wskazania",
++};
++router.get("/reasons", async (req, res) => {
++  try {
++    const f = filters(req.query);
++    const days = Math.min(Math.max(parseInt(req.query.days, 10) || 90, 7), 365);
++    const p = [...base(f), days];
++    const [exit, prob, tasks, cards] = await Promise.all([
++      query(
++        `WITH ${SC}
++         SELECT a.option_code AS code, COUNT(*)::int AS n
++           FROM care.answers a JOIN care.survey_sends s ON s.id = a.send_id
++           JOIN care.questions q ON q.id = a.question_id
++          WHERE q.survey_code = 'exit' AND q.code = 'reason' AND s.facility_id IN (SELECT facility_id FROM sc)
++            AND a.answered_at > now() - make_interval(days => $4::int)
++          GROUP BY 1`, p),
++      query(
++        `WITH ${SC}
++         SELECT a.option_code AS code, COUNT(*)::int AS n
++           FROM care.answers a JOIN care.survey_sends s ON s.id = a.send_id
++           JOIN care.questions q ON q.id = a.question_id
++          WHERE q.code = 'problem' AND s.facility_id IN (SELECT facility_id FROM sc)
++            AND a.answered_at > now() - make_interval(days => $4::int)
++          GROUP BY 1`, p),
++      query(
++        `WITH ${SC}
++         SELECT COALESCE(t.problem_code, 'none') AS code, t.outcome, COUNT(*)::int AS n
++           FROM care.tasks t
++          WHERE t.outcome IN ('problem','leaving') AND t.facility_id IN (SELECT facility_id FROM sc)
++            AND t.done_at > now() - make_interval(days => $4::int)
++          GROUP BY 1, 2`, p),
++      query(
++        `WITH ${SC}
++         SELECT COALESCE(c.reason_code, 'none') AS code, COUNT(*)::int AS n
++           FROM reg.red_cards c
++          WHERE c.site_key IN (SELECT site_key FROM sc) AND c.opened_at > now() - make_interval(days => $4::int)
++            AND c.reason_code IS NOT NULL
++          GROUP BY 1`, p),
++    ]);
++    const sources = {
++      exit: { label: "Odchodzący — ankieta", rows: exit.rows },
++      problem: { label: "Pracujący — „co przeszkadza”", rows: prob.rows.filter((x) => x.code !== "nothing"), ok: (prob.rows.find((x) => x.code === "nothing") || {}).n || 0 },
++      tasks: { label: "Koordynatorzy — rozmowy", rows: tasks.rows.filter((x) => x.outcome === "problem"), leaving: tasks.rows.filter((x) => x.outcome === "leaving").reduce((a, x) => a + x.n, 0) },
++      cards: { label: "Regionalni — czerwone karty", rows: cards.rows },
++    };
++    const cats = {};
++    for (const [k, src] of Object.entries(sources)) {
++      src.total = src.rows.reduce((a, x) => a + x.n, 0);
++      for (const x of src.rows) {
++        const c = CAT[x.code] || CAT.other;
++        cats[c] = cats[c] || { label: c, exit: 0, problem: 0, tasks: 0, cards: 0 };
++        cats[c][k] += x.n;
++      }
++    }
++    const list = Object.values(cats).map((c) => {
++      const share = ["exit", "problem", "tasks", "cards"].map((k) => (sources[k].total ? c[k] / sources[k].total : 0));
++      c.weight = share.reduce((a, x) => a + x, 0);
++      return c;
++    }).sort((a, b) => b.weight - a.weight);
++    res.json({
++      ok: true, days, categories: list,
++      sources: Object.fromEntries(Object.entries(sources).map(([k, v]) => [k, { label: v.label, total: v.total, ok: v.ok, leaving: v.leaving }])),
++    });
++  } catch (e) { fail(res, e); }
++});
++
++// ══════════════════════════════════════════════════════════════════════
++//  Голос працівника: оцінки з анкет (з розбивкою по регіонах)
++// ══════════════════════════════════════════════════════════════════════
++router.get("/voice", async (req, res) => {
++  try {
++    const f = filters(req.query);
++    const days = Math.min(Math.max(parseInt(req.query.days, 10) || 90, 7), 365);
++    const p = [...base(f), days];
++    const [ans, sends, names] = await Promise.all([
++      query(
++        `WITH ${SC}
++         SELECT sc.region_id, q.code AS q, a.option_code AS c, COUNT(*)::int AS n
++           FROM care.answers a JOIN care.survey_sends s ON s.id = a.send_id
++           JOIN care.questions q ON q.id = a.question_id
++           JOIN sc ON sc.facility_id = s.facility_id
++          WHERE a.answered_at > now() - make_interval(days => $4::int)
++          GROUP BY 1, 2, 3`, p),
++      query(
++        `WITH ${SC}
++         SELECT sc.region_id,
++                COUNT(*) FILTER (WHERE s.status IN ('sent','done','expired'))::int AS sent,
++                COUNT(*) FILTER (WHERE s.status = 'done')::int AS done,
++                COUNT(*) FILTER (WHERE s.status = 'no_telegram')::int AS no_tg
++           FROM care.survey_sends s JOIN sc ON sc.facility_id = s.facility_id
++          WHERE s.planned_for > care.today() - $4::int
++          GROUP BY 1`, p),
++      query(`SELECT id, name FROM reg.regions`),
++    ]);
++    const regName = Object.fromEntries(names.rows.map((x) => [x.id, x.name]));
++    function calc(rows, srows) {
++      const get = (q) => rows.filter((x) => x.q === q);
++      const avg = (q) => {
++        const l = get(q).filter((x) => /^[1-5]$/.test(x.c));
++        const n = l.reduce((a, x) => a + x.n, 0);
++        return { n, v: n ? +(l.reduce((a, x) => a + Number(x.c) * x.n, 0) / n).toFixed(2) : null };
++      };
++      const share = (qs, good) => {
++        const l = rows.filter((x) => qs.includes(x.q));
++        const n = l.reduce((a, x) => a + x.n, 0);
++        const g = l.filter((x) => good.includes(x.c)).reduce((a, x) => a + x.n, 0);
++        return { n, v: n ? +(g / n).toFixed(3) : null };
++      };
++      const dist = (q) => Object.fromEntries(get(q).map((x) => [x.c, x.n]));
++      const sent = srows.reduce((a, x) => a + x.sent, 0);
++      const done = srows.reduce((a, x) => a + x.done, 0);
++      return {
++        work5: avg("work5"), housing5: avg("housing5"), coord5: avg("coord5"),
++        stay_yes: share(["stay"], ["yes"]), stay_no: share(["stay"], ["no"]), stay: dist("stay"),
++        housing3: share(["housing3"], ["yes", "own"]), transport3: share(["transport3"], ["yes"]),
++        onboard3: share(["onboard3"], ["yes"]), coord_yes: share(["coord3", "coordx"], ["yes"]),
++        back: share(["back"], ["yes"]), problem: dist("problem"),
++        sent, done, no_tg: srows.reduce((a, x) => a + x.no_tg, 0), rate: sent ? +(done / sent).toFixed(3) : null,
++      };
++    }
++    const all = calc(ans.rows, sends.rows);
++    const regs = [...new Set([...ans.rows.map((x) => x.region_id), ...sends.rows.map((x) => x.region_id)])];
++    const byRegion = regs.map((id) => Object.assign(
++      { region_id: id, label: id == null ? "Bez regionu" : regName[id] },
++      calc(ans.rows.filter((x) => x.region_id === id), sends.rows.filter((x) => x.region_id === id)),
++    )).sort((a, b) => String(a.label).localeCompare(String(b.label)));
++    res.json({ ok: true, days, all, by_region: byRegion });
++  } catch (e) { fail(res, e); }
++});
++
++// ══════════════════════════════════════════════════════════════════════
++//  Координатори: процес і результат
++// ══════════════════════════════════════════════════════════════════════
++router.get("/coordinators", async (req, res) => {
++  try {
++    const f = filters(req.query);
++    const A = await anchor(f.to);
++    const L = f.period;
++    const r = await query(
++      `WITH ${SC},
++       co AS (SELECT DISTINCT coordinator_id FROM sc WHERE coordinator_id IS NOT NULL),
++       per AS (SELECT v.*, sc.coordinator_id FROM reg.v_periods v JOIN sc ON sc.facility_id = v.facility_id),
++       sites AS (SELECT sc.coordinator_id, COUNT(DISTINCT sc.site_key)::int AS sites,
++                        string_agg(DISTINCT rg.name, ', ') AS regions
++                   FROM sc LEFT JOIN reg.regions rg ON rg.id = sc.region_id
++                  WHERE sc.coordinator_id IS NOT NULL GROUP BY 1),
++       hc AS (
++         SELECT coordinator_id,
++                COUNT(DISTINCT worker_id) FILTER (WHERE bhp_date <= $4::date AND (last_work_date IS NULL OR last_work_date > $4::date))::int AS hc_end,
++                COUNT(DISTINCT worker_id) FILTER (WHERE bhp_date <= $4::date - $5::int
++                  AND (last_work_date IS NULL OR last_work_date > $4::date - $5::int))::int AS hc_start
++           FROM per GROUP BY 1),
++       dep AS (
++         SELECT sc.coordinator_id, COUNT(*)::int AS dep,
++                COUNT(*) FILTER (WHERE sp.end_date - sp.start_date < 30)::int AS dep_early
++           FROM board.v_spells sp JOIN sc ON sc.facility_id = sp.end_facility
++          WHERE sp.end_status <> 'przeniesiony' AND sp.end_date > $4::date - $5::int AND sp.end_date <= $4::date
++          GROUP BY 1),
++       s80 AS (
++         SELECT sc.coordinator_id, COUNT(*)::int AS n80,
++                COUNT(*) FILTER (WHERE sp.end_date IS NULL OR sp.end_date >= sp.start_date + 80)::int AS ok80
++           FROM board.v_spells sp JOIN sc ON sc.facility_id = sp.start_facility
++          WHERE sp.start_date + 80 > $4::date - GREATEST($5::int, 91) AND sp.start_date + 80 <= $4::date
++            AND NOT COALESCE(sp.end_status = 'przeniesiony' AND sp.end_date < sp.start_date + 80, false)
++          GROUP BY 1),
++       days AS (
++         SELECT DISTINCT p.coordinator_id, p.site_key, p.worker_id, d::date AS d
++           FROM per p
++           CROSS JOIN LATERAL generate_series(GREATEST(p.bhp_date, $4::date - $5::int + 1),
++                                              LEAST(COALESCE(p.last_work_date, $4::date), $4::date), INTERVAL '1 day') d),
++       tracked AS (
++         SELECT DISTINCT d.site_key FROM days d
++          WHERE EXISTS (SELECT 1 FROM public.hours_log hl WHERE hl.worker_id = d.worker_id AND hl.work_date = d.d)),
++       fill AS (
++         SELECT d.coordinator_id, COUNT(*)::int AS days,
++                COUNT(hl.worker_id)::int AS filled,
++                COUNT(*) FILTER (WHERE hl.absence_type::text = 'NN')::int AS nn,
++                COUNT(*) FILTER (WHERE (hl.hours IS NOT NULL AND hl.hours > 0)
++                                    OR hl.absence_type::text IN ('NN','UN','L4','URL'))::int AS nn_base
++           FROM days d JOIN tracked t ON t.site_key = d.site_key
++           LEFT JOIN public.hours_log hl ON hl.worker_id = d.worker_id AND hl.work_date = d.d
++          GROUP BY 1),
++       tk AS (
++         SELECT t.coordinator_id,
++                COUNT(*) FILTER (WHERE t.status <> 'cancelled')::int AS tasks,
++                COUNT(*) FILTER (WHERE t.status IN ('done','missed') OR (t.status = 'open' AND t.escalated_at IS NOT NULL))::int AS due,
++                COUNT(*) FILTER (WHERE t.status = 'done')::int AS done,
++                COUNT(*) FILTER (WHERE t.status = 'done' AND (t.escalated_at IS NULL OR t.done_at < t.escalated_at))::int AS on_time,
++                COUNT(*) FILTER (WHERE t.status = 'missed')::int AS missed,
++                COUNT(*) FILTER (WHERE t.outcome = 'stays')::int AS o_stays,
++                COUNT(*) FILTER (WHERE t.outcome = 'no_answer')::int AS o_no_answer,
++                COUNT(*) FILTER (WHERE t.outcome = 'leaving')::int AS o_leaving,
++                COUNT(*) FILTER (WHERE t.outcome = 'problem')::int AS o_problem
++           FROM care.tasks t
++          WHERE care.ldate(t.created_at) > $4::date - $5::int AND care.ldate(t.created_at) <= $4::date
++            AND t.facility_id IN (SELECT facility_id FROM sc)
++          GROUP BY 1),
++       spot AS (
++         SELECT x.coordinator_id, COUNT(*) FILTER (WHERE x.status = 'answered')::int AS spot_n,
++                COUNT(*) FILTER (WHERE x.answer = 'no')::int AS spot_no
++           FROM care.spot_checks x JOIN care.tasks t ON t.id = x.task_id
++          WHERE x.answered_at > now() - make_interval(days => GREATEST($5::int, 30))
++            AND t.facility_id IN (SELECT facility_id FROM sc)
++          GROUP BY 1),
++       cq AS (
++         SELECT s.coordinator_id,
++                COUNT(*) FILTER (WHERE q.code = 'coord5')::int AS c5_n,
++                ROUND(AVG(a.option_code::numeric) FILTER (WHERE q.code = 'coord5' AND a.option_code ~ '^[1-5]$'), 2) AS c5_avg,
++                COUNT(*) FILTER (WHERE q.code IN ('coord3','coordx'))::int AS cy_n,
++                COUNT(*) FILTER (WHERE q.code IN ('coord3','coordx') AND a.option_code = 'yes')::int AS cy_yes
++           FROM care.answers a JOIN care.survey_sends s ON s.id = a.send_id
++           JOIN care.questions q ON q.id = a.question_id
++          WHERE a.answered_at > now() - INTERVAL '90 days' AND s.facility_id IN (SELECT facility_id FROM sc)
++          GROUP BY 1),
++       sv AS (
++         SELECT s.coordinator_id,
++                COUNT(*) FILTER (WHERE s.status IN ('sent','done','expired'))::int AS sv_sent,
++                COUNT(*) FILTER (WHERE s.status = 'done')::int AS sv_done
++           FROM care.survey_sends s
++          WHERE s.planned_for > care.today() - 90 AND s.facility_id IN (SELECT facility_id FROM sc)
++          GROUP BY 1),
++       rday AS (SELECT MAX(day) AS d FROM care.risk_daily),
++       rk AS (
++         SELECT sc.coordinator_id, COUNT(*) FILTER (WHERE r.score >= care.setting('risk_min'))::int AS risk_n
++           FROM care.risk_daily r JOIN sc ON sc.facility_id = r.facility_id, rday
++          WHERE r.day = rday.d GROUP BY 1)
++       SELECT c.id, c.full_name AS name, c.telegram_chat_id IS NOT NULL AS tg,
++              COALESCE(cc.enabled, false) AS module_on, to_char(cc.enabled_at, 'YYYY-MM-DD') AS enabled_at,
++              sites.sites, sites.regions,
++              COALESCE(hc.hc_end, 0) AS hc_end, COALESCE(hc.hc_start, 0) AS hc_start,
++              COALESCE(dep.dep, 0) AS dep, COALESCE(dep.dep_early, 0) AS dep_early,
++              COALESCE(s80.n80, 0) AS n80, COALESCE(s80.ok80, 0) AS ok80,
++              fill.days, fill.filled, fill.nn, fill.nn_base,
++              COALESCE(tk.tasks, 0) AS tasks, COALESCE(tk.due, 0) AS due, COALESCE(tk.done, 0) AS done, COALESCE(tk.on_time, 0) AS on_time,
++              COALESCE(tk.missed, 0) AS missed, COALESCE(tk.o_stays, 0) AS o_stays,
++              COALESCE(tk.o_no_answer, 0) AS o_no_answer, COALESCE(tk.o_leaving, 0) AS o_leaving,
++              COALESCE(tk.o_problem, 0) AS o_problem,
++              COALESCE(spot.spot_n, 0) AS spot_n, COALESCE(spot.spot_no, 0) AS spot_no,
++              COALESCE(cq.c5_n, 0) AS c5_n, cq.c5_avg, COALESCE(cq.cy_n, 0) AS cy_n, COALESCE(cq.cy_yes, 0) AS cy_yes,
++              COALESCE(sv.sv_sent, 0) AS sv_sent, COALESCE(sv.sv_done, 0) AS sv_done,
++              COALESCE(rk.risk_n, 0) AS risk_n
++         FROM co JOIN public.coordinators c ON c.id = co.coordinator_id
++         LEFT JOIN care.coordinators cc ON cc.coordinator_id = c.id
++         LEFT JOIN sites ON sites.coordinator_id = c.id
++         LEFT JOIN hc    ON hc.coordinator_id = c.id
++         LEFT JOIN dep   ON dep.coordinator_id = c.id
++         LEFT JOIN s80   ON s80.coordinator_id = c.id
++         LEFT JOIN fill  ON fill.coordinator_id = c.id
++         LEFT JOIN tk    ON tk.coordinator_id = c.id
++         LEFT JOIN spot  ON spot.coordinator_id = c.id
++         LEFT JOIN cq    ON cq.coordinator_id = c.id
++         LEFT JOIN sv    ON sv.coordinator_id = c.id
++         LEFT JOIN rk    ON rk.coordinator_id = c.id
++        ORDER BY c.full_name`,
++      [...base(f), A, L],
++    );
++    // Порівняння «з модулем / без модуля» — орієнтовне: різні об'єкти, різні люди
++    const grp = (on) => {
++      const l = r.rows.filter((x) => x.module_on === on);
++      const hc = l.reduce((a, x) => a + (x.hc_start + x.hc_end) / 2, 0);
++      const dep = l.reduce((a, x) => a + x.dep, 0);
++      const n80 = l.reduce((a, x) => a + x.n80, 0);
++      const ok80 = l.reduce((a, x) => a + x.ok80, 0);
++      return { coords: l.length, hc: Math.round(hc), dep, rot: hc ? +(dep / hc).toFixed(4) : null, n80, ok80, s80: n80 ? +(ok80 / n80).toFixed(4) : null };
++    };
++    res.json({ ok: true, anchor: A, period: L, data: r.rows, compare: { on: grp(true), off: grp(false) } });
++  } catch (e) { fail(res, e); }
++});
++
++// ══════════════════════════════════════════════════════════════════════
++//  Деталі за клік на цифру
++// ══════════════════════════════════════════════════════════════════════
++router.get("/detail", async (req, res) => {
++  try {
++    const f = filters(req.query);
++    const A = await anchor(f.to);
++    const L = f.period;
++    let kind = String(req.query.kind || "");
++    // «early_now» — з «Do decyzji»: останні 28 днів до сьогодні, як у самому сигналі
++    let AA = A, LL = L;
++    if (kind === "early_now") {
++      kind = "early";
++      AA = (await query(`SELECT to_char(care.today(), 'YYYY-MM-DD') AS d`)).rows[0].d;
++      LL = 28;
++    }
++    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 1000, 1), 20000);
++    const p = [...base(f), AA, LL];
++    const site = req.query.site ? String(req.query.site) : null;
++    let q;
++    const COORD = `(SELECT full_name FROM public.coordinators WHERE id = sc.coordinator_id)`;
++    const REG = `(SELECT name FROM reg.regions WHERE id = sc.region_id)`;
++
++    if (kind === "departures" || kind === "early") {
++      if (site) p.push(site);
++      q = `WITH ${SC}
++        SELECT w.full_name AS name, w.login, sp.end_site AS site, ${COORD} AS coord,
++               to_char(sp.start_date, 'YYYY-MM-DD') AS start, to_char(sp.end_date, 'YYYY-MM-DD') AS "end",
++               (sp.end_date - sp.start_date + 1) AS tenure,
++               (SELECT a.option_code FROM care.answers a JOIN care.survey_sends s ON s.id = a.send_id
++                  JOIN care.questions qq ON qq.id = a.question_id
++                 WHERE s.worker_id = sp.worker_id AND qq.code = 'reason' AND a.answered_at >= sp.start_date
++                 ORDER BY a.answered_at DESC LIMIT 1) AS reason,
++               (SELECT t.outcome FROM care.tasks t WHERE t.worker_id = sp.worker_id AND t.status = 'done'
++                   AND t.done_at >= sp.start_date ORDER BY t.done_at DESC LIMIT 1) AS last_talk
++          FROM board.v_spells sp JOIN sc ON sc.facility_id = sp.end_facility
++          JOIN public.workers w ON w.id = sp.worker_id
++         WHERE sp.end_status <> 'przeniesiony' AND sp.end_date > $4::date - $5::int AND sp.end_date <= $4::date
++           ${kind === "early" ? "AND sp.end_date - sp.start_date < 30" : ""}
++           ${site ? "AND sp.end_site = $6" : ""}
++         ORDER BY sp.end_date DESC, w.full_name`;
++    } else if (kind === "hires") {
++      q = `WITH ${SC}
++        SELECT w.full_name AS name, w.login, sp.start_site AS site, ${COORD} AS coord,
++               to_char(sp.start_date, 'YYYY-MM-DD') AS start,
++               CASE WHEN sp.end_date IS NULL OR sp.end_date > care.today() THEN 'pracuje'
++                    WHEN sp.end_status = 'przeniesiony' THEN 'przeniesiony'
++                    ELSE 'odszedł ' || to_char(sp.end_date, 'DD.MM') END AS now
++          FROM board.v_spells sp JOIN sc ON sc.facility_id = sp.start_facility
++          JOIN public.workers w ON w.id = sp.worker_id
++         WHERE sp.start_date > $4::date - $5::int AND sp.start_date <= $4::date
++         ORDER BY sp.start_date DESC, w.full_name`;
++    } else if (kind === "rez") {
++      q = `WITH ${SC}
++        SELECT DISTINCT ON (h.worker_id) w.full_name AS name, w.login, sc.site_key AS site, ${COORD} AS coord,
++               to_char(h.bhp_date, 'YYYY-MM-DD') AS start
++          FROM public.worker_facility_history h JOIN sc ON sc.facility_id = h.facility_id
++          JOIN public.workers w ON w.id = h.worker_id
++         WHERE h.status::text = 'rezygnacja' AND h.bhp_date > $4::date - $5::int AND h.bhp_date <= $4::date
++           AND COALESCE(w.login, '') NOT LIKE 'TEST_%'
++         ORDER BY h.worker_id, h.bhp_date DESC`;
++    } else if (kind === "sites") {
++      // По об'єктах: чисельність, рух, дожиття, NN
++      q = `WITH ${SC},
++        per AS (SELECT v.* FROM reg.v_periods v WHERE v.facility_id IN (SELECT facility_id FROM sc)),
++        sk AS (SELECT site_key, MIN(region_id) AS region_id, MIN(coordinator_id) AS coordinator_id FROM sc GROUP BY 1),
++        hc AS (SELECT site_key,
++                      COUNT(DISTINCT worker_id) FILTER (WHERE bhp_date <= $4::date AND (last_work_date IS NULL OR last_work_date > $4::date))::int AS hc_end,
++                      COUNT(DISTINCT worker_id) FILTER (WHERE bhp_date <= $4::date - $5::int
++                        AND (last_work_date IS NULL OR last_work_date > $4::date - $5::int))::int AS hc_start
++                 FROM per GROUP BY 1),
++        dep AS (SELECT end_site AS site_key, COUNT(*)::int AS dep, COUNT(*) FILTER (WHERE end_date - start_date < 30)::int AS early
++                  FROM board.v_spells WHERE end_facility IN (SELECT facility_id FROM sc) AND end_status <> 'przeniesiony'
++                   AND end_date > $4::date - $5::int AND end_date <= $4::date GROUP BY 1),
++        hi AS (SELECT start_site AS site_key, COUNT(*)::int AS hires FROM board.v_spells
++                WHERE start_facility IN (SELECT facility_id FROM sc) AND start_date > $4::date - $5::int AND start_date <= $4::date GROUP BY 1),
++        s80 AS (SELECT start_site AS site_key, COUNT(*)::int AS n80,
++                       COUNT(*) FILTER (WHERE end_date IS NULL OR end_date >= start_date + 80)::int AS ok80
++                  FROM board.v_spells WHERE start_facility IN (SELECT facility_id FROM sc)
++                   AND start_date + 80 > $4::date - GREATEST($5::int, 91) AND start_date + 80 <= $4::date
++                   AND NOT COALESCE(end_status = 'przeniesiony' AND end_date < start_date + 80, false) GROUP BY 1),
++        rk AS (SELECT r.site_key, COUNT(*) FILTER (WHERE r.score >= care.setting('risk_min'))::int AS risk_n
++                 FROM care.risk_daily r WHERE r.day = (SELECT MAX(day) FROM care.risk_daily WHERE day <= $4::date + 7)
++                  AND r.facility_id IN (SELECT facility_id FROM sc) GROUP BY 1),
++        nnd AS (SELECT DISTINCT ON (hl.worker_id, hl.work_date) p.site_key,
++                       (hl.hours IS NOT NULL AND hl.hours > 0) AS worked, hl.absence_type::text AS abs
++                  FROM public.hours_log hl
++                  JOIN per p ON p.worker_id = hl.worker_id AND hl.work_date >= p.bhp_date
++                            AND (p.last_work_date IS NULL OR hl.work_date <= p.last_work_date)
++                 WHERE hl.work_date > $4::date - $5::int AND hl.work_date <= $4::date
++                 ORDER BY hl.worker_id, hl.work_date, p.bhp_date DESC),
++        nn AS (SELECT site_key, COUNT(*) FILTER (WHERE abs = 'NN')::int AS nn,
++                      COUNT(*) FILTER (WHERE worked OR abs IN ('NN','UN','L4','URL'))::int AS nn_base
++                 FROM nnd GROUP BY 1)
++        SELECT sk.site_key AS site, (SELECT name FROM reg.regions WHERE id = sk.region_id) AS region,
++               (SELECT full_name FROM public.coordinators WHERE id = sk.coordinator_id) AS coord,
++               COALESCE(hc.hc_start, 0) AS hc_start, COALESCE(hc.hc_end, 0) AS hc_end,
++               COALESCE(hi.hires, 0) AS hires, COALESCE(dep.dep, 0) AS dep, COALESCE(dep.early, 0) AS early,
++               CASE WHEN COALESCE(hc.hc_start, 0) + COALESCE(hc.hc_end, 0) > 0
++                    THEN ROUND(COALESCE(dep.dep, 0) * 2.0 / (hc.hc_start + hc.hc_end), 4) END AS rot,
++               COALESCE(s80.n80, 0) AS n80, CASE WHEN s80.n80 > 0 THEN ROUND(s80.ok80::numeric / s80.n80, 4) END AS s80,
++               COALESCE(nn.nn, 0) AS nn, CASE WHEN nn.nn_base > 0 THEN ROUND(nn.nn::numeric / nn.nn_base, 4) END AS nnr,
++               COALESCE(rk.risk_n, 0) AS risk_n
++          FROM sk
++          LEFT JOIN hc ON hc.site_key = sk.site_key LEFT JOIN dep ON dep.site_key = sk.site_key
++          LEFT JOIN hi ON hi.site_key = sk.site_key LEFT JOIN s80 ON s80.site_key = sk.site_key
++          LEFT JOIN rk ON rk.site_key = sk.site_key
++          LEFT JOIN nn ON nn.site_key = sk.site_key
++         WHERE COALESCE(hc.hc_end, 0) + COALESCE(hc.hc_start, 0) + COALESCE(dep.dep, 0) + COALESCE(hi.hires, 0) > 0
++         ORDER BY hc_end DESC, sk.site_key`;
++    } else if (kind === "nocoord") {
++      q = `WITH ${SC},
++        act AS (SELECT site_key, COUNT(*)::int AS n FROM care.v_active GROUP BY site_key)
++        SELECT DISTINCT sc.site_key AS site, ${REG} AS region, act.n AS hc_end
++          FROM sc JOIN act ON act.site_key = sc.site_key WHERE sc.coordinator_id IS NULL
++         ORDER BY hc_end DESC`;
++    } else if (kind === "risk") {
++      q = `WITH ${SC}
++        SELECT w.full_name AS name, w.login, r.site_key AS site, ${COORD} AS coord, r.tenure, r.score,
++               array_to_string(r.reasons, ' ') AS reasons,
++               (SELECT t.status FROM care.tasks t WHERE t.worker_id = r.worker_id ORDER BY t.created_at DESC LIMIT 1) AS task
++          FROM care.risk_daily r JOIN sc ON sc.facility_id = r.facility_id
++          JOIN public.workers w ON w.id = r.worker_id
++         WHERE r.day = (SELECT MAX(day) FROM care.risk_daily WHERE day <= $4::date + 7)
++           AND r.score >= care.setting('risk_min')
++         ORDER BY r.score DESC, r.tenure`;
++    } else if (kind === "leaving" || kind === "leaving7") {
++      const cond = kind === "leaving7"
++        ? `t.done_at > now() - INTERVAL '7 days'`
++        : `care.ldate(t.done_at) > $4::date - $5::int AND care.ldate(t.done_at) <= $4::date`;
++      q = `WITH ${SC}
++        SELECT w.full_name AS name, w.login, t.site_key AS site, (SELECT full_name FROM public.coordinators WHERE id = t.coordinator_id) AS coord,
++               to_char(t.done_at AT TIME ZONE 'Europe/Warsaw', 'YYYY-MM-DD') AS date, t.problem_code AS problem, t.comment,
++               (SELECT CASE WHEN MIN(s.end_date) IS NOT NULL THEN 'odszedł ' || to_char(MIN(s.end_date), 'DD.MM') END
++                  FROM board.v_spells s WHERE s.worker_id = t.worker_id AND s.end_status <> 'przeniesiony'
++                   AND s.end_date >= care.ldate(t.done_at) - 7 AND s.end_date <= LEAST(care.ldate(t.done_at) + 30, care.today())) AS result,
++               care.ldate(t.done_at) + 30 > care.today() AS pending
++          FROM care.tasks t JOIN public.workers w ON w.id = t.worker_id
++         WHERE t.outcome = 'leaving' AND t.facility_id IN (SELECT facility_id FROM sc) AND ${cond}
++         ORDER BY t.done_at DESC`;
++    } else if (kind === "s80") {
++      q = `WITH ${SC}
++        SELECT w.full_name AS name, w.login, sp.start_site AS site, ${COORD} AS coord,
++               to_char(sp.start_date, 'YYYY-MM-DD') AS start, to_char(sp.start_date + 80, 'YYYY-MM-DD') AS day80,
++               CASE WHEN sp.end_date IS NULL OR sp.end_date >= sp.start_date + 80 THEN 'tak'
++                    ELSE 'odszedł ' || to_char(sp.end_date, 'DD.MM') || ' (' || (sp.end_date - sp.start_date + 1) || ' dni)' END AS reached
++          FROM board.v_spells sp JOIN sc ON sc.facility_id = sp.start_facility
++          JOIN public.workers w ON w.id = sp.worker_id
++         WHERE sp.start_date + 80 > $4::date - GREATEST($5::int, 28) AND sp.start_date + 80 <= $4::date
++           AND NOT COALESCE(sp.end_status = 'przeniesiony' AND sp.end_date < sp.start_date + 80, false)
++         ORDER BY (sp.end_date IS NULL OR sp.end_date >= sp.start_date + 80), sp.start_date`;
++    } else {
++      return fail(res, new Error("kind"), 400);
++    }
++    // лише ті параметри, що є в запиті (інакше Postgres не знає їх типу)
++    const maxN = Math.max(...[...q.matchAll(/\$(\d+)/g)].map((m) => Number(m[1])));
++    // загальна кількість до обрізання: COUNT(*) OVER () не змінює порядок рядків підзапиту
++    const r = await query(`SELECT x.*, COUNT(*) OVER ()::int AS _total FROM (${q}) x LIMIT ${limit}`, p.slice(0, maxN));
++    const total = r.rows.length ? r.rows[0]._total : 0;
++    r.rows.forEach((x) => delete x._total);
++    const fr = await query(`SELECT to_char($1::date - $2::int + 1, 'YYYY-MM-DD') AS f`, [AA, LL]);
++    res.json({ ok: true, kind, anchor: AA, from: fr.rows[0].f, period: LL, total, limit, rows: r.rows });
++  } catch (e) { fail(res, e); }
++});
++
++module.exports = { router };
+--- /dev/null
++++ b/db/migration_board.sql
+@@ -0,0 +1,78 @@
++-- ══════════════════════════════════════════════════════════════════════
++--  «Pulpit kierownika» — зведена панель для керівника і операційного
++--  директора. Нічого не пише в робочі таблиці, тільки читає.
++--  Потрібні вже встановлені схеми reg (Region) і care (Rozmowy).
++--
++--  Запуск: psql -d sasdb -f db/migration_board.sql   (можна повторно)
++-- ══════════════════════════════════════════════════════════════════════
++BEGIN;
++
++CREATE SCHEMA IF NOT EXISTS board;
++
++-- Індекси для вибірок пульта (нічого не змінюють у даних)
++CREATE INDEX IF NOT EXISTS hours_log_work_date_idx ON public.hours_log(work_date);
++CREATE INDEX IF NOT EXISTS wfh_worker_idx          ON public.worker_facility_history(worker_id);
++CREATE INDEX IF NOT EXISTS risk_daily_worker_idx   ON care.risk_daily(worker_id, day);
++CREATE INDEX IF NOT EXISTS tasks_worker_idx        ON care.tasks(worker_id, created_at);
++
++-- ── Працевлаштування в компанії («спел») ─────────────────────────────
++-- Періоди з reg.v_periods (без rezygnacja і TEST) однієї людини, між якими
++-- не більше 14 днів, склеюються в один спел: перехід на інший об'єкт або
++-- повернення за два тижні — це не відхід з компанії. Після періоду зі статусом
++-- «przeniesiony» чекаємо до 60 днів (новий об'єкт часто вноситься в таблиці пізніше).
++--   start_*  — перший період (де людину прийняли)
++--   end_*    — останній період (звідки пішла)
++--   end_date — NULL, поки людина працює
++-- Відхід = end_date заповнена і останній статус не «przeniesiony».
++CREATE OR REPLACE VIEW board.v_spells AS
++WITH p AS (
++  SELECT v.worker_id, v.facility_id, v.site_key, v.status, v.bhp_date, v.last_work_date AS lwd
++  FROM reg.v_periods v
++  WHERE v.bhp_date <= care.today()
++),
++o AS (
++  SELECT p.*,
++         MAX(COALESCE(p.lwd, DATE 'infinity')) OVER (
++           PARTITION BY p.worker_id ORDER BY p.bhp_date, COALESCE(p.lwd, DATE 'infinity')
++           ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS prev_end,
++         LAG(p.status) OVER (
++           PARTITION BY p.worker_id ORDER BY p.bhp_date, COALESCE(p.lwd, DATE 'infinity')) AS prev_status
++  FROM p
++),
++g AS (
++  SELECT o.*,
++         SUM(CASE WHEN o.prev_end IS NULL
++                    OR o.bhp_date > o.prev_end + CASE WHEN o.prev_status = 'przeniesiony' THEN 60 ELSE 14 END
++                  THEN 1 ELSE 0 END) OVER (
++           PARTITION BY o.worker_id ORDER BY o.bhp_date, COALESCE(o.lwd, DATE 'infinity')
++           ROWS UNBOUNDED PRECEDING) AS grp
++  FROM o
++)
++SELECT g.worker_id,
++       g.grp::int                                                                    AS spell_no,
++       MIN(g.bhp_date)                                                               AS start_date,
++       CASE WHEN BOOL_OR(g.lwd IS NULL) THEN NULL ELSE MAX(g.lwd) END               AS end_date,
++       (ARRAY_AGG(g.facility_id ORDER BY g.bhp_date, g.facility_id))[1]              AS start_facility,
++       (ARRAY_AGG(g.site_key    ORDER BY g.bhp_date, g.facility_id))[1]              AS start_site,
++       (ARRAY_AGG(g.facility_id ORDER BY COALESCE(g.lwd, DATE 'infinity') DESC, g.bhp_date DESC))[1] AS end_facility,
++       (ARRAY_AGG(g.site_key    ORDER BY COALESCE(g.lwd, DATE 'infinity') DESC, g.bhp_date DESC))[1] AS end_site,
++       (ARRAY_AGG(g.status      ORDER BY COALESCE(g.lwd, DATE 'infinity') DESC, g.bhp_date DESC))[1] AS end_status,
++       COUNT(*)::int                                                                 AS periods
++FROM g
++GROUP BY g.worker_id, g.grp;
++
++-- ── Об'єкти в межах фільтра ──────────────────────────────────────────
++-- p_region: NULL = усі, -1 = без регіону;  p_client: NULL = усі;  p_coord: NULL = усі.
++-- Регіон і координатор — поточна прив'язка об'єкта (reg.site_owner, як у Region).
++CREATE OR REPLACE FUNCTION board.sites(p_region INT, p_client TEXT, p_coord INT)
++RETURNS TABLE (facility_id INT, site_key TEXT, region_id INT, coordinator_id INT, client_name TEXT)
++LANGUAGE sql STABLE AS $$
++  SELECT f.id, reg.site_key(f.group_name, f.name), o.region_id, o.coordinator_id, f.client_name
++  FROM public.facilities f
++  LEFT JOIN reg.site_owner o ON o.site_key = reg.site_key(f.group_name, f.name) AND o.valid_to IS NULL
++  WHERE (p_region IS NULL OR (p_region = -1 AND o.region_id IS NULL) OR o.region_id = p_region)
++    AND (p_client IS NULL OR f.client_name = p_client)
++    AND (p_coord  IS NULL OR o.coordinator_id = p_coord)
++$$;
++
++COMMIT;
+--- /dev/null
++++ b/public/zarzad.html
+@@ -0,0 +1,311 @@
++<!doctype html>
++<html lang="pl">
++<head>
++  <meta charset="UTF-8" />
++  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
++  <title>SAS Logistic — Pulpit kierownika</title>
++  <link rel="stylesheet" href="css/style.css" />
++  <style>
++    /* ── тільки для «Pulpit kierownika» ── */
++    :root { --rag-r: var(--red); --rag-a: var(--accent2); --rag-g: var(--green); --rag-s: #64748b;
++      --s-hire: #3987e5; --s-dep: #d95926; --seq: 57,135,229; }
++    .content { overflow-y: auto; }
++    .content > * { flex-shrink: 0; }
++    .content.busy > * { opacity: .55; transition: opacity .15s; }
++    .main { min-width: 0; }
++    .bd-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
++    .bd-toolbar label { font-size: 11px; color: var(--text2); }
++    .bd-toolbar .grp { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
++    .topbar-title { white-space: nowrap; }
++    .chips { display: flex; gap: 4px; flex-wrap: wrap; }
++    .chip { padding: 3px 10px; font-size: 11px; border-radius: 12px; border: 1px solid var(--border);
++      background: transparent; color: var(--text2); cursor: pointer; }
++    .chip.active { background: var(--surface2); color: var(--text); border-color: var(--accent); }
++    .fchip { display: none; align-items: center; gap: 6px; font-size: 11px; padding: 3px 6px 3px 10px; border-radius: 12px;
++      background: rgba(59,130,246,.15); color: var(--text); border: 1px solid var(--accent); }
++    .fchip button { background: none; border: none; color: var(--text2); cursor: pointer; font-size: 12px; }
++    .period-line { font-size: 12px; color: var(--text2); margin: 0 0 12px; line-height: 1.6; }
++    .period-line b { color: var(--text); font-weight: 600; }
++    .crumb a { color: var(--accent); cursor: pointer; text-decoration: none; }
++
++    .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
++    .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; cursor: pointer;
++      display: flex; flex-direction: column; gap: 3px; text-align: left; color: var(--text); font: inherit; }
++    .kpi:hover { border-color: var(--accent); }
++    .kpi .l { font-size: 11px; color: var(--text2); }
++    .kpi .row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
++    .kpi .v { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
++    .kpi .d { font-size: 12px; font-weight: 600; font-family: var(--mono); }
++    .kpi .d.good { color: var(--green); } .kpi .d.bad { color: var(--red); } .kpi .d.flat { color: var(--text3); }
++    .kpi .s { font-size: 11px; color: var(--text3); line-height: 1.4; }
++    .kpi.off .v { color: var(--text3); font-size: 18px; }
++
++    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
++    .section-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border);
++      font-size: 13px; font-weight: 600; flex-wrap: wrap; }
++    .section-head .cnt { font-size: 11px; color: var(--text2); font-weight: 400; }
++    .section-head .spacer { margin-left: auto; }
++    .grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
++    .grid2 > .section { margin-bottom: 16px; }
++    .legend { padding: 8px 14px; font-size: 11px; color: var(--text3); border-top: 1px solid var(--border); line-height: 1.5; }
++    .empty, .loading { padding: 26px; text-align: center; color: var(--text3); font-size: 12px; }
++    .error { padding: 14px; color: var(--red); font-size: 12px; }
++    .muted { color: var(--text3); }
++    .linkbtn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 11px; padding: 0; }
++
++    /* Do decyzji */
++    .dec { display: flex; gap: 10px; align-items: flex-start; padding: 8px 14px; border-bottom: 1px solid var(--border); cursor: pointer; }
++    .dec:last-child { border-bottom: none; }
++    .dec:hover { background: var(--surface2); }
++    .dec .sev { font-size: 10px; font-weight: 700; font-family: var(--mono); border-radius: 4px; padding: 2px 6px; flex: none; margin-top: 1px; }
++    .dec .sev.s1 { background: rgba(239,68,68,.2); color: #fca5a5; border: 1px solid rgba(239,68,68,.5); }
++    .dec .sev.s2 { background: rgba(245,158,11,.15); color: #fcd34d; border: 1px solid rgba(245,158,11,.45); }
++    .dec .sev.s3 { background: var(--surface2); color: var(--text2); border: 1px solid var(--border); }
++    .dec .t { font-size: 13px; }
++    .dec .sub { font-size: 11px; color: var(--text3); margin-top: 1px; }
++
++    /* Heatmap */
++    table.hm { width: 100%; border-collapse: collapse; font-size: 12px; }
++    table.hm th { font-size: 10px; color: var(--text3); font-family: var(--mono); font-weight: 400; padding: 6px 4px; text-align: center; white-space: nowrap; }
++    table.hm th.l, table.hm td.l { text-align: left; padding-left: 14px; }
++    table.hm td { padding: 3px 2px; border-top: 1px solid var(--border); }
++    table.hm td.l { white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
++    table.hm td.l a { color: var(--text); cursor: pointer; text-decoration: none; }
++    table.hm td.l a:hover { color: var(--accent); }
++    table.hm tr.company td.l { font-weight: 700; }
++    table.hm td.hc { font-family: var(--mono); color: var(--text2); text-align: right; padding-right: 10px; font-size: 11px; }
++    .cell { height: 22px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px;
++      font-weight: 700; font-family: var(--mono); color: #0f1117; min-width: 26px; cursor: default; border: 2px solid transparent; }
++    .cell:hover { border-color: var(--text); }
++    .cell.R { background: var(--rag-r); } .cell.A { background: var(--rag-a); } .cell.G { background: var(--rag-g); }
++    .cell.S { background: var(--rag-s); } .cell.N, .cell.x { background: var(--surface2); color: var(--text3); }
++    .key { display: inline-flex; align-items: center; gap: 5px; margin-right: 12px; }
++    .key i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
++
++    /* Charts */
++    .chart { padding: 10px 14px 6px; }
++    .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
++    .chart text { font-size: 10px; fill: var(--text3); font-family: system-ui, sans-serif; }
++    .chart .lbl { fill: var(--text2); }
++    .chart .val { fill: var(--text); font-weight: 600; }
++    .chart .grid { stroke: var(--border); stroke-width: 1; }
++    .chart .hit { fill: transparent; cursor: default; }
++    .chart .hit:hover { fill: rgba(255,255,255,.04); }
++    .lg { display: flex; gap: 14px; font-size: 11px; color: var(--text2); padding: 0 14px 8px; flex-wrap: wrap; }
++    .lg span { display: inline-flex; align-items: center; gap: 6px; }
++    .lg i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
++    .lg i.dot { border-radius: 50%; }
++    .lg i.ring { border-radius: 50%; background: transparent !important; border: 2px solid var(--accent); }
++
++    table.rg { width: 100%; border-collapse: collapse; font-size: 12px; }
++    table.rg th { text-align: left; padding: 8px 10px; font-size: 10px; letter-spacing: .5px; color: var(--text3);
++      border-bottom: 1px solid var(--border); font-family: var(--mono); text-transform: uppercase; white-space: nowrap; }
++    table.rg th.src { text-transform: none; letter-spacing: 0; font-family: inherit; font-size: 11px; white-space: normal; line-height: 1.35; }
++    table.rg th.sort { cursor: pointer; } table.rg th.sort:hover { color: var(--text); }
++    table.rg td { padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
++    table.rg tr:last-child td { border-bottom: none; }
++    table.rg td.num, table.rg th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
++    table.rg td.c, table.rg th.c { text-align: center; }
++    table.rg tbody tr.click { cursor: pointer; }
++    table.rg tbody tr.click:hover td { background: var(--surface2); }
++    table.rg tr.total td { font-weight: 700; border-top: 1px solid var(--border-strong, var(--border)); }
++    .tblwrap { overflow-x: auto; }
++    .seq { border-radius: 4px; padding: 3px 6px; display: inline-block; min-width: 44px; text-align: right; }
++    .red { color: var(--red); } .amber { color: var(--accent2); } .green { color: var(--green); }
++    .tag { font-size: 10px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--border); color: var(--text2); white-space: nowrap; }
++    .tag.on { border-color: var(--accent); color: var(--text); }
++
++    .vtiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; padding: 12px 14px; }
++    .vt { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
++    .vt .l { font-size: 11px; color: var(--text2); }
++    .vt .v { font-size: 20px; font-weight: 700; margin-top: 3px; font-variant-numeric: tabular-nums; }
++    .vt .s { font-size: 10px; color: var(--text3); margin-top: 2px; }
++    .lock { font-size: 10px; color: var(--purple); }
++    .axes { display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--text2); flex-wrap: wrap; }
++    .cmp { padding: 12px 14px; font-size: 12px; }
++    .cmp table { width: 100%; border-collapse: collapse; }
++    .cmp td, .cmp th { padding: 5px 6px; border-bottom: 1px solid var(--border); text-align: right; font-family: var(--mono); }
++    .cmp th { font-size: 10px; color: var(--text3); font-weight: 400; }
++    .cmp td:first-child, .cmp th:first-child { text-align: left; font-family: inherit; }
++
++    /* Tooltip */
++    #tip { position: fixed; z-index: 80; pointer-events: none; background: #0b0f17; border: 1px solid var(--border);
++      border-radius: 6px; padding: 7px 9px; font-size: 11px; color: var(--text2); display: none; max-width: 280px; line-height: 1.5;
++      box-shadow: 0 4px 14px rgba(0,0,0,.4); }
++    #tip b { color: var(--text); }
++    #tip .k { display: inline-block; width: 12px; height: 2px; vertical-align: middle; margin-right: 6px; }
++
++    /* Drawer */
++    .drawer-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 50; display: none; }
++    .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(980px, 100vw); background: var(--bg);
++      border-left: 1px solid var(--border); z-index: 51; overflow-y: auto; transform: translateX(100%); transition: transform .2s; }
++    .drawer.open { transform: translateX(0); }
++    .drawer-bg.open { display: block; }
++    .dw-head { position: sticky; top: 0; background: var(--surface); border-bottom: 1px solid var(--border);
++      padding: 14px 18px; display: flex; gap: 12px; align-items: flex-start; z-index: 2; }
++    .dw-head h2 { font-size: 17px; font-weight: 700; }
++    .dw-head .sub { font-size: 12px; color: var(--text2); margin-top: 3px; }
++    .dw-tools { margin-left: auto; display: flex; gap: 8px; align-items: center; }
++    .dw-close { background: transparent; border: 1px solid var(--border); color: var(--text2);
++      border-radius: 5px; width: 28px; height: 28px; cursor: pointer; font-size: 14px; }
++    .dw-body { padding: 14px 18px; }
++    .noaccess { max-width: 520px; margin: 60px auto; text-align: center; color: var(--text2); font-size: 13px; line-height: 1.6; }
++
++    @media (max-width: 1200px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
++    @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
++    @media (max-width: 800px) {
++      .topbar { height: auto; flex-wrap: wrap; padding: 10px 16px; gap: 8px; }
++      .topbar-right { display: none; }
++      .content { padding: 12px; }
++      .kpi .v { font-size: 22px; }
++      .dw-head, .dw-body { padding-left: 12px; padding-right: 12px; }
++    }
++  </style>
++  <link rel="stylesheet" href="/css/mobile.css" />
++</head>
++<body>
++  <div class="sidebar">
++    <button class="sidebar-toggle" onclick="toggleSidebar()" title="Ukryj / Przypnij menu">◀</button>
++    <div class="logo">
++      <div class="logo-tag">SAS LOGISTIC</div>
++      <div class="logo-name">Pulpit kierownika</div>
++    </div>
++    <div class="nav">
++      <div class="nav-item" onclick="location.href='index.html'">⬅️ Panel główny</div>
++      <div class="nav-item active" data-sec="sec-kpi" onclick="goSec('sec-kpi')">📊 Przegląd</div>
++      <div class="nav-item" data-sec="sec-dec" onclick="goSec('sec-dec')">⚠️ Do decyzji</div>
++      <div class="nav-item" data-sec="sec-rag" onclick="goSec('sec-rag')">🚦 Regiony</div>
++      <div class="nav-item" data-sec="sec-flow" onclick="goSec('sec-flow')">📈 Ruch kadrowy</div>
++      <div class="nav-item" data-sec="sec-coh" onclick="goSec('sec-coh')">🧬 Kohorty i przyczyny</div>
++      <div class="nav-item" data-sec="sec-voice" onclick="goSec('sec-voice')">🗣️ Głos pracownika</div>
++      <div class="nav-item" data-sec="sec-coord" onclick="goSec('sec-coord')">👥 Koordynatorzy</div>
++      <div class="nav-item" id="navRegion" style="display:none" onclick="location.href='region.html'">🚦 Region</div>
++      <div class="nav-item" id="navRozmowy" style="display:none" onclick="location.href='rozmowy.html'">📞 Rozmowy</div>
++    </div>
++  </div>
++
++  <div class="main">
++    <div class="topbar">
++      <div class="topbar-title">Pulpit kierownika</div>
++      <div class="bd-toolbar" id="toolbar">
++        <span class="grp"><label for="selRegion">Region</label><select id="selRegion" onchange="onFilter()"></select></span>
++        <span class="grp"><label for="selClient">Klient</label><select id="selClient" onchange="onFilter()"></select></span>
++        <div class="chips" id="periodChips">
++          <button class="chip" data-p="7" onclick="setPeriod(7)">Tydzień</button>
++          <button class="chip active" data-p="28" onclick="setPeriod(28)">4 tygodnie</button>
++          <button class="chip" data-p="91" onclick="setPeriod(91)">13 tygodni</button>
++        </div>
++        <span class="grp"><label for="selTo">do</label><select id="selTo" onchange="onFilter()"></select></span>
++        <span class="fchip" id="coordChip"><span id="coordChipName"></span><button onclick="clearCoord()" aria-label="Usuń filtr koordynatora">✕</button></span>
++      </div>
++      <div class="topbar-right"><span id="userName" style="font-size: 12px; color: var(--text2)"></span></div>
++    </div>
++
++    <div class="content" id="content">
++      <div class="period-line" id="periodLine"></div>
++
++      <div id="sec-kpi" class="kpis"><div class="loading">Ładowanie…</div></div>
++
++      <div class="section" id="sec-dec">
++        <div class="section-head">⚠️ Do decyzji <span class="cnt" id="decCnt"></span>
++          <span class="spacer"></span><button class="linkbtn" id="decMore" onclick="toggleDec()"></button></div>
++        <div id="decList"><div class="loading">Ładowanie…</div></div>
++      </div>
++
++      <div class="section" id="sec-rag">
++        <div class="section-head">🚦 Regiony tydzień po tygodniu <span class="cnt" id="ragCrumb"></span>
++          <span class="spacer"></span>
++          <span class="cnt"><span class="key"><i style="background:var(--rag-g)"></i>zielony</span><span class="key"><i style="background:var(--rag-a)"></i>żółty</span><span class="key"><i style="background:var(--rag-r)"></i>czerwony</span><span class="key"><i style="background:var(--rag-s)"></i>strukturalny</span></span></div>
++        <div class="tblwrap" id="ragTable"><div class="loading">Ładowanie…</div></div>
++        <div class="legend" id="ragLegend">Region liczony jak jeden duży obiekt — te same progi, co w sekcji Region (rotacja, dożycie, NN). Liczba w kratce — ile obiektów jest czerwonych.
++          Kliknij region, żeby zobaczyć jego obiekty; kliknij obiekt, żeby otworzyć jego kartę w sekcji Region.</div>
++      </div>
++
++      <div class="grid2" id="sec-flow">
++        <div class="section">
++          <div class="section-head">📈 Przyjęci i odejścia <span class="cnt">12 tygodni</span></div>
++          <div class="lg"><span><i style="background:var(--s-hire)"></i>przyjęci</span><span><i style="background:var(--s-dep)"></i>odejścia</span></div>
++          <div class="chart" id="flowChart"></div>
++          <div class="chart" id="hcChart" style="padding-top:0"></div>
++          <div class="legend">Odejście — koniec pracy w firmie. Przejście na inny obiekt albo powrót w ciągu 14 dni to nie odejście.</div>
++        </div>
++        <div class="section">
++          <div class="section-head">⏱️ Kiedy odchodzą <span class="cnt" id="tenureCnt"></span></div>
++          <div class="chart" id="tenureChart"></div>
++          <div class="legend">Staż w dniu odejścia, w wybranym okresie. Dużo odejść w pierwszych 30 dniach — sprawdź rekrutację i pierwsze dni na obiekcie;
++            przed 80. dniem — mieszkanie, pieniądze i godziny.</div>
++        </div>
++      </div>
++
++      <div class="grid2" id="sec-coh">
++        <div class="section">
++          <div class="section-head">🧬 Kohorty — ilu z przyjętych nadal pracuje</div>
++          <div class="tblwrap" id="cohTable"><div class="loading">Ładowanie…</div></div>
++          <div class="legend">Wiersz — miesiąc przyjęcia. Kolumna — dzień pracy. Gdzie liczby spadają najmocniej, tam jest problem.
++            „·” — ten dzień jeszcze nie nadszedł.</div>
++        </div>
++        <div class="section">
++          <div class="section-head">❓ Dlaczego odchodzą <span class="cnt">90 dni</span></div>
++          <div class="tblwrap" id="reasonTable"><div class="loading">Ładowanie…</div></div>
++          <div class="legend">Każda kolumna to inne źródło, procent — udział w tym źródle. Porównaj, co mówią sami pracownicy, a co piszą koordynatorzy i regionalni.</div>
++        </div>
++      </div>
++
++      <div class="section" id="sec-voice">
++        <div class="section-head">🗣️ Głos pracownika <span class="cnt">ankiety z 90 dni</span>
++          <span class="spacer"></span><button class="linkbtn" onclick="openVoiceRegions()">Po regionach →</button></div>
++        <div id="voiceBox"><div class="loading">Ładowanie…</div></div>
++      </div>
++
++      <div class="section" id="sec-coord">
++        <div class="section-head">👥 Koordynatorzy — proces i wynik <span class="cnt" id="coordCnt"></span>
++          <span class="spacer"></span>
++          <span class="axes"><label for="selX">oś X</label><select id="selX" onchange="renderQuad()">
++              <option value="fill">Godziny wpisane w bocie</option><option value="ontime">Rozmowy zamknięte na czas</option></select>
++            <label for="selY">oś Y</label><select id="selY" onchange="renderQuad()">
++              <option value="s80">Dożycie 80 dni</option><option value="rot">Rotacja (odwrócona)</option></select></span></div>
++        <div class="grid2" style="gap:0">
++          <div>
++            <div class="chart" id="quadChart"></div>
++            <div class="lg"><span><i class="dot" style="background:var(--accent)"></i>moduł Rozmowy włączony</span><span><i class="ring"></i>wyłączony</span><span class="muted">wielkość — liczba pracowników</span></div>
++          </div>
++          <div class="cmp" id="cmpBox"></div>
++        </div>
++        <div class="tblwrap" id="coordTable" style="border-top:1px solid var(--border)"><div class="loading">Ładowanie…</div></div>
++        <div class="legend">Kliknij koordynatora, żeby zobaczyć jego obiekty. „Tylko jego dane” zawęża cały pulpit do niego.
++          „Pracownik: nie było rozmowy” — bot pyta część osób po rozmowie; odpowiedź „nie” przy zamkniętej rozmowie to sygnał do sprawdzenia.</div>
++      </div>
++    </div>
++  </div>
++
++  <div class="drawer-bg" id="drawerBg" onclick="closeDrawer()"></div>
++  <div class="drawer" id="drawer" aria-hidden="true"></div>
++  <div id="tip"></div>
++
++  <script src="js/zarzad.js"></script>
++  <div class="sidebar-hover-zone"
++     onmouseenter="document.querySelector('.sidebar').classList.add('sidebar-peek')"
++     onmouseleave="document.querySelector('.sidebar').classList.remove('sidebar-peek')"></div>
++  <script>
++  function toggleSidebar() {
++    const hidden = document.body.classList.toggle('sidebar-hidden');
++    const btn = document.querySelector('.sidebar-toggle');
++    btn.textContent = hidden ? '▶' : '◀';
++    btn.title = hidden ? 'Przypnij menu' : 'Ukryj menu';
++    try { localStorage.setItem('sas_sidebar_hidden', hidden ? '1' : '0'); } catch (e) {}
++  }
++  try {
++    if (localStorage.getItem('sas_sidebar_hidden') === '1' || window.innerWidth < 800) {
++      document.body.classList.add('sidebar-hidden');
++      const btn = document.querySelector('.sidebar-toggle');
++      if (btn) { btn.textContent = '▶'; btn.title = 'Przypnij menu'; }
++    }
++  } catch (e) {}
++  document.querySelector('.sidebar')?.addEventListener('click', (e) => {
++    if (e.target.closest('.nav-item') && document.body.classList.contains('sidebar-hidden')) {
++      document.querySelector('.sidebar').classList.remove('sidebar-peek');
++    }
++  });
++  </script>
++</body>
++</html>
+--- /dev/null
++++ b/public/js/zarzad.js
+@@ -0,0 +1,833 @@
++// ══════════════════════════════════════════════════════════════════════
++//  «Pulpit kierownika» — зведена панель для керівника відділу
++//  і операційного директора. Кожна цифра відкриває деталі.
++// ══════════════════════════════════════════════════════════════════════
++const SESSION = localStorage.getItem("sas_session");
++const CURRENT_USER = JSON.parse(localStorage.getItem("sas_user") || "null");
++if (!SESSION) location.href = "/login.html";
++
++const ST = {
++  me: null,
++  period: 28,
++  coord: null,          // { id, name } — фільтр «тільки його дані»
++  summary: null,
++  coords: [],
++  voice: null,
++  decAll: false,
++  coordSort: { key: "rot", dir: -1 },
++  drawer: null,         // { rows, cols, title } — для сортування і CSV
++  tips: [],
++  seq: 0,               // номер завантаження: відповіді старих запитів ігноруються
++  dseq: 0,              // те саме для бокової панелі
++};
++
++// ── Утиліти ───────────────────────────────────────────────────────────
++function esc(s) {
++  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
++    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
++}
++const nf = new Intl.NumberFormat("pl-PL");
++function pl(n, one, few, many) {
++  const a = Math.abs(n) % 100, b = a % 10;
++  if (n === 1) return one;
++  if (b >= 2 && b <= 4 && !(a >= 12 && a <= 14)) return few;
++  return many;
++}
++const fN = (v) => (v == null ? "—" : nf.format(Math.round(v)));
++const pct = (v) => (v == null || !isFinite(v) ? "—" : Math.round(v * 100) + "%");
++const pct1 = (v) => (v == null || !isFinite(v) ? "—" : (v * 100).toFixed(1).replace(".", ",") + "%");
++const dec1 = (v) => (v == null ? "—" : Number(v).toFixed(1).replace(".", ","));
++const ratio = (a, b) => (b ? a / b : null);
++const dd = (s) => (s ? s.slice(8, 10) + "." + s.slice(5, 7) : "");
++const ddy = (s) => (s ? dd(s) + "." + s.slice(0, 4) : "");
++const MONTHS = ["sty", "lut", "mar", "kwi", "maj", "cze", "lip", "sie", "wrz", "paź", "lis", "gru"];
++const monthLabel = (m) => MONTHS[Number(m.slice(5, 7)) - 1] + " " + m.slice(0, 4);
++const store = {
++  get(k) { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } },
++  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* prywatne okno */ } },
++};
++
++async function api(path) {
++  try {
++    const r = await fetch("/api/board" + path, { headers: { "x-session": SESSION } });
++    if (r.status === 401) { location.href = "/login.html"; return null; }
++    return await r.json();
++  } catch (e) {
++    return { ok: false, error: e.message };
++  }
++}
++
++function qs(extra) {
++  const p = new URLSearchParams();
++  const reg = document.getElementById("selRegion").value;
++  const cli = document.getElementById("selClient").value;
++  const to = document.getElementById("selTo").value;
++  if (reg && reg !== "all") p.set("region", reg);
++  if (cli) p.set("client", cli);
++  if (to) p.set("to", to);
++  p.set("period", ST.period);
++  if (ST.coord) p.set("coord", ST.coord.id);
++  Object.entries(extra || {}).forEach(([k, v]) => p.set(k, v));
++  return "?" + p.toString();
++}
++
++// ── Підказка при наведенні ───────────────────────────────────────────
++const tipEl = () => document.getElementById("tip");
++function tipShow(e, html) {
++  const t = tipEl();
++  t.innerHTML = html;
++  t.style.display = "block";
++  const w = t.offsetWidth, h = t.offsetHeight;
++  let x = e.clientX + 14, y = e.clientY + 14;
++  if (x + w > window.innerWidth - 8) x = e.clientX - w - 14;
++  if (y + h > window.innerHeight - 8) y = e.clientY - h - 14;
++  t.style.left = x + "px";
++  t.style.top = y + "px";
++}
++function tipHide() { tipEl().style.display = "none"; }
++// Елементи з data-tip="<індекс>" показують ST.tips[індекс]
++document.addEventListener("mousemove", (e) => {
++  const el = e.target.closest && e.target.closest("[data-tip]");
++  if (el) tipShow(e, ST.tips[Number(el.dataset.tip)] || "");
++  else tipHide();
++});
++function tip(html) { ST.tips.push(html); return ST.tips.length - 1; }
++
++// ══════════════════════════════════════════════════════════════════════
++//  Старт
++// ══════════════════════════════════════════════════════════════════════
++window.addEventListener("DOMContentLoaded", init);
++
++async function init() {
++  if (CURRENT_USER) document.getElementById("userName").textContent = CURRENT_USER.full_name || "";
++  const me = await api("/me");
++  if (!me) return;
++  if (!me.ok || !me.has_access) {
++    document.getElementById("toolbar").style.display = "none";
++    document.querySelectorAll(".nav-item[data-sec]").forEach((el) => (el.style.display = "none"));
++    document.getElementById("content").innerHTML =
++      `<div class="noaccess">📊 <b>Pulpit kierownika</b> jest dostępny dla kierownika działu i administratorów panelu.</div>`;
++    return;
++  }
++  ST.me = me;
++  me.links = me.links || {};
++  if (me.links.region) document.getElementById("navRegion").style.display = "";
++  if (me.links.rozmowy) document.getElementById("navRozmowy").style.display = "";
++  const selR = document.getElementById("selRegion");
++  selR.innerHTML = `<option value="all">Wszystkie regiony</option>` +
++    me.regions.map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join("") +
++    `<option value="none">Bez regionu</option>`;
++  const selC = document.getElementById("selClient");
++  selC.innerHTML = `<option value="">Wszyscy klienci</option>` +
++    me.clients.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
++  const selT = document.getElementById("selTo");
++  selT.innerHTML = me.weeks.map((w, i) => `<option value="${i === 0 ? "" : w}">${ddy(w)}${i === 0 ? " (ost. pełny tydzień)" : ""}</option>`).join("");
++
++  const saved = store.get("sas_board_f");
++  if (saved) {
++    if (saved.region && [...selR.options].some((o) => o.value === saved.region)) selR.value = saved.region;
++    if (saved.client && [...selC.options].some((o) => o.value === saved.client)) selC.value = saved.client;
++    if ([7, 28, 91].includes(saved.period)) ST.period = saved.period;
++  }
++  paintPeriod();
++  loadAll();
++}
++
++function onFilter() {
++  store.set("sas_board_f", {
++    region: document.getElementById("selRegion").value,
++    client: document.getElementById("selClient").value,
++    period: ST.period,
++  });
++  loadAll();
++}
++function setPeriod(p) { ST.period = p; paintPeriod(); onFilter(); }
++function paintPeriod() {
++  document.querySelectorAll("#periodChips .chip").forEach((c) => c.classList.toggle("active", Number(c.dataset.p) === ST.period));
++}
++function setRegion(key, label) {
++  const sel = document.getElementById("selRegion");
++  if (![...sel.options].some((o) => o.value === String(key))) {
++    const o = document.createElement("option");
++    o.value = key; o.textContent = label || "Region";
++    sel.appendChild(o);
++  }
++  sel.value = key;
++  onFilter();
++  goSec("sec-rag");
++}
++function setCoord(id, name) {
++  ST.coord = { id, name };
++  document.getElementById("coordChipName").textContent = "Koordynator: " + name;
++  document.getElementById("coordChip").style.display = "inline-flex";
++  closeDrawer();
++  loadAll();
++  document.getElementById("content").scrollTo({ top: 0, behavior: "smooth" });
++}
++function clearCoord() {
++  ST.coord = null;
++  document.getElementById("coordChip").style.display = "none";
++  loadAll();
++}
++function goSec(id) {
++  const el = document.getElementById(id);
++  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
++  document.querySelectorAll(".nav-item[data-sec]").forEach((n) => n.classList.toggle("active", n.dataset.sec === id));
++}
++function siteLink(key) {
++  window.open("region.html#site=" + encodeURIComponent(key), "_blank");
++}
++
++async function loadAll() {
++  const content = document.getElementById("content");
++  content.classList.add("busy");
++  const my = ++ST.seq;
++  ST.tips = [];
++  const q = qs();
++  const job = (path, ids, fn) => api(path + q).then((r) => { if (my === ST.seq) guard(r, ids, () => fn(r)); });
++  await Promise.all([
++    job("/summary", ["periodLine", "sec-kpi", "decList", "tenureChart"], (r) => { ST.summary = r; renderPeriodLine(); renderKpis(); renderDecisions(); renderTenure(); }),
++    job("/rag", ["ragTable"], (r) => renderRag(r)),
++    job("/trend", ["flowChart", "hcChart"], (r) => renderFlow(r.data)),
++    job("/cohorts", ["cohTable"], (r) => renderCohorts(r)),
++    job("/reasons", ["reasonTable"], (r) => renderReasons(r)),
++    job("/voice", ["voiceBox"], (r) => { ST.voice = r; renderVoice(r); }),
++    job("/coordinators", ["coordTable", "quadChart", "cmpBox"], (r) => { ST.coords = r.data; ST.compare = r.compare; renderCoords(); }),
++  ]);
++  if (my === ST.seq) content.classList.remove("busy");
++}
++function guard(r, ids, fn) {
++  if (!r) return;
++  if (!r.ok) {
++    ids.forEach((id) => { const el = document.getElementById(id); if (el) el.innerHTML = `<div class="error">${esc(r.error || "Błąd")}</div>`; });
++    return;
++  }
++  try { fn(); } catch (e) {
++    console.error(e);
++    ids.forEach((id) => { const el = document.getElementById(id); if (el) el.innerHTML = `<div class="error">${esc(e.message)}</div>`; });
++  }
++}
++
++// ══════════════════════════════════════════════════════════════════════
++//  Період і плитки
++// ══════════════════════════════════════════════════════════════════════
++const PERIOD_NAME = { 7: "tydzień", 28: "4 tygodnie", 91: "13 tygodni" };
++function renderPeriodLine() {
++  const s = ST.summary;
++  const reg = document.getElementById("selRegion");
++  const cli = document.getElementById("selClient").value;
++  const parts = [`Okres: <b>${dd(s.from)}–${ddy(s.anchor)}</b> (${PERIOD_NAME[s.period]}), porównanie z poprzednim takim okresem`];
++  if (reg.value !== "all" && reg.selectedIndex >= 0) parts.push(`<span class="crumb"><a onclick="setRegion('all')">Cała firma</a> › <b>${esc(reg.options[reg.selectedIndex].text)}</b></span>`);
++  if (cli) parts.push(`klient: <b>${esc(cli)}</b>`);
++  if (ST.coord) parts.push(`koordynator: <b>${esc(ST.coord.name)}</b>`);
++  let html = parts.join(" · ");
++  if (document.getElementById("selTo").value)
++    html += `<br><span class="muted">Do decyzji, przyczyny, głos pracownika, kohorty i lista ryzyka pokazują stan na dziś — nie na wybrany tydzień.</span>`;
++  document.getElementById("periodLine").innerHTML = html;
++}
++
++const rotOf = (x) => ratio(x.dep, (x.hc_start + x.hc_end) / 2);
++function delta(cur, prev, good, kind) {
++  if (cur == null || prev == null) return { t: "", c: "flat" };
++  const d = cur - prev;
++  const eps = kind === "pp" ? 0.0005 : 0.5;
++  if (Math.abs(d) < eps) return { t: "= bez zmian", c: "flat" };
++  const arrow = d > 0 ? "▲" : "▼";
++  const t = kind === "pp" ? `${arrow} ${Math.abs(d * 100).toFixed(1).replace(".", ",")} pp` : `${arrow} ${nf.format(Math.abs(Math.round(d)))}`;
++  const c = good === 0 ? "flat" : (d > 0) === (good > 0) ? "good" : "bad";
++  return { t, c };
++}
++
++function renderKpis() {
++  const s = ST.summary, c = s.cur, p = s.prev, me = ST.me;
++  const short = s.period < 28 ? " (za 4 tyg.)" : "";
++  const risk = c.dep_cov >= 5
++    ? `lista ryzyka objęła ${pct(ratio(c.dep_flagged, c.dep_cov))} odejść`
++    : "trafność listy — po 3 tygodniach danych";
++  const leftL = c.leaving_left, stayL = c.leaving_stayed, pendL = c.leaving - c.leaving_left - c.leaving_stayed;
++  const tiles = [
++    { l: "Pracuje na koniec okresu", v: fN(c.hc_end), d: delta(c.hc_end, c.hc_start, 1), s: `na początku okresu ${fN(c.hc_start)}`, k: "sites", t: "Obiekty" },
++    { l: "Przyjęci", v: fN(c.hires), d: delta(c.hires, p.hires, 0), s: `nie podjęło pracy: <a class="linkbtn" onclick="event.stopPropagation();openDetail('rez','Rezygnacje — nie podjęli pracy')">${fN(c.rez)}</a>`, k: "hires", t: "Przyjęci" },
++    { l: "Odejścia", v: fN(c.dep), d: delta(c.dep, p.dep, -1), s: `rotacja ${pct1(rotOf(c))} · poprzednio ${pct1(rotOf(p))}`, k: "departures", t: "Odejścia" },
++    { l: "Odeszli przed 30. dniem", v: fN(c.dep_early), d: delta(c.dep_early, p.dep_early, -1), s: `${pct(ratio(c.dep_early, c.dep))} wszystkich odejść — rekrutacja i pierwsze dni`, k: "early", t: "Odejścia przed 30. dniem" },
++    { l: "Dożycie 80 dni" + short, v: pct(ratio(c.ok80, c.n80)), d: s.period < 28 ? { t: "", c: "flat" } : delta(ratio(c.ok80, c.n80), ratio(p.ok80, p.n80), 1, "pp"), s: `${fN(c.ok80)} z ${fN(c.n80)} osób, którym wypadł 80. dzień`, k: "s80", t: "Dożycie 80 dni" },
++    { l: "Nieobecności NN", v: pct1(ratio(c.nn, c.nn_base)), d: delta(ratio(c.nn, c.nn_base), ratio(p.nn, p.nn_base), -1, "pp"), s: `${fN(c.nn)} dni NN z ${fN(c.nn_base)} dni pracy`, k: "sites", t: "Obiekty — nieobecności NN", sort: "nnr" },
++    c.risk_day
++      ? { l: "W strefie ryzyka", v: fN(c.risk_n), d: p.risk_day ? delta(c.risk_n, p.risk_n, -1) : { t: "", c: "flat" }, s: `${pct(ratio(c.risk_n, c.risk_all))} pracujących · ${risk}`, k: "risk", t: "W strefie ryzyka" }
++      : { l: "W strefie ryzyka", v: "—", off: true, d: { t: "", c: "flat" }, s: "brak zapisanego ryzyka dla tego tygodnia (historia — 4 miesiące)", k: null },
++    me.module_on
++      ? { l: "„Chce odejść” (rozmowy)", v: fN(c.leaving), d: { t: "", c: "flat" }, s: `zostało ${stayL} · odeszło ${leftL} · czekamy 30 dni: ${pendL}`, k: "leaving", t: "„Chce odejść”" }
++      : { l: "„Chce odejść” (rozmowy)", v: "moduł wyłączony", off: true, d: { t: "", c: "flat" }, s: "Rozmowy nie są włączone żadnemu koordynatorowi", k: null },
++  ];
++  document.getElementById("sec-kpi").innerHTML = tiles.map((x) => `
++    <div class="kpi${x.off ? " off" : ""}" role="button" tabindex="0" ${x.k ? `onclick="openDetail('${x.k}','${esc(x.t)}'${x.sort ? `,null,'${x.sort}'` : ""})"` : ""}>
++      <div class="l">${esc(x.l)}</div>
++      <div class="row"><span class="v">${x.v}</span><span class="d ${x.d.c}">${x.d.t}</span></div>
++      <div class="s">${x.s}</div>
++    </div>`).join("");
++}
++
++// ══════════════════════════════════════════════════════════════════════
++//  Do decyzji
++// ══════════════════════════════════════════════════════════════════════
++const SEV = { 1: "PILNE", 2: "WAŻNE", 3: "INFO" };
++function renderDecisions() {
++  const list = ST.summary.decisions || [];
++  ST.decisions = list;
++  const lim = ST.decAll ? list.length : 8;
++  document.getElementById("decCnt").textContent = list.length ? `${list.length}` : "";
++  document.getElementById("decMore").textContent = list.length > 8 ? (ST.decAll ? "Pokaż mniej" : `Pokaż wszystkie (${list.length})`) : "";
++  document.getElementById("decList").innerHTML = list.length
++    ? list.slice(0, lim).map((d, i) => `
++      <div class="dec" onclick="openDecision(${i})">
++        <span class="sev s${d.sev}">${SEV[d.sev]}</span>
++        <div><div class="t">${esc(d.text)}</div>${d.sub ? `<div class="sub">${esc(d.sub)}</div>` : ""}</div>
++      </div>`).join("")
++    : `<div class="empty">Nic pilnego — brak czerwonych obiektów bez planu, skupisk skarg i zaległości.</div>`;
++}
++function toggleDec() { ST.decAll = !ST.decAll; renderDecisions(); }
++function openDecision(i) {
++  const d = ST.decisions[i];
++  if (d.detail === "early_now" && d.site) return openDetail("early_now", "Odejścia przed 30. dniem — " + d.site, { site: d.site });
++  if (d.detail) return openDetail(d.detail, d.text);
++  if (d.site && ST.me.links.region) return siteLink(d.site);
++  if (d.coord) return openCoord(d.coord);
++}
++
++// ══════════════════════════════════════════════════════════════════════
++//  Світлофор
++// ══════════════════════════════════════════════════════════════════════
++const ST_LABEL = { R: "czerwony", A: "żółty", G: "zielony", S: "strukturalny", N: "brak danych" };
++function renderRag(r) {
++  const reg = document.getElementById("selRegion");
++  document.getElementById("ragCrumb").innerHTML = reg.value === "all" || reg.selectedIndex < 0
++    ? "cała firma i regiony"
++    : `<span class="crumb"><a onclick="setRegion('all')">Cała firma</a> › ${esc(reg.options[reg.selectedIndex].text)}</span>`;
++  if (!r.weeks.length) {
++    document.getElementById("ragTable").innerHTML = `<div class="empty">Brak przeliczonych tygodni w sekcji Region.</div>`;
++    return;
++  }
++  const head = `<tr><th class="l">${reg.value === "all" ? "Region" : "Obiekt"}</th><th>osób</th>${r.weeks.map((w) => `<th>${dd(w)}</th>`).join("")}</tr>`;
++  const body = r.rows.map((row) => {
++    const last = row.cells[row.cells.length - 1] || {};
++    let label;
++    if (row.type === "region" && reg.value === "all") label = `<a data-k="${esc(row.key)}" data-l="${esc(row.label)}" onclick="setRegion(this.dataset.k, this.dataset.l)">${esc(row.label)}</a>`;
++    else if (row.type === "site" && ST.me.links.region) label = `<a data-site="${esc(row.key)}" onclick="siteLink(this.dataset.site)" title="Otwórz kartę obiektu">${esc(row.label)}</a>`;
++    else label = esc(row.label);
++    const cells = row.cells.map((c) => {
++      if (!c.status) return `<td><div class="cell x"></div></td>`;
++      const agg = row.type !== "site";
++      const lines = [`<b>${esc(row.label)}</b> · tydzień do ${ddy(c.w)}`, `Status: <b>${ST_LABEL[c.status]}</b>${c.red_weeks ? ` (${c.red_weeks} tyg.)` : ""}`,
++        `Rotacja (na 28 dni): <b>${pct1(c.rot)}</b>`, `Dożycie (30/80 dni): <b>${pct(c.ret)}</b>`, `NN: <b>${pct1(c.abs)}</b>`,
++        agg ? `Średnio osób: ${fN(c.hc)}` : `Średnio osób: ${fN(c.hc)} · odejścia: ${fN(c.dep)} w oknie ${c.win} dni`];
++      if (agg) lines.push(`Obiekty: ${c.sites} — 🔴 ${c.red} · 🟡 ${c.amber} · 🟢 ${c.green}`);
++      return `<td><div class="cell ${c.status}" data-tip="${tip(lines.join("<br>"))}">${agg && c.red ? c.red : ""}</div></td>`;
++    }).join("");
++    return `<tr class="${row.type}"><td class="l">${label}</td><td class="hc">${fN(last.hc)}</td>${cells}</tr>`;
++  }).join("");
++  document.getElementById("ragTable").innerHTML = `<table class="hm"><thead>${head}</thead><tbody>${body}</tbody></table>`;
++}
++
++// ══════════════════════════════════════════════════════════════════════
++//  Рух кадрів і стаж
++// ══════════════════════════════════════════════════════════════════════
++function renderFlow(data) {
++  const W = 640, H = 190, padL = 34, padB = 22, padT = 14;
++  const n = data.length;
++  const max = Math.max(10, ...data.map((d) => Math.max(d.hires, d.dep)));
++  const step = niceStep(max);
++  const top = Math.ceil(max / step) * step;
++  const y = (v) => padT + (H - padT - padB) * (1 - v / top);
++  const gw = (W - padL) / n;
++  const bw = Math.min(16, (gw - 8) / 2);
++  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Przyjęci i odejścia tydzień po tygodniu">`;
++  for (let v = 0; v <= top; v += step) s += `<line class="grid" x1="${padL}" x2="${W}" y1="${y(v)}" y2="${y(v)}"/><text x="${padL - 6}" y="${y(v) + 3}" text-anchor="end">${v}</text>`;
++  data.forEach((d, i) => {
++    const cx = padL + gw * i + gw / 2;
++    const x1 = cx - bw - 1, x2 = cx + 1;
++    s += bar(x1, y(d.hires), bw, y(0) - y(d.hires), "var(--s-hire)");
++    s += bar(x2, y(d.dep), bw, y(0) - y(d.dep), "var(--s-dep)");
++    if (i === n - 1 || i % 2 === (n - 1) % 2) s += `<text x="${cx}" y="${H - 6}" text-anchor="middle">${dd(d.w)}</text>`;
++    if (i === n - 1) {
++      s += `<text class="val" x="${x1 + bw / 2}" y="${y(d.hires) - 4}" text-anchor="middle">${d.hires}</text>`;
++      s += `<text class="val" x="${x2 + bw / 2}" y="${y(d.dep) - 4}" text-anchor="middle">${d.dep}</text>`;
++    }
++    const net = d.hires - d.dep;
++    const t = tip(`<b>Tydzień do ${ddy(d.w)}</b><br><span class="k" style="background:var(--s-hire)"></span><b>${d.hires}</b> ${pl(d.hires, "przyjęty", "przyjętych", "przyjętych")}<br>
++      <span class="k" style="background:var(--s-dep)"></span><b>${d.dep}</b> ${pl(d.dep, "odejście", "odejścia", "odejść")} (w tym ${d.dep_early} przed 30. dniem)<br>
++      Saldo: <b>${net > 0 ? "+" : ""}${net}</b> · pracuje: <b>${fN(d.hc)}</b>`);
++    s += `<rect class="hit" data-tip="${t}" x="${padL + gw * i}" y="${padT}" width="${gw}" height="${H - padT - padB}"/>`;
++  });
++  s += `</svg>`;
++  document.getElementById("flowChart").innerHTML = s;
++
++  // Чисельність — окремий графік (своя шкала, без другої осі)
++  const H2 = 80, pT = 16, pB = 6;
++  const hv = data.map((d) => d.hc);
++  const mn = Math.min(...hv), mx = Math.max(...hv);
++  const span = Math.max(mx - mn, 10);
++  const y2 = (v) => pT + (H2 - pT - pB) * (1 - (v - mn + span * 0.1) / (span * 1.2));
++  const xs = (i) => padL + gw * i + gw / 2;
++  let l = `<svg viewBox="0 0 ${W} ${H2}" role="img" aria-label="Liczba pracujących na koniec tygodnia">`;
++  l += `<text x="${padL}" y="10" class="lbl">Pracuje na koniec tygodnia</text>`;
++  l += `<polyline fill="none" stroke="var(--text2)" stroke-width="2" stroke-linejoin="round" points="${hv.map((v, i) => `${xs(i)},${y2(v)}`).join(" ")}"/>`;
++  [0, n - 1].forEach((i) => { l += `<circle cx="${xs(i)}" cy="${y2(hv[i])}" r="3" fill="var(--text2)"/><text class="val" x="${xs(i)}" y="${y2(hv[i]) - 6}" text-anchor="${i ? "end" : "start"}">${fN(hv[i])}</text>`; });
++  data.forEach((d, i) => { l += `<rect class="hit" data-tip="${tip(`<b>${ddy(d.w)}</b><br>Pracuje: <b>${fN(d.hc)}</b>`)}" x="${padL + gw * i}" y="0" width="${gw}" height="${H2}"/>`; });
++  l += `</svg>`;
++  document.getElementById("hcChart").innerHTML = l;
++}
++function bar(x, y, w, h, color) {
++  if (h <= 0) return "";
++  const r = Math.min(3, h / 2, w / 2);
++  // заокруглений верх, рівна основа
++  return `<path d="M${x},${y + h} V${y + r} Q${x},${y} ${x + r},${y} H${x + w - r} Q${x + w},${y} ${x + w},${y + r} V${y + h} Z" fill="${color}"/>`;
++}
++function niceStep(max) {
++  const raw = max / 4;
++  const p = Math.pow(10, Math.floor(Math.log10(raw)));
++  for (const m of [1, 2, 5, 10]) if (raw <= m * p) return m * p;
++  return 10 * p;
++}
++
++function renderTenure() {
++  const t = ST.summary.tenure;
++  const total = t.reduce((a, x) => a + x.n, 0);
++  document.getElementById("tenureCnt").textContent = `${fN(total)} ${pl(total, "odejście", "odejścia", "odejść")} w okresie`;
++  if (!total) { document.getElementById("tenureChart").innerHTML = `<div class="empty">Brak odejść w wybranym okresie.</div>`; return; }
++  const W = 560, rowH = 26, padL = 78, padR = 70;
++  const max = Math.max(...t.map((x) => x.n));
++  let s = `<svg viewBox="0 0 ${W} ${rowH * t.length + 4}" role="img" aria-label="Odejścia według stażu">`;
++  t.forEach((x, i) => {
++    const yy = i * rowH + 4;
++    const w = max ? (W - padL - padR) * (x.n / max) : 0;
++    s += `<text class="lbl" x="${padL - 8}" y="${yy + 14}" text-anchor="end">${esc(x.label)}</text>`;
++    if (w > 0) s += `<path d="M${padL},${yy + 3} H${padL + w - 3} Q${padL + w},${yy + 3} ${padL + w},${yy + 6} V${yy + 15} Q${padL + w},${yy + 18} ${padL + w - 3},${yy + 18} H${padL} Z" fill="var(--s-dep)"/>`;
++    s += `<text class="val" x="${padL + w + 6}" y="${yy + 14}">${x.n} <tspan class="lbl" style="font-weight:400">· ${pct(x.n / total)}</tspan></text>`;
++    s += `<rect class="hit" data-tip="${tip(`Staż <b>${esc(x.label)}</b> dni<br><b>${x.n}</b> ${pl(x.n, "odejście", "odejścia", "odejść")} · ${pct(x.n / total)} wszystkich`)}" x="0" y="${yy}" width="${W}" height="${rowH}"/>`;
++  });
++  s += `</svg>`;
++  document.getElementById("tenureChart").innerHTML = s;
++}
++
++// ══════════════════════════════════════════════════════════════════════
++//  Когорти і причини
++// ══════════════════════════════════════════════════════════════════════
++const seqBg = (v, lo, hi) => {
++  if (v == null) return "";
++  const a = 0.08 + 0.55 * Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
++  return `background: rgba(var(--seq), ${a.toFixed(2)})`;
++};
++function renderCohorts(r) {
++  if (!r.rows.length) { document.getElementById("cohTable").innerHTML = `<div class="empty">Brak przyjęć w ostatnich 6 miesiącach.</div>`; return; }
++  const cell = (c, hired, m) => {
++    if (!c.elig) return `<td class="num muted">·</td>`;
++    const v = c.ok / c.elig;
++    const part = c.elig < hired ? ` (na razie ${c.elig} z ${hired} osób)` : "";
++    return `<td class="num"><span class="seq" style="${seqBg(v, 0.4, 1)}" data-tip="${tip(`<b>${m}</b>, ${c.d}. dzień<br>pracuje: <b>${c.ok}</b> z ${c.elig}${part}`)}">${pct(v)}</span></td>`;
++  };
++  const rows = r.rows.map((x) => `<tr><td>${monthLabel(x.m)}</td><td class="num">${fN(x.hired)}</td>${x.cells.map((c) => cell(c, x.hired, monthLabel(x.m))).join("")}</tr>`).join("");
++  const tot = r.total;
++  document.getElementById("cohTable").innerHTML = `<table class="rg">
++    <thead><tr><th>Przyjęci w</th><th class="num">osób</th>${r.days.map((d) => `<th class="num">${d}. dzień</th>`).join("")}</tr></thead>
++    <tbody>${rows}<tr class="total"><td>Razem</td><td class="num">${fN(tot.hired)}</td>${tot.cells.map((c) => cell(c, tot.hired, "Razem")).join("")}</tr></tbody></table>`;
++}
++
++function renderReasons(r) {
++  const S = r.sources;
++  const keys = ["exit", "problem", "tasks", "cards"];
++  const any = keys.some((k) => S[k].total > 0);
++  if (!any) {
++    document.getElementById("reasonTable").innerHTML = `<div class="empty">Brak danych za 90 dni. Przyczyny zbierają ankiety i rozmowy (moduł Rozmowy) oraz czerwone karty (Region).</div>`;
++    return;
++  }
++  const SH = { exit: ["Odchodzący", "ankieta"], problem: ["Pracujący", "„co przeszkadza”"], tasks: ["Koordynatorzy", "rozmowy"], cards: ["Regionalni", "czerwone karty"] };
++  const head = keys.map((k) => `<th class="num src" title="${esc(S[k].label)}">${SH[k][0]}<br><span class="muted">${SH[k][1]} · n=${S[k].total}</span></th>`).join("");
++  const rows = r.categories.map((c) => `<tr><td>${esc(c.label)}</td>${keys.map((k) => {
++    if (!S[k].total) return `<td class="num muted">—</td>`;
++    const v = c[k] / S[k].total;
++    return `<td class="num">${c[k] ? `<span class="seq" style="${seqBg(v, 0, 0.6)}" data-tip="${tip(`<b>${esc(c.label)}</b><br>${esc(S[k].label)}: <b>${c[k]}</b> z ${S[k].total}`)}">${pct(v)}</span>` : `<span class="muted">·</span>`}</td>`;
++  }).join("")}</tr>`).join("");
++  const notes = [];
++  if (S.problem.ok) notes.push(`pracujący „wszystko OK”: ${S.problem.ok}`);
++  if (S.tasks.leaving) notes.push(`rozmowy „chce odejść”: ${S.tasks.leaving}`);
++  document.getElementById("reasonTable").innerHTML = `<table class="rg"><thead><tr><th>Przyczyna</th>${head}</tr></thead><tbody>${rows}</tbody></table>` +
++    (notes.length ? `<div class="legend" style="border-top:1px solid var(--border)">${notes.join(" · ")}</div>` : "");
++}
++
++// ══════════════════════════════════════════════════════════════════════
++//  Голос працівника
++// ══════════════════════════════════════════════════════════════════════
++function voiceTiles(v) {
++  const sc = (x) => (x.v == null ? "" : x.v < 3 ? "red" : x.v < 3.6 ? "amber" : "");
++  const sh = (x, lo, hi) => (x.v == null ? "" : x.v < lo ? "red" : x.v < hi ? "amber" : "");
++  const t = [
++    { l: "Praca (1–5)", v: dec1(v.work5.v), c: sc(v.work5), s: `n=${v.work5.n}` },
++    { l: "Mieszkanie (1–5)", v: dec1(v.housing5.v), c: sc(v.housing5), s: `n=${v.housing5.n}` },
++    { l: "Pomoc koordynatora (1–5) 🔒", v: dec1(v.coord5.v), c: sc(v.coord5), s: `n=${v.coord5.n} · widzi tylko kierownictwo` },
++    { l: "Planują zostać", v: pct(v.stay_yes.v), c: sh(v.stay_yes, 0.6, 0.8), s: `„nie”: ${pct(v.stay_no.v)} · n=${v.stay_yes.n}` },
++    { l: "Pierwsze dni: mieszkanie OK", v: pct(v.housing3.v), c: sh(v.housing3, 0.6, 0.8), s: `n=${v.housing3.n}` },
++    { l: "Pierwsze dni: dojazd OK", v: pct(v.transport3.v), c: sh(v.transport3, 0.6, 0.8), s: `n=${v.transport3.n}` },
++    { l: "Wyjaśniono pracę na miejscu", v: pct(v.onboard3.v), c: sh(v.onboard3, 0.6, 0.8), s: `n=${v.onboard3.n}` },
++    { l: "Koordynator dostępny 🔒", v: pct(v.coord_yes.v), c: sh(v.coord_yes, 0.6, 0.8), s: `n=${v.coord_yes.n}` },
++    { l: "Odchodzący: wróciłby", v: pct(v.back.v), c: "", s: `n=${v.back.n}` },
++    { l: "Odpowiadają na ankiety", v: pct(v.rate), c: "", s: `${v.done} z ${v.sent} · bez Telegrama ${v.no_tg}` },
++  ];
++  return `<div class="vtiles">${t.map((x) => `<div class="vt"><div class="l">${x.l}</div><div class="v ${x.c}">${x.v}</div><div class="s">${esc(x.s)}</div></div>`).join("")}</div>`;
++}
++function renderVoice(r) {
++  const v = r.all;
++  const box = document.getElementById("voiceBox");
++  if (!v.sent && !v.work5.n && !v.stay_yes.n) {
++    box.innerHTML = `<div class="empty">Brak ankiet w tym zakresie. Ankiety dostają pracownicy koordynatorów z włączonym modułem Rozmowy (3., 14., 30., 60. dzień i po odejściu).</div>`;
++    return;
++  }
++  const PROB = { housing: "mieszkanie", money: "pieniądze", schedule: "grafik / godziny", team: "zespół", transport: "dojazd", other: "inne" };
++  const pr = Object.entries(v.problem || {}).filter(([k]) => k !== "nothing").sort((a, b) => b[1] - a[1]);
++  const prTot = Object.values(v.problem || {}).reduce((a, x) => a + x, 0);
++  box.innerHTML = voiceTiles(v) + (prTot ? `<div class="legend">Co przeszkadza najbardziej (14–60 dni): ${pr.length ? pr.map(([k, n]) => `${PROB[k] || k} ${pct(n / prTot)}`).join(" · ") : "—"}${v.problem.nothing ? ` · wszystko OK ${pct(v.problem.nothing / prTot)}` : ""}</div>` : "");
++}
++function openVoiceRegions() {
++  const r = ST.voice;
++  if (!r) return;
++  const cols = [
++    ["label", "Region"], ["rate", "Odpowiedzi", "pct"], ["work5", "Praca 1–5", "avg"], ["housing5", "Mieszkanie 1–5", "avg"],
++    ["coord5", "Koordynator 1–5 🔒", "avg"], ["stay_yes", "Planują zostać", "share"], ["housing3", "Mieszk. OK (3. dzień)", "share"],
++    ["transport3", "Dojazd OK", "share"], ["onboard3", "Wyjaśniono pracę", "share"],
++  ];
++  const rows = r.by_region.map((x) => {
++    const o = { label: x.label, rate: x.rate };
++    ["work5", "housing5", "coord5"].forEach((k) => (o[k] = x[k].v));
++    ["stay_yes", "housing3", "transport3", "onboard3"].forEach((k) => (o[k] = x[k].v));
++    return o;
++  });
++  const colDefs = cols.map(([k, l, f]) => ({ k, l, f: f === "pct" || f === "share" ? "pct" : f === "avg" ? "dec" : null }));
++  showDrawer("Głos pracownika po regionach", "ankiety z 90 dni", colDefs, rows);
++}
++
++// ══════════════════════════════════════════════════════════════════════
++//  Координатори
++// ══════════════════════════════════════════════════════════════════════
++function coordDerived(x) {
++  return Object.assign({}, x, {
++    rot: rotOf(x),
++    s80: x.n80 >= 5 ? x.ok80 / x.n80 : null,
++    fill: x.days ? x.filled / x.days : null,
++    nnr: x.nn_base ? x.nn / x.nn_base : null,
++    ontime: x.due >= 3 ? x.on_time / x.due : null,
++    noans: x.done ? x.o_no_answer / x.done : null,
++    spot: x.spot_n ? x.spot_no / x.spot_n : null,
++    c5: x.c5_n >= 3 ? Number(x.c5_avg) : null,
++    svr: x.sv_sent ? x.sv_done / x.sv_sent : null,
++  });
++}
++function renderCoords() {
++  ST.cd = ST.coords.map(coordDerived);
++  document.getElementById("coordCnt").textContent = `${ST.cd.length} · z modułem Rozmowy: ${ST.cd.filter((x) => x.module_on).length}`;
++  renderQuad();
++  renderCompare();
++  renderCoordTable();
++}
++function median(a) {
++  const s = a.filter((v) => v != null).sort((x, y) => x - y);
++  if (!s.length) return null;
++  const m = Math.floor(s.length / 2);
++  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
++}
++function renderQuad() {
++  const xk = document.getElementById("selX").value, yk = document.getElementById("selY").value;
++  const XL = { fill: "Godziny wpisane w bocie", ontime: "Rozmowy zamknięte na czas" };
++  const YL = { s80: "Dożycie 80 dni", rot: "Rotacja w okresie (mniej = lepiej)" };
++  const pts = (ST.cd || []).filter((x) => x[xk] != null && x[yk] != null);
++  const miss = (ST.cd || []).length - pts.length;
++  const box = document.getElementById("quadChart");
++  if (pts.length < 2) {
++    box.innerHTML = `<div class="empty">Za mało danych na wykres (${pts.length}). ${xk === "ontime" ? "Rozmowy są liczone tylko dla koordynatorów z włączonym modułem — przełącz oś X na „Godziny wpisane w bocie”." : ""}</div>`;
++    return;
++  }
++  const W = 480, H = 330, pL = 40, pB = 34, pT = 12, pR = 12;
++  const xv = pts.map((p) => p[xk]), yv = pts.map((p) => (yk === "rot" ? -p.rot : p[yk]));
++  const rng = (a) => { let lo = Math.min(...a), hi = Math.max(...a); const pad = Math.max((hi - lo) * 0.12, 0.03); return [lo - pad, hi + pad]; };
++  const [x0, x1] = rng(xv), [y0, y1] = rng(yv);
++  const X = (v) => pL + (W - pL - pR) * ((v - x0) / (x1 - x0));
++  const Y = (v) => pT + (H - pT - pB) * (1 - (v - y0) / (y1 - y0));
++  const mx = median(xv), my = median(yv);
++  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Koordynatorzy: proces i wynik">`;
++  // осі з підписами у відсотках
++  for (let i = 0; i <= 4; i++) {
++    const vx = x0 + (x1 - x0) * i / 4, vy = y0 + (y1 - y0) * i / 4;
++    s += `<text x="${X(vx)}" y="${H - pB + 14}" text-anchor="middle">${pct(vx)}</text>`;
++    s += `<text x="${pL - 5}" y="${Y(vy) + 3}" text-anchor="end">${pct(yk === "rot" ? -vy : vy)}</text>`;
++  }
++  s += `<line class="grid" x1="${X(mx)}" x2="${X(mx)}" y1="${pT}" y2="${H - pB}" stroke-dasharray="4 4"/>`;
++  s += `<line class="grid" x1="${pL}" x2="${W - pR}" y1="${Y(my)}" y2="${Y(my)}" stroke-dasharray="4 4"/>`;
++  s += `<text x="${W - pR}" y="${pT + 10}" text-anchor="end" class="lbl">wzór</text>`;
++  s += `<text x="${pL + 4}" y="${pT + 10}" class="lbl">wynik bez procesu</text>`;
++  s += `<text x="${W - pR}" y="${H - pB - 6}" text-anchor="end" class="lbl">proces bez wyniku</text>`;
++  s += `<text x="${pL + 4}" y="${H - pB - 6}" class="lbl" style="fill:var(--red)">wymaga uwagi</text>`;
++  s += `<text x="${(pL + W) / 2}" y="${H - 4}" text-anchor="middle" class="lbl">${XL[xk]} →</text>`;
++  s += `<text x="10" y="${(pT + H - pB) / 2}" transform="rotate(-90 10 ${(pT + H - pB) / 2})" text-anchor="middle" class="lbl">${YL[yk]} →</text>`;
++  const placed = [];
++  const sorted = pts.slice().sort((a, b) => b.hc_end - a.hc_end);
++  for (const p of sorted) {
++    const cx = X(p[xk]), cy = Y(yk === "rot" ? -p.rot : p[yk]);
++    const r = Math.max(4, Math.min(14, 3 + Math.sqrt(p.hc_end) / 1.6));
++    const t = tip(`<b>${esc(p.name)}</b> · ${esc(p.regions || "")}<br>${XL[xk]}: <b>${pct(p[xk])}</b><br>Dożycie 80 dni: <b>${pct(p.s80)}</b> (n=${p.n80}) · rotacja: <b>${pct1(p.rot)}</b><br>Pracuje: ${fN(p.hc_end)} · moduł Rozmowy: ${p.module_on ? "tak" : "nie"}`);
++    s += p.module_on
++      ? `<circle cx="${cx}" cy="${cy}" r="${r}" fill="var(--accent)" fill-opacity=".85" stroke="var(--surface)" stroke-width="2"/>`
++      : `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--accent)" stroke-width="2"/>`;
++    s += `<circle class="hit" data-tip="${t}" cx="${cx}" cy="${cy}" r="${Math.max(r + 4, 12)}" style="cursor:pointer" onclick="openCoord(${p.id})"/>`;
++    // підпис лише якщо не налазить на інші
++    const label = p.name.length > 18 ? p.name.slice(0, 17) + "…" : p.name;
++    const lw = label.length * 5.2, lx = cx + r + 3, ly = cy + 3;
++    const box2 = { x: lx, y: ly - 9, w: lw, h: 11 };
++    const hit = placed.some((b) => !(box2.x > b.x + b.w || box2.x + box2.w < b.x || box2.y > b.y + b.h || box2.y + box2.h < b.y));
++    if (!hit && lx + lw < W) { placed.push(box2); s += `<text x="${lx}" y="${ly}" class="lbl" style="pointer-events:none">${esc(label)}</text>`; }
++  }
++  s += `</svg>`;
++  box.innerHTML = s + (miss ? `<div class="muted" style="font-size:11px;padding:0 0 4px 4px">Bez danych na wykresie: ${miss} (mało osób albo brak rozmów w okresie)</div>` : "");
++}
++
++function renderCompare() {
++  const c = ST.compare;
++  const box = document.getElementById("cmpBox");
++  if (!c || !c.on.coords) {
++    box.innerHTML = `<div style="font-size:12px;font-weight:600;margin-bottom:6px">Efekt modułu Rozmowy</div>
++      <div class="muted" style="line-height:1.55">${ST.me.module_on
++        ? "W tym zakresie nikt nie ma włączonego modułu — porównanie niedostępne."
++        : "Moduł nie jest jeszcze nikomu włączony. Włączaj go falami — najpierw połowie koordynatorów z podobnymi obiektami — a tu po 6–8 tygodniach zobaczysz porównanie rotacji i dożycia 80 dni."}</div>`;
++    return;
++  }
++  const row = (l, a, b, f) => `<tr><td>${l}</td><td>${f(a)}</td><td>${f(b)}</td></tr>`;
++  box.innerHTML = `<div style="font-size:12px;font-weight:600;margin-bottom:6px">Efekt modułu Rozmowy <span class="muted" style="font-weight:400">— orientacyjnie</span></div>
++    <table><thead><tr><th></th><th>włączony</th><th>wyłączony</th></tr></thead><tbody>
++      ${row("Koordynatorów", c.on.coords, c.off.coords, fN)}
++      ${row("Pracowników (śr.)", c.on.hc, c.off.hc, fN)}
++      ${row("Odejścia w okresie", c.on.dep, c.off.dep, fN)}
++      ${row("Rotacja", c.on.rot, c.off.rot, pct1)}
++      ${row("Dożycie 80 dni", c.on.s80, c.off.s80, pct)}
++    </tbody></table>
++    <div class="muted" style="margin-top:8px;line-height:1.5">Różne obiekty i różni ludzie — to nie jest dowód. Wiarygodne porównanie:
++      włączać falami i patrzeć na podobne obiekty przed i po włączeniu.</div>`;
++}
++
++const COORD_COLS = [
++  { k: "name", l: "Koordynator" }, { k: "regions", l: "Region" }, { k: "sites", l: "Obiekty", f: "n" },
++  { k: "hc_end", l: "Pracuje", f: "n" }, { k: "dep", l: "Odejścia", f: "n" }, { k: "rot", l: "Rotacja", f: "pct1" },
++  { k: "dep_early", l: "Przed 30. dniem", f: "n" }, { k: "s80", l: "Dożycie 80 (13 tyg.)", f: "pct" }, { k: "nnr", l: "NN", f: "pct1" },
++  { k: "fill", l: "Godziny w bocie", f: "pct" }, { k: "risk_n", l: "Ryzyko", f: "n" },
++  { k: "tasks", l: "Rozmowy", f: "n" }, { k: "ontime", l: "Na czas", f: "pct" }, { k: "noans", l: "Nie odebrał", f: "pct" },
++  { k: "missed", l: "Pominięte", f: "n" }, { k: "spot", l: "„Nie było rozmowy”", f: "pct" }, { k: "c5", l: "Ocena 1–5 🔒", f: "dec" },
++  { k: "svr", l: "Ankiety odp.", f: "pct" }, { k: "module_on", l: "Moduł", f: "mod" },
++];
++function fmt(v, f, row) {
++  if (f === "n") return fN(v);
++  if (f === "pct") return pct(v);
++  if (f === "pct1") return pct1(v);
++  if (f === "dec") return dec1(v);
++  if (f === "d") return v ? ddy(v) : "";
++  if (f === "mod") return v ? `<span class="tag on">włączony${row && row.enabled_at ? " " + dd(row.enabled_at) : ""}</span>` : `<span class="tag">wyłączony</span>`;
++  return esc(v == null ? "" : v);
++}
++function sortRows(rows, key, dir) {
++  return rows.slice().sort((a, b) => {
++    const x = a[key], y = b[key];
++    if (x == null && y == null) return 0;
++    if (x == null) return 1;
++    if (y == null) return -1;
++    if (typeof x === "string" || typeof y === "string") return String(x).localeCompare(String(y), "pl") * dir;
++    return (x - y) * dir;
++  });
++}
++function renderCoordTable() {
++  const { key, dir } = ST.coordSort;
++  const rows = sortRows(ST.cd || [], key, dir);
++  if (!rows.length) { document.getElementById("coordTable").innerHTML = `<div class="empty">Brak koordynatorów w tym zakresie.</div>`; return; }
++  const th = COORD_COLS.map((c) => `<th class="sort ${c.f && c.f !== "mod" ? "num" : ""}" onclick="sortCoords('${c.k}')">${esc(c.l)}${key === c.k ? (dir > 0 ? " ▲" : " ▼") : ""}</th>`).join("");
++  const td = (x) => COORD_COLS.map((c) => {
++    let v = fmt(x[c.k], c.f, x);
++    if (c.k === "spot" && x.spot_n) v = `<span class="${x.spot_no >= 2 ? "red" : ""}">${v}</span> <span class="muted">(${x.spot_no}/${x.spot_n})</span>`;
++    if (c.k === "s80" && x.n80) v += ` <span class="muted">(${x.n80})</span>`;
++    if (c.k === "name") v = `<b style="white-space:nowrap">${v}</b>${x.tg ? "" : ` <span class="tag" title="Brak Telegrama">bez TG</span>`}`;
++    return `<td class="${c.f && c.f !== "mod" ? "num" : ""}">${v}</td>`;
++  }).join("");
++  document.getElementById("coordTable").innerHTML = `<table class="rg"><thead><tr>${th}</tr></thead><tbody>
++    ${rows.map((x) => `<tr class="click" onclick="openCoord(${x.id})">${td(x)}</tr>`).join("")}</tbody></table>`;
++}
++function sortCoords(k) {
++  const s = ST.coordSort;
++  if (s.key === k) s.dir = -s.dir; else { s.key = k; s.dir = ["name", "regions"].includes(k) ? 1 : -1; }
++  renderCoordTable();
++}
++
++async function openCoord(id) {
++  const x = (ST.cd || []).find((c) => c.id === id);
++  const name = x ? x.name : "Koordynator";
++  const my = ++ST.dseq;
++  const dw = openDrawerShell(name, x ? `${x.regions || "bez regionu"} · ${x.sites} ${pl(x.sites, "obiekt", "obiekty", "obiektów")} · moduł Rozmowy ${x.module_on ? "włączony" : "wyłączony"}` : "");
++  const extra = { kind: "sites", coord: id };
++  const r = await api("/detail" + qs(extra));
++  if (!r || my !== ST.dseq) return;
++  if (!r.ok) { dw.querySelector(".dw-body").innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
++  const kp = x ? `<div class="vtiles" style="padding:0 0 12px">
++      ${[["Pracuje", fN(x.hc_end)], ["Odejścia / rotacja", `${fN(x.dep)} · ${pct1(x.rot)}`], ["Dożycie 80 dni (13 tyg.)", pct(x.s80)],
++         ["Godziny w bocie", pct(x.fill)], ["Rozmowy na czas", pct(x.ontime)], ["„Nie było rozmowy”", x.spot_n ? `${x.spot_no} z ${x.spot_n}` : "—"],
++         ["Ocena od pracowników 🔒", dec1(x.c5)], ["W strefie ryzyka", fN(x.risk_n)]]
++        .map(([l, v]) => `<div class="vt"><div class="l">${l}</div><div class="v" style="font-size:17px">${v}</div></div>`).join("")}
++    </div>` : "";
++  ST.drawer = { rows: r.rows, cols: DETAIL_COLS.sites, title: name, sort: null, total: r.total, extra };
++  dw.querySelector(".dw-body").innerHTML = kp +
++    `<div style="margin-bottom:10px"><button class="btn btn-primary btn-sm" data-name="${esc(name)}" onclick="setCoord(${id}, this.dataset.name)">Pokaż cały pulpit tylko dla ${esc(name)}</button></div>` +
++    `<div class="section"><div class="section-head">Obiekty</div><div class="tblwrap" id="dwTable"></div></div>`;
++  renderDrawerTable();
++}
++
++// ══════════════════════════════════════════════════════════════════════
++//  Деталі (бокова панель)
++// ══════════════════════════════════════════════════════════════════════
++const REASON = { pay: "wypłata", housing: "mieszkanie", transport: "dojazd", work: "praca", schedule: "godziny/grafik",
++  team: "zespół", other_job: "inna praca", family: "rodzina", documents: "dokumenty", other: "inne" };
++const OUTCOME = { stays: "✅ zostaje", problem: "⚠️ problem", leaving: "🚪 chce odejść", no_answer: "📵 nie odebrał" };
++const PROBLEM = { housing: "mieszkanie", money: "pieniądze", schedule: "grafik", team: "zespół", transport: "dojazd", other: "inne" };
++const RISK_R = { assess_bad: "ocena 👎", assess_mid: "ocena 😐", survey: "ankieta", streak: "NN z rzędu", nn: "NN", gap: "dni bez godzin",
++  drop: "spadek godzin", pre80: "przed 80. dniem", new: "nowy", site_red: "czerwony obiekt" };
++const TASK_ST = { open: "otwarta", done: "zamknięta", missed: "pominięta", cancelled: "anulowana" };
++const DETAIL_COLS = {
++  departures: [{ k: "name", l: "Pracownik" }, { k: "login", l: "ID" }, { k: "site", l: "Obiekt", f: "site" }, { k: "coord", l: "Koordynator" },
++    { k: "start", l: "Start", f: "d" }, { k: "end", l: "Koniec", f: "d" }, { k: "tenure", l: "Staż, dni", f: "n" },
++    { k: "reason", l: "Powód (ankieta)", f: "map", m: REASON }, { k: "last_talk", l: "Ostatnia rozmowa", f: "map", m: OUTCOME }],
++  hires: [{ k: "name", l: "Pracownik" }, { k: "login", l: "ID" }, { k: "site", l: "Obiekt", f: "site" }, { k: "coord", l: "Koordynator" },
++    { k: "start", l: "Start", f: "d" }, { k: "now", l: "Teraz" }],
++  rez: [{ k: "name", l: "Pracownik" }, { k: "login", l: "ID" }, { k: "site", l: "Obiekt", f: "site" }, { k: "coord", l: "Koordynator" }, { k: "start", l: "Planowany start", f: "d" }],
++  sites: [{ k: "site", l: "Obiekt", f: "site" }, { k: "region", l: "Region" }, { k: "coord", l: "Koordynator" },
++    { k: "hc_start", l: "Na początku", f: "n" }, { k: "hc_end", l: "Na koniec", f: "n" }, { k: "hires", l: "Przyjęci", f: "n" },
++    { k: "dep", l: "Odejścia", f: "n" }, { k: "early", l: "Przed 30. dniem", f: "n" }, { k: "rot", l: "Rotacja", f: "pct1" },
++    { k: "nnr", l: "NN", f: "pct1" }, { k: "n80", l: "80. dzień w 13 tyg.", f: "n" }, { k: "s80", l: "Dożycie 80", f: "pct" }, { k: "risk_n", l: "Ryzyko", f: "n" }],
++  nocoord: [{ k: "site", l: "Obiekt", f: "site" }, { k: "region", l: "Region" }, { k: "hc_end", l: "Pracuje", f: "n" }],
++  risk: [{ k: "name", l: "Pracownik" }, { k: "login", l: "ID" }, { k: "site", l: "Obiekt", f: "site" }, { k: "coord", l: "Koordynator" },
++    { k: "tenure", l: "Staż", f: "n" }, { k: "score", l: "Bal", f: "n" }, { k: "reasons", l: "Sygnały", f: "risk" }, { k: "task", l: "Rozmowa", f: "map", m: TASK_ST }],
++  leaving: [{ k: "name", l: "Pracownik" }, { k: "login", l: "ID" }, { k: "site", l: "Obiekt", f: "site" }, { k: "coord", l: "Koordynator" },
++    { k: "date", l: "Data", f: "d" }, { k: "problem", l: "Problem", f: "map", m: PROBLEM }, { k: "comment", l: "Komentarz" }, { k: "result", l: "Wynik", f: "leav" }],
++  s80: [{ k: "name", l: "Pracownik" }, { k: "login", l: "ID" }, { k: "site", l: "Obiekt", f: "site" }, { k: "coord", l: "Koordynator" },
++    { k: "start", l: "Start", f: "d" }, { k: "day80", l: "80. dzień", f: "d" }, { k: "reached", l: "Doszedł?" }],
++};
++DETAIL_COLS.early = DETAIL_COLS.departures;
++DETAIL_COLS.leaving7 = DETAIL_COLS.leaving;
++
++function openDrawerShell(title, sub) {
++  ST.drawer = null;   // CSV nie może wyeksportować poprzedniej listy
++  const dw = document.getElementById("drawer");
++  dw.innerHTML = `<div class="dw-head"><div><h2>${esc(title)}</h2><div class="sub" id="dwSub">${esc(sub || "")}</div></div>
++      <div class="dw-tools"><span class="form-msg muted" id="csvMsg" style="font-size:11px"></span>
++      <button class="btn btn-ghost btn-sm" onclick="exportCsv()">⬇ CSV</button>
++      <button class="dw-close" onclick="closeDrawer()" aria-label="Zamknij">✕</button></div></div>
++    <div class="dw-body"><div class="loading">Ładowanie…</div></div>`;
++  dw.classList.add("open"); dw.setAttribute("aria-hidden", "false");
++  document.getElementById("drawerBg").classList.add("open");
++  return dw;
++}
++function closeDrawer() {
++  ST.dseq++;
++  document.getElementById("drawer").classList.remove("open");
++  document.getElementById("drawer").setAttribute("aria-hidden", "true");
++  document.getElementById("drawerBg").classList.remove("open");
++}
++document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
++
++async function openDetail(kind, title, extra, sortKey) {
++  const my = ++ST.dseq;
++  const dw = openDrawerShell(title, "");
++  const ex = Object.assign({ kind }, extra || {});
++  const r = await api("/detail" + qs(ex));
++  if (!r || my !== ST.dseq) return;
++  if (!r.ok) { dw.querySelector(".dw-body").innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
++  if (!["risk", "nocoord", "leaving7"].includes(kind)) document.getElementById("dwSub").textContent = `${dd(r.from)}–${ddy(r.anchor)}`;
++  const k = kind === "early_now" ? "early" : kind;
++  ST.drawer = { rows: r.rows, cols: DETAIL_COLS[k], title, sort: sortKey ? { key: sortKey, dir: -1 } : null, total: r.total, extra: ex };
++  const cut = r.total > r.rows.length;
++  dw.querySelector(".dw-body").innerHTML = `<div class="muted" style="font-size:12px;margin-bottom:8px">${cut
++      ? `Pokazano ${fN(r.rows.length)} z ${fN(r.total)} — sortowanie dotyczy pokazanych, CSV pobiera wszystkie`
++      : `${fN(r.total)} ${pl(r.total, "pozycja", "pozycje", "pozycji")}`}</div>
++    <div class="section"><div class="tblwrap" id="dwTable"></div></div>` +
++    (kind === "risk" && ST.me.links.rozmowy ? `<div class="muted" style="font-size:11px">Pełna lista z filtrami — <a class="linkbtn" href="rozmowy.html#risk">Rozmowy → Ryzyko</a>.</div>` : "");
++  renderDrawerTable();
++}
++function showDrawer(title, sub, cols, rows) {
++  const dw = openDrawerShell(title, sub);
++  ST.drawer = { rows, cols, title, sort: null, total: rows.length };
++  dw.querySelector(".dw-body").innerHTML = `<div class="section"><div class="tblwrap" id="dwTable"></div></div>`;
++  renderDrawerTable();
++}
++const riskText = (v) => String(v || "").split(" ").filter(Boolean)
++  .map((x) => { const [k, n] = x.split(":"); return (RISK_R[k] || k) + (n && k !== "pre80" && k !== "new" ? " " + n : ""); }).join(", ");
++const leavText = (v, row) => (v ? v : row.pending ? "czekamy 30 dni" : "został");
++function dfmt(v, c, row) {
++  switch (c.f) {
++    case "site":
++      if (!v) return "";
++      return ST.me.links.region
++        ? `<a class="linkbtn" style="font-size:12px" data-site="${esc(v)}" onclick="event.stopPropagation();siteLink(this.dataset.site)">${esc(v)}</a>`
++        : esc(v);
++    case "map": return v ? esc(c.m[v] || v) : `<span class="muted">—</span>`;
++    case "risk": return esc(riskText(v));
++    case "leav": return v ? `<span class="red">${esc(v)}</span>` : row.pending ? `<span class="muted">czekamy 30 dni</span>` : `<span class="green">został</span>`;
++    case "dec": return dec1(v);
++    default: return fmt(v, c.f);
++  }
++}
++function viewRows(d, rows) {
++  return d.sort ? sortRows(rows.map((r) => Object.assign({}, r, numify(r, d.cols))), d.sort.key, d.sort.dir) : rows;
++}
++function renderDrawerTable() {
++  const d = ST.drawer;
++  const el = document.getElementById("dwTable");
++  if (!el || !d) return;
++  if (!d.rows.length) { el.innerHTML = `<div class="empty">Brak pozycji.</div>`; return; }
++  const rows = viewRows(d, d.rows);
++  const num = (c) => ["n", "pct", "pct1", "dec"].includes(c.f);
++  el.innerHTML = `<table class="rg"><thead><tr>${d.cols.map((c) => `<th class="sort ${num(c) ? "num" : ""}" onclick="sortDrawer('${c.k}')">${esc(c.l)}${d.sort && d.sort.key === c.k ? (d.sort.dir > 0 ? " ▲" : " ▼") : ""}</th>`).join("")}</tr></thead>
++    <tbody>${rows.map((r) => `<tr>${d.cols.map((c) => `<td class="${num(c) ? "num" : ""}">${dfmt(r[c.k], c, r)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
++}
++function numify(r, cols) {
++  const o = {};
++  cols.forEach((c) => { if (["n", "pct", "pct1", "dec"].includes(c.f) && r[c.k] != null) o[c.k] = Number(r[c.k]); });
++  return o;
++}
++function sortDrawer(k) {
++  const d = ST.drawer;
++  if (!d) return;
++  d.sort = d.sort && d.sort.key === k ? { key: k, dir: -d.sort.dir } : { key: k, dir: 1 };
++  renderDrawerTable();
++}
++async function exportCsv() {
++  const d = ST.drawer;
++  const msg = document.getElementById("csvMsg");
++  if (!d || !d.rows.length) { if (msg) msg.textContent = "Brak danych do eksportu"; return; }
++  let rows = d.rows;
++  if (d.total > d.rows.length && d.extra) {
++    if (msg) msg.textContent = "Pobieram wszystkie…";
++    const r = await api("/detail" + qs(Object.assign({}, d.extra, { limit: 20000 })));
++    if (!r || !r.ok || ST.drawer !== d) { if (msg) msg.textContent = r && r.error ? r.error : ""; return; }
++    rows = r.rows;
++  }
++  // Excel: tekst zaczynający się od = + - @ nie może stać się formułą
++  const safe = (s) => (/^[=+\-@\t\r]/.test(s) ? "'" + s : s);
++  const q = (v) => { const s = safe(v == null ? "" : String(v)); return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
++  const lines = [d.cols.map((c) => q(c.l)).join(";")];
++  viewRows(d, rows).forEach((r) => lines.push(d.cols.map((c) => {
++    let v = r[c.k];
++    if (c.f === "map" && v) v = c.m[v] || v;
++    else if (c.f === "risk") v = riskText(v);
++    else if (c.f === "leav") v = leavText(v, r);
++    else if ((c.f === "pct" || c.f === "pct1") && v != null) v = String((Number(v) * 100).toFixed(1)).replace(".", ",");
++    else if (c.f === "dec" && v != null) v = String(Number(v).toFixed(2)).replace(".", ",");
++    return q(v);
++  }).join(";")));
++  const blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
++  const a = document.createElement("a");
++  a.href = URL.createObjectURL(blob);
++  a.download = (d.title || "dane").replace(/[^\p{L}\p{N}]+/gu, "_").slice(0, 60) + ".csv";
++  document.body.appendChild(a);
++  a.click();
++  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
++  if (msg) msg.textContent = `${fN(rows.length)} wierszy`;
++}
+--- /dev/null
++++ b/docs/PULPIT.md
+@@ -0,0 +1,95 @@
++# Pulpit kierownika — сводная панель руководителя
++
++Одна страница для руководителя отдела координации и операционного директора: как меняется штат,
++где и почему уходят люди, как работают координаторы, что требует решения сейчас.
++Без подробностей на первом экране, но любую цифру можно открыть до списка людей.
++
++Страница: `zarzad.html`, ссылка «📊 Pulpit kierownika» в главном меню панели.
++Доступ: администраторы панели и координаторы с ролью `head`. Остальные видят сообщение «нет доступа»,
++API отвечает 403. Панель только читает данные, ничего не меняет.
++
++## Установка
++
++1. Скопировать файлы из архива в `C:\sas-bot` с заменой:
++   - новые: `api/board.js`, `db/migration_board.sql`, `public/zarzad.html`, `public/js/zarzad.js`, `docs/PULPIT.md`;
++   - изменённые: `index.js` (подключение API), `public/index.html` (пункт меню), `public/js/region.js` (ссылка на карточку объекта).
++2. Выполнить миграцию (можно повторно):
++   ```
++   psql -U postgres -d sasdb -f db/migration_board.sql
++   ```
++   Создаёт схему `board` (представление и функцию) и 4 индекса для быстрых выборок. Данные не меняются.
++3. `pm2 restart index` (или как называется процесс).
++4. Войти администратором → в меню появится «📊 Pulpit kierownika».
++
++Нужны уже установленные разделы Region (схема `reg`) и Rozmowy (схема `care`).
++
++## Фильтры (сверху)
++
++- **Region** — все регионы, один регион или «Bez regionu».
++- **Klient** — по полю «klient» объекта.
++- **Okres** — неделя, 4 недели, 13 недель. Период заканчивается в воскресенье.
++- **do** — последняя полная неделя (по умолчанию) или любая из 26 прошлых.
++- **Koordynator** — появляется после «Pokaż cały pulpit tylko dla…» в карточке координатора; ✕ снимает.
++
++Все блоки пересчитываются по фильтру. Регион и координатор объекта — текущая привязка из раздела Region.
++«Do decyzji», причины, анкеты, когорты и список риска всегда показывают состояние на сегодня.
++При выборе старой недели страница пишет это под периодом.
++
++## Как считается
++
++**Уход** — конец работы в компании. Периоды одного человека склеиваются, если между ними
++не больше 14 дней. После статуса «przeniesiony» ждём до 60 дней, потому что новый объект часто
++вносят в таблицы позже. Переход на другой объект — не уход. Статус «przeniesiony» без нового
++объекта уходом не считается, так же как в разделе Region.
++«rezygnacja» — человек не вышел на работу: в штат и уходы не входит, показывается отдельно
++как «nie podjęło pracy».
++
++| Плитка | Что это |
++|---|---|
++| Pracuje na koniec okresu | Сколько работает в конце периода (как в Region). Стрелка — изменение с начала периода |
++| Przyjęci | Новые приёмы в компанию. Ниже — сколько не вышли на работу (rezygnacja) |
++| Odejścia | Ушли из компании за период. Ротация = уходы / среднее число работающих за период |
++| Odeszli przed 30. dniem | Ушли в первые 30 дней — вопрос к подбору людей и первым дням на объекте |
++| Dożycie 80 dni | Из людей, у которых 80-й день выпал на период, какая доля до него доработала. Для недельного периода берутся 4 недели |
++| Nieobecności NN | Дни NN / (дни с часами + NN + UN + L4 + URL), как в Region |
++| W strefie ryzyka | Сколько людей сейчас с баллом риска не ниже порога из Rozmowy. «Trafność» — какая доля ушедших была в списке риска за 3–21 день до ухода |
++| „Chce odejść” | Сколько человек координаторы отметили «хочет уйти» и сколько из них за 30 дней остались или ушли |
++
++Стрелки сравнивают с предыдущим таким же периодом. Зелёный — хорошо, красный — плохо, серый — нейтрально.
++
++## Блоки
++
++- **⚠️ Do decyzji** — что требует решения сейчас, по важности:
++  - PILNE: объект красный 6+ недель без плана; карточка красного объекта не заполнена в срок; срок плана прошёл, а объект всё ещё красный;
++  - WAŻNE: сигналы от 3+ человек за 7 дней на одном объекте («chce odejść», «problem», тревожная анкета); жалобы на жильё, деньги, дорогу, коллектив или график от 3+ человек за 14 дней (порог растёт с размером объекта); 3+ ухода до 30-го дня за 4 недели, если это не меньше 15% принятых за 8 недель; работники 2+ раза (и не меньше 15% проверенных) говорят, что разговора не было;
++  - INFO: сколько людей за 7 дней сказали «chce odejść»; у координатора 3+ просроченных разговора; объекты без координатора; координаторы с модулем Rozmowy без Telegram.
++
++  Клик открывает карточку объекта в Region или список людей.
++- **🚦 Regiony tydzień po tygodniu** — светофор за 12 недель. Регион считается как один большой объект
++  с теми же порогами, что в Region. Цифра в клетке — сколько объектов красные. Клик по региону показывает
++  его объекты, клик по объекту открывает его карточку.
++- **📈 Przyjęci i odejścia** — приёмы и уходы по неделям, под ними — численность.
++- **⏱️ Kiedy odchodzą** — стаж в день ухода.
++- **🧬 Kohorty** — из принятых в каждом месяце: сколько работают на 7, 14, 30, 60 и 80-й день. Где падает сильнее всего, там проблема.
++- **❓ Dlaczego odchodzą** — причины из четырёх источников рядом: анкета при уходе, «что мешает» у работающих,
++  разговоры координаторов, красные карточки. Видно, совпадает ли мнение людей с тем, что пишут координаторы.
++- **🗣️ Głos pracownika** — средние оценки из анкет за 90 дней. 🔒 — вопросы о координаторе, видит только руководство.
++  «Po regionach →» — те же цифры по регионам.
++- **👥 Koordynatorzy** — точечная диаграмма «процесс × результат». Ось X: часы, внесённые в бот, или разговоры,
++  закрытые вовремя. Ось Y: дожитие 80 дней или ротация. Пунктир — медианы. Под диаграммой — таблица,
++  сортируется по клику на заголовок. Справа — ориентировочное сравнение «модуль включён / выключен».
++
++Клик по любой плитке, строке или точке открывает список справа. Кнопка «⬇ CSV» выгружает весь список
++для Excel (с `;`, UTF-8), даже если на экране показаны первые 1000 строк.
++
++## Производительность
++
++Ответы кешируются на 60 секунд, одновременно к базе идут не больше 3 запросов панели.
++Поэтому бот и напоминания не ждут, пока строятся отчёты.
++После изменения данных цифры обновятся в течение минуты.
++
++## Как внедрять модуль Rozmowy, чтобы увидеть эффект
++
++Включайте модуль волнами: сначала половине координаторов с похожими объектами.
++Через 6–8 недель в блоке «Efekt modułu Rozmowy» и в таблице координаторов будет видна разница
++в ротации и дожитии до 80 дней. Если включить всем сразу, сравнить будет не с чем.

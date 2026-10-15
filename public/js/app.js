@@ -162,19 +162,9 @@ function showPage(page) {
     );
     if (el) el.style.display = p === page ? "" : "none";
   });
-  document.querySelectorAll(".nav-item").forEach((el, i) => {
-    el.classList.toggle(
-      "active",
-      [
-        "hours",
-        "advances",
-        "workers",
-        "dayoff",
-        "tabele",
-        "history",
-        "settings",
-      ][i] === page,
-    );
+  // активний пункт — за data-page (меню згруповане, порядок пунктів не важливий)
+  document.querySelectorAll(".sidebar .nav-item").forEach((el) => {
+    el.classList.toggle("active", el.dataset.page === page);
   });
   const titles = {
     hours: "Przeglad godzin",
@@ -266,14 +256,16 @@ async function loadStatsByFacility(facilityId) {
 
 // ── REMINDERS ─────────────────────────────────────────────────
 async function pingWorker(workerId) {
-  await apiFetch(`/api/remind/${workerId}`, { method: "POST" });
+  const r = await apiFetch(`/api/remind/${workerId}`, { method: "POST" });
+  if (r && r.ok === false) { alert(r.error || "Nie wysłano"); return; }
   alert("Przypomnienie wyslane!");
 }
 
 async function sendReminders() {
   if (!confirm("Wyslac przypomnienia do pracownikow z brakami (Twoje obiekty)?"))
     return;
-  await apiFetch("/api/remind-missing", { method: "POST" });
+  const r = await apiFetch("/api/remind-missing", { method: "POST" });
+  if (r && r.ok === false) { alert(r.error || "Nie wysłano"); return; }
   alert("Przypomnienia wyslane!");
 }
 

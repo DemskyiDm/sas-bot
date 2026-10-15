@@ -544,7 +544,8 @@ async function saveHours() {
     absence_type: hours ? null : editState.absence || null,
   };
   try {
-    await apiFetch("/api/hours", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const r = await apiFetch("/api/hours", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (r && r.ok === false) { alert(r.error || "Nie zapisano"); return; }
     closeModal();
     await loadWorkers();
     if (currentFacility) filterFacility(currentFacility);

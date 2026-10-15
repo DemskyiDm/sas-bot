@@ -130,6 +130,37 @@ async function writeWolne(workerId, days) {
     [workerId, days],
   );
 }
+// ── Автоотказ: выходной на ближайшие WOLNE_MIN_DAYS дней (сегодня 15 → 16, 17, 18) ──
+// .env: WOLNE_AUTO_REJECT=ILS   — начало названия объекта, через запятую (ILS UZ, ILS Błonie SAS)
+//       WOLNE_MIN_DAYS=3
+const WOLNE_AUTO = String(process.env.WOLNE_AUTO_REJECT || "")
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+const WOLNE_MIN_DAYS = parseInt(process.env.WOLNE_MIN_DAYS || "3", 10) || 3;
+
+// dates: ['YYYY-MM-DD', ...] → { near: автоотказ, rest: обычная заявка }
+async function splitNearWolne(workerId, dates) {
+  if (!WOLNE_AUTO.length) return { near: [], rest: dates };
+  const r = await db.query(
+    `SELECT f.name FROM v_worker_current vc JOIN facilities f ON f.id = vc.facility_id WHERE vc.id = $1`,
+    [workerId],
+  );
+  const fac = String(r.rows[0]?.name || "").toLowerCase();
+  if (!WOLNE_AUTO.some((p) => fac.startsWith(p))) return { near: [], rest: dates };
+  const t = new Date();
+  t.setDate(t.getDate() + WOLNE_MIN_DAYS);
+  const limit = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+  return { near: dates.filter((d) => d <= limit), rest: dates.filter((d) => d > limit) };
+}
+
+async function writeWolneRejected(workerId, days) {
+  await db.query(
+    `INSERT INTO day_off_requests (worker_id, days, status, note, reviewed_at)
+     VALUES ($1, $2, 'rejected', $3, now())`,
+    [workerId, days, `Auto-odmowa: wolne na najbliższe ${WOLNE_MIN_DAYS} dni`],
+  );
+}
 
 // ── Telegram send helpers ────────────────────────────────────
 
@@ -366,17 +397,25 @@ async function handleUpdate(bot, update) {
         await sendMessage(bot, chatId, T(session, "wolne_no_days"));
         return;
       }
-      days.sort();
-      // Convert DD.MM to dates
-      const year = new Date().getFullYear();
-      const dates = days.map((d) => {
-        const [dd, mm] = d.split(".");
-        return `${year}-${mm}-${dd}`;
-      });
-      await writeWolne(session.workerId, dates);
+            // DD.MM → YYYY-MM-DD (календарь на 14 дней вперёд: январь, выбранный в декабре, — следующий год)
+      const now = new Date();
+      const dates = days
+        .map((d) => {
+          const [dd, mm] = d.split(".");
+          const y = parseInt(mm, 10) < now.getMonth() + 1 ? now.getFullYear() + 1 : now.getFullYear();
+          return `${y}-${mm}-${dd}`;
+        })
+        .sort();
+      const { near, rest } = await splitNearWolne(session.workerId, dates);
+      if (near.length) await writeWolneRejected(session.workerId, near);
+      if (rest.length) await writeWolne(session.workerId, rest);
       delete session.wolneDays;
       await saveSessionSafe(chatId, session);
-      await sendMessage(bot, chatId, T(session, "wolne_confirmed"));
+      if (near.length) {
+        const fmt = near.map((d) => `${d.substring(8, 10)}.${d.substring(5, 7)}`).join(", ");
+        await sendMessage(bot, chatId, T(session, "wolne_auto_rejected", fmt, WOLNE_MIN_DAYS));
+      }
+      if (rest.length) await sendMessage(bot, chatId, T(session, "wolne_confirmed"));
       await sendDayKeyboard(bot, chatId, session, settings);
       return;
     }

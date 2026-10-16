@@ -117,7 +117,34 @@ window.addEventListener("DOMContentLoaded", async () => {
   initMonthSelect();
   loadFacilities();
   loadAll();
+  // #page=advances / #page=dayoff … — z mini-panelu w Telegramie
+  const hp = (/^#page=(\w+)$/.exec(location.hash) || [])[1];
+  if (hp && hp !== "hours" && document.getElementById("page" + hp.charAt(0).toUpperCase() + hp.slice(1))) showPage(hp);
+  tgStatus();
 });
+
+// ── Telegram: połączenie konta (bot → przycisk «Panel», logowanie bez hasła) ──
+let TG_LINKED = false;
+async function tgStatus() {
+  const b = document.getElementById("tgBtn");
+  if (!b) return;
+  try {
+    const r = await apiFetch("/api/tg/status");
+    if (!r || !r.ok) { b.style.display = "none"; return; }
+    TG_LINKED = !!r.linked;
+    b.textContent = TG_LINKED ? "✈️ Telegram połączony ✓" : "✈️ Połącz Telegram";
+    b.style.color = TG_LINKED ? "var(--green)" : "var(--blue)";
+  } catch (e) { b.style.display = "none"; }
+}
+async function connectTelegram() {
+  if (TG_LINKED && !confirm("Telegram jest już połączony.\nWygenerować nowy link (np. nowy telefon)? Stare połączenie zostanie zastąpione.")) return;
+  const r = await apiFetch("/api/tg/link-code", { method: "POST" });
+  if (!r || !r.ok) { alert((r && r.error) || "Nie udało się utworzyć linku"); return; }
+  const w = window.open(r.link, "_blank");
+  if (!w) prompt(`Otwórz ten link w Telegramie (ważny ${r.ttl_min} min):`, r.link);
+  else alert(`W Telegramie otworzy się bot — naciśnij «Start» i potwierdź «Tak».\nLink ważny ${r.ttl_min} min.\nPotem panel otwiera się przyciskiem «Panel» w czacie z botem.`);
+  setTimeout(tgStatus, 15000);
+}
 
 function doLogout() {
   fetch("/admin/logout", {

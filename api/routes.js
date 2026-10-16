@@ -309,68 +309,88 @@ router.get("/advances", requireAuth, async (req, res) => {
   }
 });
 
+// Причини відмови з бота координатора (bot/coord.js): працівник отримує їх своєю мовою.
+// У базу (note) пишеться польський текст — як бачить панель. З панелі причина працівнику не надсилається, як і раніше.
+const REASON_TXT = {
+  hours:   { pl: "Za mało przepracowanych godzin", uk: "Замало відпрацьованих годин", ru: "Мало отработанных часов", en: "Not enough hours worked" },
+  had:     { pl: "Zaliczka w tym miesiącu już była", uk: "Аванс цього місяця вже був", ru: "Аванс в этом месяце уже был", en: "You already had an advance this month" },
+  leaving: { pl: "Kończy pracę", uk: "Ви завершуєте роботу", ru: "Вы заканчиваете работу", en: "You are finishing work" },
+  staff:   { pl: "Za mało ludzi na zmianie", uk: "Замало людей на зміні в ці дні", ru: "Мало людей на смене в эти дни", en: "Not enough people on shift these days" },
+  late:    { pl: "Za późno zgłoszone", uk: "Заявку подано запізно", ru: "Заявка подана слишком поздно", en: "Request submitted too late" },
+};
+const reasonFor = (code, lang) => (REASON_TXT[code] ? REASON_TXT[code][lang] || REASON_TXT[code].uk : "");
+
+// Рішення по заявці на аванс — спільне для панелі (PATCH нижче) і бота координатора (bot/coord.js).
+// coordinator = сесія ({ coordinator_id, is_admin }). Повертає { ok } або { ok:false, notFound:true }.
+// reasonCode (тільки з бота) — причина відмови: у базу — польською, працівнику — його мовою.
+async function decideAdvance(coordinator, id, status, note, reasonCode) {
+  if (reasonCode && REASON_TXT[reasonCode]) note = REASON_TXT[reasonCode].pl;
+  if (!["approved", "rejected"].includes(status)) return { ok: false, error: "Invalid status" };
+  const result = await db.query(
+    `UPDATE advances a
+     SET status = $1, note = $2, approved_by = $3, approved_at = now()
+     WHERE a.id = $4
+       AND (
+         $5::boolean
+         OR EXISTS (
+           SELECT 1 FROM v_worker_current vw
+           JOIN coordinator_facilities cf ON cf.facility_id = vw.facility_id
+           WHERE vw.id = a.worker_id AND cf.coordinator_id = $3 AND cf.is_primary
+         )
+       )
+     RETURNING worker_id`,
+    [status, note || null, coordinator.coordinator_id, id, !!coordinator.is_admin],
+  );
+  if (!result.rows.length) return { ok: false, notFound: true };
+
+  const { worker_id } = result.rows[0];
+  const workerRes = await db.query(
+    `SELECT full_name, telegram_chat_id, lang FROM workers WHERE id = $1`,
+    [worker_id],
+  );
+  const worker = workerRes.rows[0];
+
+  if (worker?.telegram_chat_id) {
+    try {
+      const session = { lang: worker.lang || "uk" };
+      const { T } = require("../bot/i18n");
+      const emoji = status === "approved" ? "✅" : "❌";
+      const statusText =
+        status === "approved"
+          ? T(session, "advances_approved")
+          : T(session, "advances_rejected");
+      const why = reasonCode ? `\n${reasonFor(reasonCode, session.lang)}` : "";
+
+      await fetch(
+        `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: worker.telegram_chat_id,
+            text: `${emoji} ${statusText}${why}`,
+            parse_mode: "Markdown",
+          }),
+        },
+      );
+    } catch (tgErr) {
+      console.error("Telegram notify failed (advances):", tgErr.message);
+    }
+  }
+  // повідомлення в Telegram координаторів — показати рішення замість кнопок
+  require("../bot/coord").afterDecision("adv", id).catch(() => {});
+  return { ok: true, worker_id };
+}
+
 router.patch("/advances/:id", requireAuth, async (req, res) => {
   try {
     const { status, note } = req.body;
     if (!["approved", "rejected"].includes(status)) {
       return res.status(400).json({ ok: false, error: "Invalid status" });
     }
-
-    const result = await db.query(
-      `UPDATE advances a
-       SET status = $1, note = $2, approved_by = $3, approved_at = now()
-       WHERE a.id = $4
-         AND (
-           $5::boolean
-           OR EXISTS (
-             SELECT 1 FROM v_worker_current vw
-             JOIN coordinator_facilities cf ON cf.facility_id = vw.facility_id
-             WHERE vw.id = a.worker_id AND cf.coordinator_id = $3 AND cf.is_primary
-           )
-         )
-       RETURNING worker_id`,
-      [status, note || null, req.coordinator.coordinator_id,
-        req.params.id, !!req.coordinator.is_admin],
-    );
-
-    if (!result.rows.length)
+    const r = await decideAdvance(req.coordinator, req.params.id, status, note);
+    if (!r.ok)
       return res.status(404).json({ ok: false, error: "Nie znaleziono albo brak prawa edycji (tylko podgląd)" });
-
-    const { worker_id } = result.rows[0];
-
-    const workerRes = await db.query(
-      `SELECT full_name, telegram_chat_id, lang FROM workers WHERE id = $1`,
-      [worker_id],
-    );
-    const worker = workerRes.rows[0];
-
-    if (worker?.telegram_chat_id) {
-      try {
-        const session = { lang: worker.lang || "uk" };
-        const { T } = require("../bot/i18n");
-        const emoji = status === "approved" ? "✅" : "❌";
-        const statusText =
-          status === "approved"
-            ? T(session, "advances_approved")
-            : T(session, "advances_rejected");
-
-        await fetch(
-          `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: worker.telegram_chat_id,
-              text: `${emoji} ${statusText}`,
-              parse_mode: "Markdown",
-            }),
-          },
-        );
-      } catch (tgErr) {
-        console.error("Telegram notify failed (advances):", tgErr.message);
-      }
-    }
-
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -759,82 +779,90 @@ router.get("/day-off", requireAuth, async (req, res) => {
 });
 
 // ── Day off approve/reject ────────────────────────────────────
+// Рішення по заявці на вихідні — спільне для панелі (PATCH нижче) і бота координатора (bot/coord.js).
+// Повертає { ok, hours } або { ok:false, notFound:true }. reasonCode — як у decideAdvance.
+async function decideDayOff(coordinator, id, status, note, reasonCode) {
+  if (reasonCode && REASON_TXT[reasonCode]) note = REASON_TXT[reasonCode].pl;
+  if (!["approved", "rejected"].includes(status)) return { ok: false, error: "Invalid status" };
+  const result = await db.query(
+    `UPDATE day_off_requests d
+     SET status=$1, note=$2, reviewed_at=now(), reviewed_by=$3
+     WHERE d.id=$4
+       AND (
+         $5::boolean
+         OR EXISTS (
+           SELECT 1 FROM v_worker_current vw
+           JOIN coordinator_facilities cf ON cf.facility_id = vw.facility_id
+           WHERE vw.id = d.worker_id AND cf.coordinator_id = $3 AND cf.is_primary
+         )
+       )
+     RETURNING worker_id, days`,
+    [status, note || null, coordinator.coordinator_id, id, !!coordinator.is_admin],
+  );
+  if (!result.rows.length) return { ok: false, notFound: true };
+
+  const { worker_id, days } = result.rows[0];
+
+  // авто-URL у табелі
+  let hoursInfo = { applied: [], occupied: [], out_of_period: [] };
+  if (status === "approved") {
+    try {
+      hoursInfo = await applyDayOffToHours(worker_id, days);
+    } catch (e) {
+      console.error("applyDayOffToHours failed:", e.message);
+    }
+  }
+
+  const workerRes = await db.query(
+    `SELECT full_name, telegram_chat_id, lang FROM workers WHERE id = $1`,
+    [worker_id],
+  );
+  const worker = workerRes.rows[0];
+
+  if (worker?.telegram_chat_id) {
+    try {
+      const daysFormatted = (days || [])
+        .map((d) => {
+          const dt = new Date(d);
+          return `${String(dt.getDate()).padStart(2, "0")}.${String(dt.getMonth() + 1).padStart(2, "0")}`;
+        })
+        .join(", ");
+
+      const emoji = status === "approved" ? "✅" : "❌";
+      const statusText = status === "approved" ? "підтверджено" : "відхилено";
+      const why = reasonCode ? `\n${reasonFor(reasonCode, worker.lang || "uk")}` : "";
+      const message = `${emoji} Ваш запит на вихідний *${statusText}*!\n\n📅 Дні: *${daysFormatted}*${why}`;
+
+      await fetch(
+        `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: worker.telegram_chat_id,
+            text: message,
+            parse_mode: "Markdown",
+          }),
+        },
+      );
+    } catch (tgErr) {
+      console.error("Telegram notify failed (day-off):", tgErr.message);
+    }
+  }
+  require("../bot/coord").afterDecision("dof", id).catch(() => {});
+  return { ok: true, worker_id, hours: hoursInfo };
+}
+
 router.patch("/day-off/:id", requireAuth, async (req, res) => {
   try {
     const { status, note } = req.body;
     if (!["approved", "rejected"].includes(status)) {
       return res.status(400).json({ ok: false, error: "Invalid status" });
     }
-
-    const result = await db.query(
-      `UPDATE day_off_requests d
-       SET status=$1, note=$2, reviewed_at=now(), reviewed_by=$3
-       WHERE d.id=$4
-         AND (
-           $5::boolean
-           OR EXISTS (
-             SELECT 1 FROM v_worker_current vw
-             JOIN coordinator_facilities cf ON cf.facility_id = vw.facility_id
-             WHERE vw.id = d.worker_id AND cf.coordinator_id = $3 AND cf.is_primary
-           )
-         )
-       RETURNING worker_id, days`,
-      [status, note || null, req.coordinator.coordinator_id,
-        req.params.id, !!req.coordinator.is_admin],
-    );
-
-    if (!result.rows.length)
+    const r = await decideDayOff(req.coordinator, req.params.id, status, note);
+    if (!r.ok)
       return res.status(404).json({ ok: false, error: "Nie znaleziono albo brak prawa edycji (tylko podgląd)" });
-
-    const { worker_id, days } = result.rows[0];
-
-    // авто-URL у табелі
-    let hoursInfo = { applied: [], occupied: [], out_of_period: [] };
-    if (status === "approved") {
-      try {
-        hoursInfo = await applyDayOffToHours(worker_id, days);
-      } catch (e) {
-        console.error("applyDayOffToHours failed:", e.message);
-      }
-    }
-
-    const workerRes = await db.query(
-      `SELECT full_name, telegram_chat_id FROM workers WHERE id = $1`,
-      [worker_id],
-    );
-    const worker = workerRes.rows[0];
-
-    if (worker?.telegram_chat_id) {
-      try {
-        const daysFormatted = (days || [])
-          .map((d) => {
-            const dt = new Date(d);
-            return `${String(dt.getDate()).padStart(2, "0")}.${String(dt.getMonth() + 1).padStart(2, "0")}`;
-          })
-          .join(", ");
-
-        const emoji = status === "approved" ? "✅" : "❌";
-        const statusText = status === "approved" ? "підтверджено" : "відхилено";
-        const message = `${emoji} Ваш запит на вихідний *${statusText}*!\n\n📅 Дні: *${daysFormatted}*`;
-
-        await fetch(
-          `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: worker.telegram_chat_id,
-              text: message,
-              parse_mode: "Markdown",
-            }),
-          },
-        );
-      } catch (tgErr) {
-        console.error("Telegram notify failed (day-off):", tgErr.message);
-      }
-    }
-
-    res.json({ ok: true, hours: hoursInfo });
+    res.json({ ok: true, hours: r.hours });
   } catch (err) {
     console.error(err);
     res.status(500).json({ ok: false, error: err.message });
@@ -1375,6 +1403,8 @@ router.post("/advances/batch", requireAuth, async (req, res) => {
     // Telegram-сповіщення (не валимо відповідь, якщо щось не так)
     (async () => {
       for (const row of result.rows) {
+        // повідомлення в Telegram координаторів — показати рішення замість кнопок (bot/coord.js)
+        await require("../bot/coord").afterDecision("adv", row.id).catch(() => {});
         try {
           const wq = await db.query(
             `SELECT telegram_chat_id, lang FROM workers WHERE id = $1`,
@@ -1473,6 +1503,7 @@ router.post("/day-off/batch", requireAuth, async (req, res) => {
 
     (async () => {
       for (const row of result.rows) {
+        await require("../bot/coord").afterDecision("dof", row.id).catch(() => {});
         try {
           const wq = await db.query(
             `SELECT telegram_chat_id, lang FROM workers WHERE id = $1`,
@@ -1504,5 +1535,10 @@ router.post("/day-off/batch", requireAuth, async (req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
+// Спільні функції для бота координатора (bot/coord.js) і мініпанелі (api/tg.js)
+router.decideAdvance = decideAdvance;
+router.decideDayOff = decideDayOff;
+router.workerInEditScope = workerInEditScope;
 
 module.exports = router;

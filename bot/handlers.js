@@ -125,10 +125,13 @@ async function getMonthlySummary(workerId) {
 }
 
 async function writeWolne(workerId, days) {
-  await db.query(
-    `INSERT INTO day_off_requests (worker_id, days) VALUES ($1, $2)`,
+  const r = await db.query(
+    `INSERT INTO day_off_requests (worker_id, days) VALUES ($1, $2) RETURNING id`,
     [workerId, days],
   );
+  // координаторам обʼєкта — у Telegram з кнопками «Схвалити / Відхилити» (bot/coord.js)
+  if (r.rows[0]) require("./coord").notifyNew("dof", r.rows[0].id).catch((e) => console.error("[coord] notify dof", e.message));
+  return r.rows[0] ? r.rows[0].id : null;
 }
 // ── Автоотказ: выходной на ближайшие WOLNE_MIN_DAYS дней (сегодня 15 → 16, 17, 18) ──
 // .env: WOLNE_AUTO_REJECT=ILS   — начало названия объекта, через запятую (ILS UZ, ILS Błonie SAS)
@@ -465,10 +468,12 @@ async function handleUpdate(bot, update) {
       }
 
       // Зберігаємо заявку
-      await db.query(
-        `INSERT INTO advances (worker_id, requested_at, status) VALUES ($1, now(), 'pending')`,
+      const advIns = await db.query(
+        `INSERT INTO advances (worker_id, requested_at, status) VALUES ($1, now(), 'pending') RETURNING id`,
         [session.workerId],
       );
+      // координаторам обʼєкта — у Telegram з кнопками «Схвалити / Відхилити» (bot/coord.js)
+      if (advIns.rows[0]) require("./coord").notifyNew("adv", advIns.rows[0].id).catch((e) => console.error("[coord] notify adv", e.message));
       await sendMessage(bot, chatId, T(session, "advances_requested"));
       await sendDayKeyboard(bot, chatId, session, settings);
       return;

@@ -59,6 +59,8 @@ app.use(async (req, res, next) => {
 
 
 // ── API routes ────────────────────────────────────────────────
+app.use("/api", apiRoutes);
+app.use("/api/tg", require("./api/tg").router);
 app.use("/api/regional", regional.router);
 app.use("/api/care", care.router);
 app.use("/api/board", board.router);
@@ -76,6 +78,7 @@ app.post("/webhook", async (req, res) => {
     // групи Telegram: запам'ятати чат для зведень «Wyjazdy / przyjazdy», боту працівників там робити нічого
     if (await flow.onUpdate(req.body)) return;
     if (await referral.onUpdate(bot, req.body)) return;
+    if (await require("./bot/coord").onUpdate(bot, req.body)) return;
     await handleUpdate(bot, req.body);
   } catch (err) {
     console.error("Webhook error:", err.message);
@@ -380,6 +383,7 @@ scheduleImport();
 regional.schedule(bot);
 require("./bot/care").schedule(bot);
 flow.schedule(bot);
+require("./bot/coord").schedule(bot);
 hoursReport.schedule(bot);
 referral.schedule(bot);
 medcheck.schedule(bot);

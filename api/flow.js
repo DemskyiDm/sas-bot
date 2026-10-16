@@ -1702,6 +1702,15 @@ async function sendRemind(today) {
       WHERE o.valid_to IS NULL AND c.is_active AND c.telegram_chat_id IS NOT NULL`);
   let n = 0;
   for (const c of cs.rows) {
+    // Інтерактивне нагадування з кнопками (bot/coord.js): таблиця на 3 тижні, «Підтвердити як є»,
+    // недостатні цифри — кнопками. "nothing" — усе вже підтверджено; помилка / не налаштовано — як раніше, текстом.
+    try {
+      const r = await require("../bot/coord").sendPlanReminder(c.id, today);
+      if (r === "sent") { n++; continue; }
+      if (r === "nothing") continue;
+    } catch (e) {
+      console.error("[flow] plan reminder (coord)", e.message);
+    }
     const t = { chat: String(c.telegram_chat_id), coordinator_id: c.id, lang: langOf(c.lang), scope: "own" };
     const text = await buildRemind(t, today, false);
     if (text && (await sendLong(t.chat, text))) n++;
@@ -1806,6 +1815,9 @@ async function onUpdate(u) {
   }
 }
 
-module.exports = { router, schedule, onUpdate, capture, setBot: (b) => { BOT = b; },
+// Для бота координатора (bot/coord.js): тижні плану набору і момент, з якого рахуються підтвердження
+const planApi = { orderWeeks, confirmFrom, mondayOf, addDays, clock };
+
+module.exports = { router, schedule, onUpdate, capture, setBot: (b) => { BOT = b; }, planApi,
   _test: { dailyData, buildDaily, buildWeekToDate, targetSites, resolveRecipients, buildRemind, buildMonday, sendDaily, tick, weekData, totals, wrapImport, waitImports,
     deliverDaily, deliverMonday, sendMonday, dayTableSpec, wtdTableSpec, ordersSpec, ordersData, buildWeekCaption, paceOf, isLagging } };

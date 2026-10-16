@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <title>KoorPanel</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="tg.css?v=1" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <!-- KoorPanel у Telegram: кнопка «Panel» у чаті з ботом. Вхід без пароля (api/tg.js → /auth). -->
+  <div id="app">
+    <main id="view" aria-live="polite">
+      <div class="center"><div class="spin" aria-hidden="true"></div></div>
+    </main>
+    <nav id="tabs" class="tabs" aria-label="Menu" hidden>
+      <button data-tab="home" onclick="go('home')">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1z"/></svg>
+        <span data-t="tab_home"></span>
+      </button>
+      <button data-tab="hours" onclick="go('hours')">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        <span data-t="tab_hours"></span>
+      </button>
+      <button data-tab="req" onclick="go('req')">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h8l4 4v14H4V3z"/><path d="M8 12h8M8 16h5"/></svg>
+        <span data-t="tab_req"></span>
+      </button>
+      <button data-tab="panel" onclick="openPanel('/index.html')">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+        <span data-t="tab_panel"></span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- Правка години -->
+  <div id="sheetBg" class="sheet-bg" hidden onclick="closeSheet()"></div>
+  <section id="sheet" class="sheet" hidden aria-label="Edit">
+    <div class="grip" aria-hidden="true"></div>
+    <div>
+      <div id="shName" class="sh-name"></div>
+      <div id="shSub" class="sh-sub"></div>
+    </div>
+    <label class="fld"><span data-t="hours_lbl"></span>
+      <input id="shHours" type="text" inputmode="decimal" autocomplete="off" oninput="onHoursInput()" />
+    </label>
+    <div class="fld">
+      <span data-t="abs_lbl"></span>
+      <div class="codes" id="shCodes"></div>
+    </div>
+    <div id="shErr" class="err" hidden></div>
+    <div class="sh-btns">
+      <button id="shRemind" class="btn ghost" onclick="remindFromSheet()" data-t="remind"></button>
+      <button id="shSave" class="btn primary" onclick="saveSheet()" data-t="save"></button>
+    </div>
+  </section>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="tg.js?v=1"></script>
+</body>
+</html>

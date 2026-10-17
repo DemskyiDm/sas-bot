@@ -1,25 +1,29 @@
 // KoorPanel у Telegram (мініпанель). Українська / русский.
 // Вхід: Telegram.WebApp.initData → POST /api/tg/auth → звичайна сесія панелі (x-session),
 // тож години правляться тим самим POST /api/hours, що й у панелі, з тими самими правами.
-// Адреси: #home, #hours, #hours:fac=<id>, #req, #go=<шлях панелі> (відкрити повну панель, напр. /wyjazdy.html#orders).
+// Адреси: #home, #hours, #hours:fac=<id>, #adv, #dof, #req, #go=<шлях панелі> (напр. /wyjazdy.html#orders).
+// Telegram дописує до адреси свої параметри (#…&tgWebAppData=… або #tgWebAppData=…) — їх відкидаємо.
 "use strict";
 
 const TGW = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData ? window.Telegram.WebApp : null;
 
+// 1 особа, 2 особи, 5 осіб (11–14 — осіб)
+const ppl = (n) => { const a = n % 10, b = n % 100; return `${n} ${a === 1 && b !== 11 ? "особа" : a >= 2 && a <= 4 && (b < 12 || b > 14) ? "особи" : "осіб"}`; };
 const L = {
   uk: {
-    tab_home: "Головна", tab_hours: "Години", tab_req: "Заявки", tab_panel: "Панель",
+    tab_home: "Головна", tab_hours: "Години", tab_dec: "Рішення", tab_req: "Заявки", tab_panel: "Панель",
     hi_m: "Доброго ранку", hi_d: "Добрий день", hi_e: "Добрий вечір",
     facs: (n) => `${n} ${n === 1 ? "обʼєкт" : n < 5 && n > 1 ? "обʼєкти" : "обʼєктів"}`, company: "уся фірма",
+    sc: { own: "Свої обʼєкти", region: "Регіон", all: "Уся фірма" },
     via_tg: "Вхід через Telegram — без пароля",
     k_arr: "Приїзди сьогодні", k_dep: "Останній день", k_gaps: (d) => `Без годин ${d}+ дн.`, k_wait: "Чекають рішення",
     k_wait_s: (a, d) => `${a} аванс. · ${d} вихідн.`,
     l_hours: "Години працівників", l_adv: "Аванси", l_dof: "Вихідні", l_flow: "Виїзди / приїзди", l_plan: "План набору", l_req: "Заявки",
-    plan_unc: (n, dl) => `не підтверджено ${n} · до нд ${dl}`, plan_ok: "підтверджено", plan_none: "",
+    plan_unc: (n, dl) => `не підтверджено ${n} · до нд ${dl}`, plan_ok: "підтверджено",
     s_arr: "Сьогодні приїжджають", s_dep: "Сьогодні останній день", s_gaps: (d) => `Без годин ${d}+ дн.`,
     transfer: "переведення", days: (n) => `${n} дн. без годин`, remind: "Нагадати в боті", remind_s: "Нагадати", no_bot: "немає бота",
     nothing: "Нічого", more: (n) => `… і ще ${n}`,
-    h_title: "Години", h_month: (h) => `${h} год за місяць`, h_gap: (n) => `⚠ ${n} дн. без год.`, h_nogap: (n) => `Без годин: ${n}`,
+    h_title: "Години", h_month: (h) => `${h} год за місяць`, h_gap: (n) => `⚠ ${n} дн. без годин`, h_nogap: (n) => `Без годин: ${n}`,
     h_ro: "Тільки перегляд — на цьому обʼєкті немає права правки (Region → Przypisania).",
     h_none: "На цьому обʼєкті в ці дні нікого немає.", h_nofacs: "За вами немає обʼєктів.",
     who: "Працівник", hours_lbl: "Години", abs_lbl: "або код відсутності", save: "Зберегти", saved: "Збережено",
@@ -27,6 +31,33 @@ const L = {
     sent: "Нагадування надіслано", r_not_in_bot: "Працівник не підключений до бота", r_no_gaps: "У працівника немає серії пропущених днів",
     r_blocked: "Працівник заблокував бота", r_busy: "Розсилка вже йде — спробуйте за хвилину", r_disabled: "Нагадування вимкнені (GAP_ENABLED)",
     r_err: "Не вдалося надіслати",
+    // аванси / вихідні
+    adv_title: "Аванси", dof_title: "Вихідні", f_pending: (n) => `Чекають · ${n}`, f_all: "Усі за 30 днів",
+    bhp: "BHP", req_at: "Заявка", hrs: "Години", m_cur: "цей міс.", m_prev: "мин. міс.", days_l: "Дні", n_days: (n) => `${n} дн.`,
+    free: (off, staff) => `вже вільні ${off} з ${staff}`, std: (z) => `${z} zł`,
+    st: { pending: "Чекає", approved: "Схвалено", rejected: "Відхилено" },
+    approve: "Схвалити", reject: "Відхилити", all_ok: (n) => `Схвалити всі · ${n}`,
+    all_q: (n, f) => `Схвалити всі ${n} заявки на обʼєкті ${f}?`,
+    by: (who, t) => `${who} · ${t}`, why: "Причина", view_only: "Тільки перегляд — не ваш обʼєкт",
+    done_ok: "Схвалено", done_no: "Відхилено", done_n: (n) => `Схвалено: ${n}`, already: "Вже вирішено іншим координатором",
+    no_right: "Немає права рішення на цьому обʼєкті", none_p: "Немає заявок, що чекають рішення.", none_a: "За 30 днів заявок немає.",
+    reason_q: "Причина відмови — працівник побачить її в боті", cancel: "Скасувати",
+    r: { hours: "Замало годин", had: "Вже був аванс", leaving: "Завершує роботу", staff: "Мало людей на зміні", late: "Пізно подано", none: "Без причини" },
+    // відправка в офіс
+    off_btn: (n) => `Відправити в офіс · ${n}`, off_title: "Відправити в офіс", off_sub: (d) => `Схвалені аванси за ${d} днів, ще не надіслані`,
+    off_items: (n) => `Аванси · ${n}`, off_all: "Усі", off_none: "Жодного", off_empty: "Усі схвалені аванси вже надіслані.",
+    off_appr: (d, h) => `схвалено ${d} · ${h} год`, off_to: "Кому", off_add: "Додати", off_email_ph: "e-mail адресата",
+    off_shared: "для всіх координаторів", off_tag: "офіс", off_cc: (e) => `Копія і відповіді — вам: ${e}`,
+    off_nocc: "У вашій картці в панелі немає e-mail — копії вам не буде.", off_from: (e) => `Від: ${e}`,
+    off_sum: (n, z) => `${ppl(n)} · разом ${z} zł · таблиця в листі + Excel`, off_send: "Надіслати", off_hist: "Надіслано раніше",
+    off_ok: (n) => `Лист надіслано: ${ppl(n)}`, off_del_q: (e) => `Прибрати адресата ${e}?`,
+    off_nocfg: "Пошта ще не налаштована — список можна переглянути, «Надіслати» запрацює після налаштування.",
+    off_why: { no_nodemailer: "На сервері: npm install nodemailer, потім pm2 restart index.", no_gmail: "У .env немає GMAIL_USER або GMAIL_APP_PASSWORD.",
+      no_microsoft: "У .env немає MS_TENANT_ID / MS_CLIENT_ID / MS_CLIENT_SECRET / MAIL_FROM." },
+    off_err: { not_configured: "Пошта не налаштована", no_recipients: "Оберіть адресата", bad_email: "Неправильна адреса e-mail",
+      no_items: "Оберіть аванси", changed: "Список змінився (хтось уже надіслав) — оновлено", busy: "Лист уже надсилається",
+      admin_only: "Спільних адресатів додає адмін", send_failed: "Не вдалося надіслати" },
+    off_sent: (t) => `в офісі ${t}`, off_st_err: "помилка",
     req_title: "Заявки", req_sub: "Заявки до офісу",
     req_med: "Медогляд", req_med_d: "Запис працівників на медичний огляд",
     req_fine: "Штрафи", req_fine_d: "Штрафи й утримання працівників",
@@ -35,25 +66,26 @@ const L = {
     e_no_account: "Для вашого профілю немає облікового запису панелі. Зверніться до адміністратора.",
     e_bad_init: "Не вдалося перевірити вхід Telegram. Закрийте панель і відкрийте знову кнопкою «Panel».",
     e_outside: "Мініпанель відкривається кнопкою «Panel» у чаті з ботом.", e_login: "Увійти з паролем", e_net: "Немає звʼязку з сервером. Спробуйте ще раз.",
-    retry: "Спробувати ще раз",
+    retry: "Спробувати ще раз", fac_pick: "Обʼєкт",
     wd: ["нд", "пн", "вт", "ср", "чт", "пт", "сб"],
     wdl: ["неділя", "понеділок", "вівторок", "середа", "четвер", "пʼятниця", "субота"],
     codes: { WZ: "DW", DWZ: "DWZ", URL: "URL", L4: "L4", NN: "NN", UN: "UN" },
     codes_t: { WZ: "вихідний", DWZ: "вихідн. зав.", URL: "відпустка", L4: "лікарн.", NN: "прогул", UN: "поважна" },
   },
   ru: {
-    tab_home: "Главная", tab_hours: "Часы", tab_req: "Заявки", tab_panel: "Панель",
+    tab_home: "Главная", tab_hours: "Часы", tab_dec: "Решения", tab_req: "Заявки", tab_panel: "Панель",
     hi_m: "Доброе утро", hi_d: "Добрый день", hi_e: "Добрый вечер",
     facs: (n) => `${n} ${n === 1 ? "объект" : n < 5 && n > 1 ? "объекта" : "объектов"}`, company: "вся фирма",
+    sc: { own: "Свои объекты", region: "Регион", all: "Вся фирма" },
     via_tg: "Вход через Telegram — без пароля",
     k_arr: "Приезды сегодня", k_dep: "Последний день", k_gaps: (d) => `Без часов ${d}+ дн.`, k_wait: "Ждут решения",
     k_wait_s: (a, d) => `${a} аванс. · ${d} выходн.`,
     l_hours: "Часы работников", l_adv: "Авансы", l_dof: "Выходные", l_flow: "Выезды / приезды", l_plan: "План набора", l_req: "Заявки",
-    plan_unc: (n, dl) => `не подтверждено ${n} · до вс ${dl}`, plan_ok: "подтверждено", plan_none: "",
+    plan_unc: (n, dl) => `не подтверждено ${n} · до вс ${dl}`, plan_ok: "подтверждено",
     s_arr: "Сегодня приезжают", s_dep: "Сегодня последний день", s_gaps: (d) => `Без часов ${d}+ дн.`,
     transfer: "перевод", days: (n) => `${n} дн. без часов`, remind: "Напомнить в боте", remind_s: "Напомнить", no_bot: "нет бота",
     nothing: "Ничего", more: (n) => `… и ещё ${n}`,
-    h_title: "Часы", h_month: (h) => `${h} ч за месяц`, h_gap: (n) => `⚠ ${n} дн. без час.`, h_nogap: (n) => `Без часов: ${n}`,
+    h_title: "Часы", h_month: (h) => `${h} ч за месяц`, h_gap: (n) => `⚠ ${n} дн. без часов`, h_nogap: (n) => `Без часов: ${n}`,
     h_ro: "Только просмотр — на этом объекте нет права правки (Region → Przypisania).",
     h_none: "На этом объекте в эти дни никого нет.", h_nofacs: "За вами нет объектов.",
     who: "Работник", hours_lbl: "Часы", abs_lbl: "или код отсутствия", save: "Сохранить", saved: "Сохранено",
@@ -61,6 +93,31 @@ const L = {
     sent: "Напоминание отправлено", r_not_in_bot: "Работник не подключён к боту", r_no_gaps: "У работника нет серии пропущенных дней",
     r_blocked: "Работник заблокировал бота", r_busy: "Рассылка уже идёт — попробуйте через минуту", r_disabled: "Напоминания выключены (GAP_ENABLED)",
     r_err: "Не удалось отправить",
+    adv_title: "Авансы", dof_title: "Выходные", f_pending: (n) => `Ждут · ${n}`, f_all: "Все за 30 дней",
+    bhp: "BHP", req_at: "Заявка", hrs: "Часы", m_cur: "этот мес.", m_prev: "прош. мес.", days_l: "Дни", n_days: (n) => `${n} дн.`,
+    free: (off, staff) => `уже свободны ${off} из ${staff}`, std: (z) => `${z} zł`,
+    st: { pending: "Ждёт", approved: "Одобрено", rejected: "Отклонено" },
+    approve: "Одобрить", reject: "Отклонить", all_ok: (n) => `Одобрить все · ${n}`,
+    all_q: (n, f) => `Одобрить все ${n} заявки на объекте ${f}?`,
+    by: (who, t) => `${who} · ${t}`, why: "Причина", view_only: "Только просмотр — не ваш объект",
+    done_ok: "Одобрено", done_no: "Отклонено", done_n: (n) => `Одобрено: ${n}`, already: "Уже решено другим координатором",
+    no_right: "Нет права решения на этом объекте", none_p: "Нет заявок, ждущих решения.", none_a: "За 30 дней заявок нет.",
+    reason_q: "Причина отказа — работник увидит её в боте", cancel: "Отмена",
+    r: { hours: "Мало часов", had: "Уже был аванс", leaving: "Заканчивает работу", staff: "Мало людей на смене", late: "Поздно подано", none: "Без причины" },
+    off_btn: (n) => `Отправить в офис · ${n}`, off_title: "Отправить в офис", off_sub: (d) => `Одобренные авансы за ${d} дней, ещё не отправленные`,
+    off_items: (n) => `Авансы · ${n}`, off_all: "Все", off_none: "Ни одного", off_empty: "Все одобренные авансы уже отправлены.",
+    off_appr: (d, h) => `одобрено ${d} · ${h} ч`, off_to: "Кому", off_add: "Добавить", off_email_ph: "e-mail адресата",
+    off_shared: "для всех координаторов", off_tag: "офис", off_cc: (e) => `Копия и ответы — вам: ${e}`,
+    off_nocc: "В вашей карточке в панели нет e-mail — копии вам не будет.", off_from: (e) => `От: ${e}`,
+    off_sum: (n, z) => `${n} чел. · всего ${z} zł · таблица в письме + Excel`, off_send: "Отправить", off_hist: "Отправлено ранее",
+    off_ok: (n) => `Письмо отправлено: ${n} чел.`, off_del_q: (e) => `Убрать адресата ${e}?`,
+    off_nocfg: "Почта ещё не настроена — список можно посмотреть, «Отправить» заработает после настройки.",
+    off_why: { no_nodemailer: "На сервере: npm install nodemailer, затем pm2 restart index.", no_gmail: "В .env нет GMAIL_USER или GMAIL_APP_PASSWORD.",
+      no_microsoft: "В .env нет MS_TENANT_ID / MS_CLIENT_ID / MS_CLIENT_SECRET / MAIL_FROM." },
+    off_err: { not_configured: "Почта не настроена", no_recipients: "Выберите адресата", bad_email: "Неправильный адрес e-mail",
+      no_items: "Выберите авансы", changed: "Список изменился (кто-то уже отправил) — обновлено", busy: "Письмо уже отправляется",
+      admin_only: "Общих адресатов добавляет админ", send_failed: "Не удалось отправить" },
+    off_sent: (t) => `в офисе ${t}`, off_st_err: "ошибка",
     req_title: "Заявки", req_sub: "Заявки в офис",
     req_med: "Медосмотр", req_med_d: "Запись работников на медицинский осмотр",
     req_fine: "Штрафы", req_fine_d: "Штрафы и удержания работников",
@@ -69,7 +126,7 @@ const L = {
     e_no_account: "Для вашего профиля нет учётной записи панели. Обратитесь к администратору.",
     e_bad_init: "Не удалось проверить вход Telegram. Закройте панель и откройте снова кнопкой «Panel».",
     e_outside: "Мини-панель открывается кнопкой «Panel» в чате с ботом.", e_login: "Войти с паролем", e_net: "Нет связи с сервером. Попробуйте ещё раз.",
-    retry: "Попробовать ещё раз",
+    retry: "Попробовать ещё раз", fac_pick: "Объект",
     wd: ["вс", "пн", "вт", "ср", "чт", "пт", "сб"],
     wdl: ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"],
     codes: { WZ: "DW", DWZ: "DWZ", URL: "URL", L4: "L4", NN: "NN", UN: "UN" },
@@ -77,12 +134,15 @@ const L = {
   },
 };
 const CODES = ["WZ", "DWZ", "URL", "L4", "NN", "UN"];
+const REASONS = { adv: ["hours", "had", "leaving", "none"], dof: ["staff", "late", "none"] };
 const LIST_MAX = 15;
+const MANY_FACS = 10;      // більше обʼєктів — вибір списком замість «таблеток»
 
 const ST = {
-  lang: "uk", token: null, user: null, viaTg: false,
+  lang: "uk", token: null, user: null, viaTg: false, view: "home",
   home: null, facs: null, fac: null, end: null, hours: null, onlyGaps: false,
-  sheet: null,
+  sheet: null, req: { adv: null, dof: null }, reqStatus: "pending", lastDec: "adv", reject: null,
+  office: null, offSel: null, offTo: null,
 };
 const T = () => L[ST.lang] || L.uk;
 
@@ -97,6 +157,14 @@ const warsawToday = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/W
 const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const dow = (iso) => new Date(iso + "T12:00:00Z").getUTCDay();
 const dd = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}` : "");
+const ddY = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}` : "—");
+const ddhm = (ts) => {
+  if (!ts) return "—";
+  const d = new Date(ts);
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Warsaw", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+    .formatToParts(d).map((x) => [x.type, x.value]));
+  return `${p.day}.${p.month} ${p.hour}:${p.minute}`;
+};
 const fmtH = (h) => { const n = Number(h); return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100).replace(".", ","); };
 const today = () => (ST.home && ST.home.today) || warsawToday();
 const CHEV = `<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>`;
@@ -112,6 +180,12 @@ function toast(text, bad) {
 }
 function haptic(kind) {
   try { if (TGW && TGW.HapticFeedback) TGW.HapticFeedback.notificationOccurred(kind); } catch (e) { /* старий клієнт */ }
+}
+function ask(text) {
+  return new Promise((res) => {
+    try { if (TGW && TGW.showConfirm) return TGW.showConfirm(text, (ok) => res(!!ok)); } catch (e) { /* нижче */ }
+    res(window.confirm(text));
+  });
 }
 
 async function api(path, opts) {
@@ -129,6 +203,13 @@ async function api(path, opts) {
   return j;
 }
 
+// ── Адреса: наш маршрут без параметрів Telegram ─────────────────────────
+function hashRoute() {
+  const raw = (location.hash || "").replace(/^#/, "");
+  const mine = raw.replace(/(^|[#&?])tgWebApp[\s\S]*$/, "");
+  return mine.split("&")[0] || "";
+}
+
 // ── Вхід ────────────────────────────────────────────────────────────────
 async function authTelegram() {
   const r = await fetch("/api/tg/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initData: TGW.initData }) });
@@ -140,10 +221,18 @@ async function authTelegram() {
   ST.viaTg = true;
   store.set("sas_session", j.token);       // повна панель (/index.html, /wyjazdy.html) бере сесію звідси
   store.set("sas_user", JSON.stringify(j.user));
+  try { sessionStorage.setItem("sas_tg", "1"); } catch (e) { /* повна панель покаже «Назад» у Telegram */ }
   return true;
 }
 
+function onBack() {
+  if (!$("sheet").hidden || !$("rsheet").hidden) return closeSheets();
+  if (ST.view === "office") return go("adv");
+  if (ST.view !== "home") return go("home");
+}
+
 async function boot() {
+  const first = hashRoute();
   if (TGW) {
     try {
       TGW.ready();
@@ -152,7 +241,13 @@ async function boot() {
       TGW.setBackgroundColor("#0f1117");
       if (TGW.setBottomBarColor) TGW.setBottomBarColor("#181b24");
     } catch (e) { /* старий клієнт Telegram */ }
-    TGW.BackButton.onClick(() => { if (!$("sheet").hidden) closeSheet(); else go("home"); });
+    try {
+      TGW.BackButton.onClick(onBack);
+    } catch (e) {
+      try { TGW.onEvent("backButtonClicked", onBack); } catch (e2) { /* без кнопки «Назад» */ }
+    }
+    // параметри Telegram вже прочитані SDK (і збережені ним для перезавантаження) — прибрати з адреси
+    try { history.replaceState(null, "", location.pathname + location.search + (first ? "#" + first : "#home")); } catch (e) { /* не страшно */ }
     const code = TGW.initDataUnsafe && TGW.initDataUnsafe.user && TGW.initDataUnsafe.user.language_code;
     if (/^ru/i.test(code || "")) ST.lang = "ru";
     let ok = false;
@@ -163,9 +258,10 @@ async function boot() {
     ST.token = store.get("sas_session");
     if (!ST.token) return showError("outside");
   }
-  const go0 = /^#go=(.+)$/.exec(location.hash);
+  const go0 = /^go=(.+)$/.exec(first);
   if (go0) {
-    const path = decodeURIComponent(go0[1]);
+    let path = "";
+    try { path = decodeURIComponent(go0[1]); } catch (e) { path = ""; }
     if (/^\/[\w\-./]*(#[\w\-=:]*)?$/.test(path)) { location.replace(path); return; }
   }
   applyStatic();
@@ -194,26 +290,28 @@ function applyStatic() {
 
 // ── Маршрути ───────────────────────────────────────────────────────────
 function go(v) {
-  const h = "#" + v;
-  if (location.hash === h) route(); else location.hash = h;
+  if (hashRoute() === v) route(); else location.hash = "#" + v;
 }
-// Повна панель у тому ж вікні Telegram (сесія вже в localStorage)
+// Повна панель у тому ж вікні Telegram (сесія вже в localStorage; «Назад» Telegram поверне сюди — /tg/back.js)
 function openPanel(path) {
   location.href = path;
 }
 function route() {
-  const h = (location.hash || "").replace(/^#/, "");
-  const [v, arg] = h.split(":");
-  const view = ["home", "hours", "req"].includes(v) ? v : "home";
-  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === view));
-  if (TGW) { if (view === "home") TGW.BackButton.hide(); else TGW.BackButton.show(); }
-  closeSheet();
+  const [v, arg] = hashRoute().split(":");
+  const view = ["home", "hours", "req", "adv", "dof", "office"].includes(v) ? v : "home";
+  ST.view = view;
+  const tab = view === "adv" || view === "dof" || view === "office" ? "dec" : view;
+  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+  if (TGW) { try { if (view === "home") TGW.BackButton.hide(); else TGW.BackButton.show(); } catch (e) { /* старий клієнт */ } }
+  closeSheets();
   window.scrollTo(0, 0);
   if (view === "hours") {
     const m = /fac=(\d+)/.exec(arg || "");
     if (m) ST.fac = Number(m[1]);
     return renderHours(true);
   }
+  if (view === "adv" || view === "dof") { ST.lastDec = view; return renderDec(view); }
+  if (view === "office") return renderOffice();
   if (view === "req") return renderReq();
   return renderHome();
 }
@@ -230,6 +328,20 @@ const langSeg = () => `<div class="seg" role="group" aria-label="Мова / Яз
     <button class="${ST.lang === "uk" ? "on" : ""}" onclick="setLang('uk')">УКР</button>
     <button class="${ST.lang === "ru" ? "on" : ""}" onclick="setLang('ru')">РУС</button></div>`;
 
+// Зріз: свої обʼєкти / регіон (регіональні) / уся фірма (адмін)
+function scopeSeg(scope, scopes) {
+  if (!scopes || scopes.length < 2) return "";
+  const t = T();
+  return `<div class="seg wide" role="group" aria-label="${esc(t.sc.own)}">
+    ${scopes.map((s) => `<button class="${s === scope ? "on" : ""}" onclick="setScope('${s}')">${esc(t.sc[s] || s)}</button>`).join("")}</div>`;
+}
+async function setScope(s) {
+  const r = await api("/api/tg/scope", { method: "POST", body: { scope: s } });
+  if (!r || !r.ok) return toast((r && r.error) || T().e_net, true);
+  ST.home = null; ST.facs = null; ST.hours = null; ST.fac = null; ST.req = { adv: null, dof: null };
+  route();
+}
+
 // ── Головна ────────────────────────────────────────────────────────────
 async function renderHome() {
   if (!ST.home) loading();
@@ -237,7 +349,7 @@ async function renderHome() {
   if (!j || !j.ok) { if (!ST.home) showError("net"); return; }
   if (!ST.viaTg && j.lang) { ST.lang = j.lang; applyStatic(); }
   ST.home = j;
-  if (!/^(#home)?$/.test(location.hash || "")) return;        // користувач уже пішов на інший екран
+  if (ST.view !== "home") return;        // користувач уже пішов на інший екран
   const t = T();
   const hr = Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Warsaw", hour: "numeric", hourCycle: "h23" }).format(new Date()));
   const hi = hr < 12 ? t.hi_m : hr < 18 ? t.hi_d : t.hi_e;
@@ -265,16 +377,17 @@ async function renderHome() {
       </div>
       ${langSeg()}
     </div>
+    ${scopeSeg(j.scope, j.scopes)}
     <div class="kpis">
       ${kpi(t.k_arr, j.arrivals.length, "", "jump('sArr')")}
       ${kpi(t.k_dep, j.departures.length, "", "jump('sDep')")}
       ${kpi(t.k_gaps(j.gap_min || 4), j.gaps.length, "warn", "go('hours')")}
-      ${kpi(t.k_wait, wait, "info", `openPanel('/index.html#page=${p.adv || !p.dof ? "advances" : "dayoff"}')`, wait ? t.k_wait_s(p.adv || 0, p.dof || 0) : "")}
+      ${kpi(t.k_wait, wait, "info", `go('${p.adv || !p.dof ? "adv" : "dof"}')`, wait ? t.k_wait_s(p.adv || 0, p.dof || 0) : "")}
     </div>
     <nav class="links" aria-label="${esc(t.tab_home)}">
       <button onclick="go('hours')"><span class="l">${esc(t.l_hours)}</span>${j.gaps.length ? `<span class="note warn">${esc(t.h_nogap(j.gaps.length))}</span>` : ""}${CHEV}</button>
-      <button onclick="openPanel('/index.html#page=advances')"><span class="l">${esc(t.l_adv)}</span>${pill(p.adv)}${CHEV}</button>
-      <button onclick="openPanel('/index.html#page=dayoff')"><span class="l">${esc(t.l_dof)}</span>${pill(p.dof)}${CHEV}</button>
+      <button onclick="go('adv')"><span class="l">${esc(t.l_adv)}</span>${pill(p.adv)}${CHEV}</button>
+      <button onclick="go('dof')"><span class="l">${esc(t.l_dof)}</span>${pill(p.dof)}${CHEV}</button>
       <button onclick="openPanel('/wyjazdy.html')"><span class="l">${esc(t.l_flow)}</span>${CHEV}</button>
       ${plan ? `<button onclick="openPanel('/wyjazdy.html#orders')"><span class="l">${esc(t.l_plan)}</span>${planNote}${CHEV}</button>` : ""}
       <button onclick="go('req')"><span class="l">${esc(t.l_req)}</span>${CHEV}</button>
@@ -310,8 +423,14 @@ async function renderHours(reload) {
     const f = await api("/api/tg/facilities");
     if (!f || !f.ok) return showError("net");
     ST.facs = f.data;
+    ST.facScope = { scope: f.scope, scopes: f.scopes };
   }
-  if (!ST.facs.length) { $("view").innerHTML = `<div class="top"><div class="ttl"><h1>${esc(t.h_title)}</h1></div>${langSeg()}</div><div class="list"><div class="empty">${esc(t.h_nofacs)}</div></div>`; return; }
+  if (ST.view !== "hours") return;
+  if (!ST.facs.length) {
+    $("view").innerHTML = `<div class="top"><div class="ttl"><h1>${esc(t.h_title)}</h1></div>${langSeg()}</div>
+      ${scopeSeg(ST.facScope.scope, ST.facScope.scopes)}<div class="list"><div class="empty">${esc(t.h_nofacs)}</div></div>`;
+    return;
+  }
   if (!ST.fac || !ST.facs.some((x) => x.id === ST.fac)) {
     const saved = Number(store.get("tg_fac"));
     ST.fac = ST.facs.some((x) => x.id === saved) ? saved : ST.facs[0].id;
@@ -324,7 +443,21 @@ async function renderHours(reload) {
     if (!r || !r.ok) { toast(r && r.error ? r.error : t.e_net, true); return; }
     ST.hours = r;
   }
-  drawHours();
+  if (ST.view === "hours") drawHours();
+}
+function facPicker() {
+  const t = T();
+  if (ST.facs.length > MANY_FACS) {
+    const groups = {};
+    ST.facs.forEach((f) => { (groups[f.group_name || f.name] = groups[f.group_name || f.name] || []).push(f); });
+    return `<label class="facsel"><span>${esc(t.fac_pick)}</span><select onchange="pickFac(Number(this.value))">
+      ${Object.keys(groups).sort((a, b) => a.localeCompare(b)).map((g) => `<optgroup label="${esc(g)}">${groups[g].map((f) =>
+        `<option value="${f.id}" ${f.id === ST.fac ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</optgroup>`).join("")}
+    </select></label>`;
+  }
+  return `<div class="chips" role="tablist">
+      ${ST.facs.map((f) => `<button class="chip ${f.id === ST.fac ? "on" : ""}" role="tab" aria-selected="${f.id === ST.fac}" onclick="pickFac(${f.id})">${esc(f.name)}</button>`).join("")}
+    </div>`;
 }
 function drawHours() {
   const t = T();
@@ -348,9 +481,8 @@ function drawHours() {
   };
   $("view").innerHTML = `
     <div class="top"><div class="ttl"><h1>${esc(t.h_title)}</h1><div class="sub">${esc(fac.name || "")}</div></div>${langSeg()}</div>
-    <div class="chips" role="tablist">
-      ${ST.facs.map((f) => `<button class="chip ${f.id === ST.fac ? "on" : ""}" role="tab" aria-selected="${f.id === ST.fac}" onclick="pickFac(${f.id})">${esc(f.name)}</button>`).join("")}
-    </div>
+    ${scopeSeg(ST.facScope.scope, ST.facScope.scopes)}
+    ${facPicker()}
     <div class="weekbar">
       <button class="arrow" onclick="shiftWeek(-7)" aria-label="‹">‹</button>
       <div class="rng">${dd(r.from)} – ${dd(r.to)}</div>
@@ -377,7 +509,24 @@ function shiftWeek(n) {
   renderHours(true);
 }
 
-// ── Аркуш правки ───────────────────────────────────────────────────────
+// ── Аркуші (правка години / причина відмови) ───────────────────────────
+function showSheet(id) {
+  $(id).hidden = false;
+  $("sheetBg").hidden = false;
+  if (TGW) { try { TGW.BackButton.show(); } catch (e) { /* старий клієнт */ } }
+}
+function closeSheets() {
+  const was = !$("sheet").hidden;
+  $("sheet").hidden = true;
+  $("rsheet").hidden = true;
+  $("sheetBg").hidden = true;
+  ST.reject = null;
+  if (was) {
+    ST.sheet = null;
+    if (ST.hours && ST.view === "hours") drawHours();
+  }
+  if (TGW && ST.view === "home") { try { TGW.BackButton.hide(); } catch (e) { /* старий клієнт */ } }
+}
 function openSheet(workerId, date) {
   const t = T();
   const w = ST.hours.data.find((x) => x.id === workerId);
@@ -392,18 +541,9 @@ function openSheet(workerId, date) {
   $("shErr").hidden = true;
   $("shRemind").disabled = !(w.in_bot && w.gap > 0);
   $("shSave").disabled = false;
-  $("sheet").hidden = false;
-  $("sheetBg").hidden = false;
-  if (TGW) TGW.BackButton.show();
+  showSheet("sheet");
   drawHours();
-  setTimeout(() => { if (!ST.sheet.abs) $("shHours").focus(); }, 50);
-}
-function closeSheet() {
-  if (!$("sheet") || $("sheet").hidden) return;
-  $("sheet").hidden = true;
-  $("sheetBg").hidden = true;
-  ST.sheet = null;
-  if (ST.hours && /^#hours/.test(location.hash)) drawHours();
+  setTimeout(() => { if (ST.sheet && !ST.sheet.abs) $("shHours").focus(); }, 50);
 }
 function pickCode(c) {
   ST.sheet.abs = ST.sheet.abs === c ? null : c;
@@ -444,12 +584,219 @@ async function saveSheet() {
     w.days[s.date] = { hours, abs: hours != null ? null : s.abs };
     if (s.date.slice(0, 7) === ST.hours.to.slice(0, 7)) w.month = Math.round((Number(w.month) - was + (hours || 0)) * 100) / 100;
   }
-  closeSheet();
+  closeSheets();
   toast(t.saved);
 }
 async function remindFromSheet() {
   if (!ST.sheet) return;
   await remind(ST.sheet.worker, $("shRemind"));
+}
+
+// ── Рішення: аванси / вихідні ──────────────────────────────────────────
+// Згруповано по обʼєктах; у картці: прізвище, паспорт, BHP, під ним дата заявки, години, статус, під ними кнопки.
+async function renderDec(kind, keep) {
+  if (!ST.req[kind] || !keep) {
+    if (!ST.req[kind]) loading();
+    const r = await api(`/api/tg/requests?kind=${kind}&status=${ST.reqStatus}`);
+    if (!r || !r.ok) { if (!ST.req[kind]) showError("net"); else toast((r && r.error) || T().e_net, true); return; }
+    ST.req[kind] = r;
+  }
+  if (ST.view === kind) drawDec(kind);
+}
+function setReqStatus(s) {
+  if (ST.reqStatus === s) return;
+  ST.reqStatus = s;
+  ST.req = { adv: null, dof: null };
+  renderDec(ST.view);
+}
+function drawDec(kind) {
+  const t = T();
+  const r = ST.req[kind];
+  const items = r.items;
+  const pending = items.filter((x) => x.status === "pending").length;
+  const groups = [];
+  const G = {};
+  items.forEach((x) => {
+    if (!G[x.facility]) { G[x.facility] = { name: x.facility, items: [] }; groups.push(G[x.facility]); }
+    G[x.facility].items.push(x);
+  });
+  const stBadge = (s) => `<span class="badge st-${esc(s)}">${esc(t.st[s] || s)}</span>`;
+  const card = (x) => {
+    const lines = [];
+    if (kind === "adv") {
+      lines.push(`<div class="kv"><span>${esc(t.bhp)}</span><b>${ddY(x.bhp)}</b></div>`);
+      lines.push(`<div class="kv"><span>${esc(t.req_at)}</span><b>${esc(ddhm(x.requested_at))}</b></div>`);
+      lines.push(`<div class="kv"><span>${esc(t.hrs)}</span><b>${fmtH(x.hours_month)}</b><em>${esc(t.m_cur)}</em><b class="dim">${fmtH(x.hours_prev)}</b><em>${esc(t.m_prev)}</em></div>`);
+    } else {
+      lines.push(`<div class="kv"><span>${esc(t.days_l)}</span><b>${(x.days || []).map((d) => `${esc(t.wd[dow(d)])} ${dd(d)}`).join(", ") || "—"}</b><em>${esc(t.n_days((x.days || []).length))}</em></div>`);
+      lines.push(`<div class="kv"><span>${esc(t.req_at)}</span><b>${esc(ddhm(x.requested_at))}</b></div>`);
+      lines.push(`<div class="kv"><span>${esc(t.bhp)}</span><b>${ddY(x.bhp)}</b></div>`);
+      if (x.load && x.load.length) {
+        lines.push(`<div class="load">${x.load.map((l) => `<span class="${l.staff && l.off / l.staff >= 0.2 ? "warn" : ""}">${dd(l.day)}: ${esc(t.free(l.off, l.staff))}</span>`).join("")}</div>`);
+      }
+    }
+    let foot = "";
+    if (x.status === "pending") {
+      foot = x.can_edit
+        ? `<div class="acts"><button class="btn no" onclick="rejectReq('${kind}', ${x.id})">${esc(t.reject)}</button>
+             <button class="btn yes" onclick="decide('${kind}', [${x.id}], 'approved')">${esc(t.approve)}</button></div>`
+        : `<div class="ro">${esc(t.view_only)}</div>`;
+    } else {
+      foot = `<div class="dec">${esc(t.by(x.decided_by || "—", ddhm(x.decided_at)))}${x.status === "rejected" && x.note ? `<br>${esc(t.why)}: ${esc(x.note)}` : ""}${
+        x.office_at ? `<br><span class="sent">✉ ${esc(t.off_sent(ddhm(x.office_at)))}</span>` : ""}</div>`;
+    }
+    return `<article class="rq ${x.status}" id="rq-${kind}-${x.id}">
+        <div class="rq-h"><div class="nm"><b>${esc(x.full_name)}</b><span class="pass">${esc(x.login || "")}</span></div>${stBadge(x.status)}</div>
+        <div class="rq-b">${lines.join("")}</div>${foot}</article>`;
+  };
+  const groupHtml = (g) => {
+    const ok = g.items.filter((x) => x.status === "pending" && x.can_edit);
+    return `<section class="grp">
+      <div class="grp-h"><h2>${esc(g.name)} · ${g.items.length}</h2>
+        ${ok.length >= 2 ? `<button class="mini" onclick="decideGroup('${kind}', ${JSON.stringify(ok.map((x) => x.id))}, '${esc(g.name).replace(/'/g, "")}')">${esc(t.all_ok(ok.length))}</button>` : ""}</div>
+      ${g.items.map(card).join("")}</section>`;
+  };
+  $("view").innerHTML = `
+    <div class="top"><div class="ttl"><h1>${esc(kind === "adv" ? t.adv_title : t.dof_title)}</h1>
+      <div class="sub">${kind === "adv" ? esc(t.std(r.advance_std || 300)) + " · " : ""}${esc(t.sc[r.scope] || "")}</div></div>${langSeg()}</div>
+    <div class="seg wide two" role="tablist">
+      <button class="${kind === "adv" ? "on" : ""}" onclick="go('adv')">${esc(t.adv_title)}</button>
+      <button class="${kind === "dof" ? "on" : ""}" onclick="go('dof')">${esc(t.dof_title)}</button>
+    </div>
+    ${scopeSeg(r.scope, r.scopes)}
+    ${kind === "adv" ? `<button class="btn office ${r.office_unsent ? "" : "quiet"}" onclick="go('office')">✉ ${esc(t.off_btn(r.office_unsent || 0))}</button>` : ""}
+    <div class="chips">
+      <button class="chip ${ST.reqStatus === "pending" ? "on" : ""}" onclick="setReqStatus('pending')">${esc(t.f_pending(ST.reqStatus === "pending" ? pending : "…"))}</button>
+      <button class="chip ${ST.reqStatus === "all" ? "on" : ""}" onclick="setReqStatus('all')">${esc(t.f_all)}</button>
+    </div>
+    ${groups.length ? groups.map(groupHtml).join("") : `<div class="list"><div class="empty">${esc(ST.reqStatus === "pending" ? t.none_p : t.none_a)}</div></div>`}`;
+}
+function rejectReq(kind, id) {
+  const t = T();
+  const x = (ST.req[kind] && ST.req[kind].items.find((i) => i.id === id)) || {};
+  ST.reject = { kind, id };
+  $("rsName").textContent = x.full_name || "";
+  $("rsList").innerHTML = REASONS[kind].map((code) => `<button class="btn ghost" onclick="pickReason('${code}')">${esc(t.r[code])}</button>`).join("");
+  showSheet("rsheet");
+}
+function pickReason(code) {
+  const r = ST.reject;
+  closeSheets();
+  if (r) decide(r.kind, [r.id], "rejected", code === "none" ? null : code);
+}
+async function decideGroup(kind, ids, facName) {
+  const t = T();
+  if (!(await ask(t.all_q(ids.length, facName)))) return;
+  decide(kind, ids, "approved");
+}
+async function decide(kind, ids, status, reason) {
+  const t = T();
+  ids.forEach((id) => { const el = $(`rq-${kind}-${id}`); if (el) el.classList.add("busy"); });
+  const r = await api("/api/tg/decide", { method: "POST", body: { kind, ids, status, reason: reason || null } }).catch(() => null);
+  ST.home = null;                                            // лічильники на головній — заново
+  if (!r) { toast(t.e_net, true); return renderDec(kind); }
+  const done = r.done || [];
+  const failed = r.failed || [];
+  if (done.length) toast(ids.length > 1 ? t.done_n(done.length) : status === "approved" ? t.done_ok : t.done_no);
+  if (failed.length) toast(failed[0].error === "decided" ? t.already : t.no_right, true);
+  await renderDec(kind);
+}
+
+// ── Відправити в офіс: схвалені аванси одним листом (таблиця + Excel) ──────
+async function renderOffice(keepSel) {
+  if (!ST.office) loading();
+  const r = await api("/api/tg/office");
+  if (!r || !r.ok) { if (!ST.office) showError("net"); else toast((r && r.error) || T().e_net, true); return; }
+  const prevSel = ST.offSel;
+  ST.office = r;
+  const ids = r.items.map((x) => x.id);
+  ST.offSel = new Set(keepSel && prevSel ? ids.filter((id) => prevSel.has(id)) : ids);
+  if (!ST.offTo || !keepSel) {
+    const known = new Set(r.recipients.map((x) => x.email.toLowerCase()));
+    ST.offTo = new Set((r.last || []).filter((e) => known.has(String(e).toLowerCase())).map((e) => String(e).toLowerCase()));
+  }
+  if (ST.view === "office") drawOffice();
+}
+function drawOffice() {
+  const t = T();
+  const r = ST.office;
+  const std = r.advance_std || 300;
+  const n = r.items.filter((x) => ST.offSel.has(x.id)).length;
+  const canSend = r.configured && n > 0 && ST.offTo.size > 0;
+  const rcpt = (x) => {
+    const on = ST.offTo.has(x.email.toLowerCase());
+    const del = !x.shared || r.is_admin;
+    return `<span class="chip rc ${on ? "on" : ""}">
+        <button class="rc-b" onclick="toggleTo('${esc(x.email.toLowerCase())}')">${on ? "✓ " : ""}${esc(x.name ? `${x.name} · ${x.email}` : x.email)}${x.shared ? ` <em>${esc(t.off_tag)}</em>` : ""}</button>
+        ${del ? `<button class="rc-x" aria-label="✕" onclick="delRcpt(${x.id}, '${esc(x.email)}')">✕</button>` : ""}</span>`;
+  };
+  $("view").innerHTML = `
+    <div class="top"><div class="ttl"><h1>${esc(t.off_title)}</h1><div class="sub">${esc(t.off_sub(r.window_days || 31))}</div></div>${langSeg()}</div>
+    ${r.configured ? "" : `<div class="note-ro">${esc(t.off_nocfg)}${r.mail && r.mail.reason && t.off_why[r.mail.reason] ? `<br>${esc(t.off_why[r.mail.reason])}` : ""}</div>`}
+    <section class="sec">
+      <div class="grp-h"><h2>${esc(t.off_items(r.items.length))}</h2>
+        ${r.items.length ? `<button class="mini" onclick="offAll(${n < r.items.length})">${esc(n < r.items.length ? t.off_all : t.off_none)}</button>` : ""}</div>
+      ${r.items.length ? `<div class="list">${r.items.map((x) => `<label class="ck">
+          <input type="checkbox" ${ST.offSel.has(x.id) ? "checked" : ""} onchange="offPick(${x.id}, this.checked)" />
+          <div class="nm"><b>${esc(x.full_name)}</b><span class="pass">${esc(x.login || "")}</span>
+            <span>${esc(x.facility)} · ${esc(t.off_appr(ddhm(x.approved_at), fmtH(x.hours)))}</span></div></label>`).join("")}</div>`
+        : `<div class="list"><div class="empty">${esc(t.off_empty)}</div></div>`}
+    </section>
+    <section class="sec">
+      <h2>${esc(t.off_to)}</h2>
+      <div class="rcpts">${r.recipients.map(rcpt).join("")}</div>
+      <div class="addrow">
+        <input id="offEmail" type="email" inputmode="email" autocomplete="email" placeholder="${esc(t.off_email_ph)}" onkeydown="if(event.key==='Enter')addRcpt()" />
+        <button class="btn ghost" onclick="addRcpt()">${esc(t.off_add)}</button>
+      </div>
+      ${r.is_admin ? `<label class="shared"><input id="offShared" type="checkbox" /> ${esc(t.off_shared)}</label>` : ""}
+      <div class="sub">${esc(r.my_email ? t.off_cc(r.my_email) : t.off_nocc)}${r.from ? `<br>${esc(t.off_from(r.from))}` : ""}</div>
+    </section>
+    <div class="sendbar">
+      <div class="sum">${esc(t.off_sum(n, n * std))}</div>
+      <button id="offSend" class="btn primary wide" ${canSend ? "" : "disabled"} onclick="sendOffice()">${esc(t.off_send)}</button>
+    </div>
+    ${r.history && r.history.length ? `<section class="sec"><h2>${esc(t.off_hist)}</h2><div class="list">${r.history.map((h) => `<div class="row"><div class="nm">
+        <b>${esc(ddhm(h.sent_at))} · ${h.items} · ${esc(String(h.total || ""))} zł</b>
+        <span class="${h.status === "sent" ? "" : "warn"}">${esc((h.mail_to || []).join(", "))}${h.status === "sent" ? "" : ` · ${esc(t.off_st_err)}: ${esc(h.error || "")}`}</span></div></div>`).join("")}</div></section>` : ""}`;
+}
+function offPick(id, on) { if (on) ST.offSel.add(id); else ST.offSel.delete(id); drawOffice(); }
+function offAll(on) { ST.offSel = new Set(on ? ST.office.items.map((x) => x.id) : []); drawOffice(); }
+function toggleTo(email) { if (ST.offTo.has(email)) ST.offTo.delete(email); else ST.offTo.add(email); drawOffice(); }
+async function addRcpt() {
+  const t = T();
+  const email = ($("offEmail").value || "").trim();
+  if (!email) return;
+  const shared = !!($("offShared") && $("offShared").checked);
+  const r = await api("/api/tg/office/recipients", { method: "POST", body: { email, shared } }).catch(() => null);
+  if (!r || !r.ok) return toast((r && t.off_err[r.error]) || t.e_net, true);
+  if (!ST.office.recipients.some((x) => x.id === r.recipient.id)) ST.office.recipients.push(r.recipient);
+  ST.offTo.add(r.recipient.email.toLowerCase());
+  drawOffice();
+}
+async function delRcpt(id, email) {
+  const t = T();
+  if (!(await ask(t.off_del_q(email)))) return;
+  const r = await api(`/api/tg/office/recipients/${id}`, { method: "DELETE" }).catch(() => null);
+  if (!r || !r.ok) return toast(t.e_net, true);
+  ST.office.recipients = ST.office.recipients.filter((x) => x.id !== id);
+  ST.offTo.delete(String(email).toLowerCase());
+  drawOffice();
+}
+async function sendOffice() {
+  const t = T();
+  const ids = ST.office.items.filter((x) => ST.offSel.has(x.id)).map((x) => x.id);
+  const to = ST.office.recipients.filter((x) => ST.offTo.has(x.email.toLowerCase())).map((x) => x.email);
+  $("offSend").disabled = true;
+  const r = await api("/api/tg/office/send", { method: "POST", body: { ids, to } }).catch(() => null);
+  ST.req.adv = null;
+  if (r && r.ok) {
+    toast(t.off_ok(r.count));
+    return renderOffice(false);
+  }
+  const e = r && r.error;
+  toast(`${t.off_err[e] || t.e_net}${r && r.detail ? `: ${r.detail}` : ""}`, true);
+  return renderOffice(e !== "changed");
 }
 
 // ── Заявки (розділи заповнимо пізніше) ─────────────────────────────────

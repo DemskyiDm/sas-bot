@@ -115,8 +115,8 @@ const TX = {
     plan_t: "<b>План набору на 3 тижні</b>", plan_sub: (dl) => `Скільки людей треба набрати. Підтвердіть або змініть до неділі ${dl}.`,
     plan_leg: "* — пропозиція з попереднього тижня, «—» — не введено, ✓ — вже підтверджено.",
     plan_ok: "✅ Підтвердити як є", plan_edit: "✏️ Змінити в панелі", plan_site: "Обʼєкт",
-    plan_done: (list) => `✅ Підтверджено: ${list}`, plan_ask: (s, w) => `<b>${s}</b> · ${w}\nСкільки людей треба набрати на тиждень?`,
-    plan_wk: (list) => `тиждень з ${list}`, plan_skip: "Пропустити", plan_skipped: (list) => `Пропущено: ${list} — заповніть у панелі.`,
+    plan_done: (list) => `✅ Підтверджено: ${list}`, plan_ask: (s, w) => `<b>${s}</b>: на ${w} цифр немає. Скільки людей потрібно?`,
+    plan_wk: (a) => (a.length > 1 ? `${a.slice(0, -1).join(", ")} і ${a[a.length - 1]}` : a[0]), plan_skip: "Пропустити", plan_skipped: (list) => `Пропущено: ${list} — заповніть у панелі.`,
     plan_other: "Інше", plan_type: "Напишіть число від 0 до 999.", plan_all: "✅ План на 3 тижні підтверджено.",
     plan_nothing: "Усі ваші обʼєкти вже підтверджені.", plan_none: "За вами немає обʼєктів у плані набору.",
     s_short: "Напишіть щонайменше 3 літери прізвища або ID.",
@@ -165,8 +165,8 @@ const TX = {
     plan_t: "<b>План набора на 3 недели</b>", plan_sub: (dl) => `Сколько людей нужно набрать. Подтвердите или измените до воскресенья ${dl}.`,
     plan_leg: "* — предложение с прошлой недели, «—» — не введено, ✓ — уже подтверждено.",
     plan_ok: "✅ Подтвердить как есть", plan_edit: "✏️ Изменить в панели", plan_site: "Объект",
-    plan_done: (list) => `✅ Подтверждено: ${list}`, plan_ask: (s, w) => `<b>${s}</b> · ${w}\nСколько людей нужно набрать на неделю?`,
-    plan_wk: (list) => `неделя с ${list}`, plan_skip: "Пропустить", plan_skipped: (list) => `Пропущено: ${list} — заполните в панели.`,
+    plan_done: (list) => `✅ Подтверждено: ${list}`, plan_ask: (s, w) => `<b>${s}</b>: на ${w} цифр нет. Сколько людей нужно?`,
+    plan_wk: (a) => (a.length > 1 ? `${a.slice(0, -1).join(", ")} и ${a[a.length - 1]}` : a[0]), plan_skip: "Пропустить", plan_skipped: (list) => `Пропущено: ${list} — заполните в панели.`,
     plan_other: "Другое", plan_type: "Напишите число от 0 до 999.", plan_all: "✅ План на 3 недели подтверждён.",
     plan_nothing: "Все ваши объекты уже подтверждены.", plan_none: "За вами нет объектов в плане набора.",
     s_short: "Напишите минимум 3 буквы фамилии или ID.",
@@ -227,7 +227,7 @@ function webAppBtn(text, hash) {
 const COORD_SQL = `
   SELECT c.id, c.full_name, c.role, c.telegram_chat_id, to_jsonb(c)->>'lang' AS lang, COALESCE(c.is_active, true) AS is_active,
          COALESCE(ca.is_admin, false) AS is_admin, ca.username,
-         p.lang AS pref_lang, COALESCE(p.digest, true) AS digest, COALESCE(p.notify, true) AS notify
+         p.lang AS pref_lang, COALESCE(p.digest, true) AS digest, COALESCE(p.notify, true) AS notify, p.scope
     FROM public.coordinators c
     LEFT JOIN LATERAL (SELECT is_admin, username FROM public.coordinator_auth WHERE coordinator_id = c.id
                         ORDER BY is_admin DESC LIMIT 1) ca ON true
@@ -243,24 +243,49 @@ async function coordById(id) {
 // Сесія для спільних функцій api/routes.js (decideAdvance / decideDayOff)
 const sessionOf = (c) => ({ coordinator_id: c.id, full_name: c.full_name, role: c.role, is_admin: !!c.is_admin });
 
-// Обʼєкти координатора: all — бачить (усі прив'язки), edit — може рішати (is_primary).
-// Адмін або роль head без прив'язок — уся фірма (null).
-async function facsOf(c) {
+// Обʼєкти координатора в межах обраного зрізу:
+//   own    — свої (головний / помічник з Region → Przypisania);
+//   region — свої + обʼєкти регіонів, де він регіональний (лише перегляд, як у панелі);
+//   all    — уся фірма (адмін / керівник);
+//   wide   — найширший доступний (пошук працівника).
+// all — id обʼєктів (null = уся фірма), edit — де може вирішувати заявки (null = будь-де, адмін).
+let HAS_V_ACCESS = null;
+async function hasVAccess() {
+  if (HAS_V_ACCESS === null) {
+    try { HAS_V_ACCESS = !!(await db.query(`SELECT to_regclass('reg.v_access') AS t`)).rows[0].t; } catch (e) { HAS_V_ACCESS = false; }
+  }
+  return HAS_V_ACCESS;
+}
+async function facsOf(c, want) {
+  const va = await hasVAccess();
   const r = await db.query(
-    `SELECT cf.facility_id, bool_or(cf.is_primary) AS can_edit, f.name, f.group_name
+    `SELECT cf.facility_id, bool_or(cf.is_primary) AS can_edit, f.name, f.group_name,
+            ${va ? `(SELECT v.kinds FROM reg.v_access v WHERE v.coordinator_id = $1 AND v.facility_id = cf.facility_id)` : "NULL::text[]"} AS kinds
        FROM coordinator_facilities cf JOIN facilities f ON f.id = cf.facility_id
       WHERE cf.coordinator_id = $1 GROUP BY cf.facility_id, f.name, f.group_name ORDER BY f.name`,
     [c.id],
   );
-  // без своїх обʼєктів: адмін / керівник бачить усю фірму (рішення — лише адмін, як у панелі)
-  if (!r.rows.length && (c.is_admin || c.role === "head")) return { all: null, edit: c.is_admin ? null : [], names: [], rows: [], company: true };
-  const groups = [...new Set(r.rows.map((x) => x.group_name || x.name))];
+  const isOwn = (x) => (x.kinds && x.kinds.length ? x.kinds.some((k) => k === "main" || k === "helper") : x.can_edit);
+  const own = r.rows.filter(isOwn);
+  const avail = [];
+  if (own.length) avail.push("own");
+  if (r.rows.length > own.length) avail.push("region");
+  if (c.is_admin || c.role === "head") avail.push("all");
+  if (!avail.length) avail.push("own");
+  let scope = want === "wide" ? avail[avail.length - 1] : want || c.scope;
+  if (!avail.includes(scope)) scope = avail[0];
+  const pick = scope === "own" ? own : r.rows;
+  const editIds = r.rows.filter((x) => x.can_edit || c.is_admin).map((x) => x.facility_id);
+  if (scope === "all") {
+    return { scope, avail, all: null, edit: c.is_admin ? null : editIds, names: [], rows: r.rows, company: true };
+  }
+  const ids = pick.map((x) => x.facility_id);
   return {
-    all: r.rows.map((x) => x.facility_id),
-    // списки «на рішення» — по своїх обʼєктах (адмін може вирішити будь-яку, але в боті бачить свої)
-    edit: r.rows.filter((x) => x.can_edit || c.is_admin).map((x) => x.facility_id),
-    names: groups,
-    rows: r.rows,
+    scope, avail,
+    all: ids,
+    edit: editIds.filter((id) => ids.includes(id)),
+    names: [...new Set(pick.map((x) => x.group_name || x.name))],
+    rows: pick,
     company: false,
   };
 }
@@ -330,7 +355,7 @@ async function onLinkStart(msg, code) {
   if (!l) return send(chatId, t.link_bad);
   const c = await coordById(l.coordinator_id);
   if (!c || !c.is_active) return send(chatId, t.link_bad);
-  const f = await facsOf(c);
+  const f = await facsOf(c, "own");
   const facs = f.company ? "" : f.names.length ? t.facs(f.names.length, esc(f.names.join(", "))) : t.no_facs;
   return send(chatId, t.link_ask(esc(c.full_name), facs), [[
     { text: t.link_yes, callback_data: `KC:lk:y:${code}` },
@@ -374,8 +399,8 @@ async function onLinkAnswer(cq, code, yes) {
 // ══════════════════════════════════════════════════════════════════════
 //  Меню
 // ══════════════════════════════════════════════════════════════════════
-async function pendingCounts(c) {
-  const f = await facsOf(c);
+async function pendingCounts(c, f0) {
+  const f = f0 || (await facsOf(c));
   const r = await db.query(
     `SELECT (SELECT count(*) FROM advances a JOIN v_worker_current vw ON vw.id = a.worker_id
               WHERE a.status = 'pending' AND ($1::int[] IS NULL OR vw.facility_id = ANY($1)))::int AS adv,
@@ -437,21 +462,74 @@ async function loadDof(id) {
   x.dayList = [...new Set((Array.isArray(x.days) ? x.days : []).map(toISO))].filter(Boolean).sort();
   // скільки людей обʼєкта вже вільні (URL у табелі, у т.ч. схвалені вихідні) з усіх, хто працює того дня
   if (x.facility_id && x.dayList.length) {
-    const l = await db.query(
-      `SELECT to_char(d, 'YYYY-MM-DD') AS day,
-              (SELECT count(DISTINCT h.worker_id) FROM worker_facility_history h
-                WHERE h.facility_id = $1 AND h.status::text <> 'rezygnacja'
-                  AND h.bhp_date <= d AND (h.last_work_date IS NULL OR h.last_work_date >= d))::int AS staff,
-              (SELECT count(DISTINCT hl.worker_id) FROM hours_log hl
-                 JOIN worker_facility_history h ON h.worker_id = hl.worker_id AND h.facility_id = $1
-                  AND h.bhp_date <= hl.work_date AND (h.last_work_date IS NULL OR h.last_work_date >= hl.work_date)
-                WHERE hl.work_date = d AND hl.absence_type = 'URL' AND hl.worker_id <> $3)::int AS off
-         FROM unnest($2::date[]) AS t(d)`,
-      [x.facility_id, x.dayList, x.worker_id],
-    );
-    x.load = l.rows;
+    x.load = await dayLoad(x.facility_id, x.dayList, x.worker_id);
   } else x.load = [];
   return x;
+}
+// Скільки людей обʼєкта вже вільні (URL у табелі, у т.ч. схвалені вихідні) з усіх, хто працює того дня
+async function dayLoad(facilityId, days, exceptWorker) {
+  const l = await db.query(
+    `SELECT to_char(d, 'YYYY-MM-DD') AS day,
+            (SELECT count(DISTINCT h.worker_id) FROM worker_facility_history h
+              WHERE h.facility_id = $1 AND h.status::text <> 'rezygnacja'
+                AND h.bhp_date <= d AND (h.last_work_date IS NULL OR h.last_work_date >= d))::int AS staff,
+            (SELECT count(DISTINCT hl.worker_id) FROM hours_log hl
+               JOIN worker_facility_history h ON h.worker_id = hl.worker_id AND h.facility_id = $1
+                AND h.bhp_date <= hl.work_date AND (h.last_work_date IS NULL OR h.last_work_date >= hl.work_date)
+              WHERE hl.work_date = d AND hl.absence_type = 'URL' AND hl.worker_id <> $3)::int AS off
+       FROM unnest($2::date[]) AS t(d)`,
+    [facilityId, days, exceptWorker || 0],
+  );
+  return l.rows;
+}
+
+// Список заявок для мініпанелі (Аванси / Вихідні): у межах обраного зрізу, згруповано на клієнті по обʼєктах.
+// status: pending — чекають рішення; all — чекають + вирішені за 30 днів.
+async function listRequests(c, kind, status) {
+  const f = await facsOf(c);
+  const adv = kind === "adv";
+  const r = await db.query(
+    `SELECT x.id, x.status::text AS status, x.worker_id, x.requested_at, x.note,
+            ${adv ? "x.approved_at" : "x.reviewed_at"} AS decided_at, dc.full_name AS decided_by,
+            ${adv ? "NULL::date[]" : "x.days"} AS days,
+            ${adv ? `(SELECT max(m.sent_at) FROM tgc.office_items i JOIN tgc.office_mails m ON m.id = i.mail_id AND m.status = 'sent'
+                       WHERE i.kind = 'adv' AND i.ref_id = x.id)` : "NULL::timestamptz"} AS office_at,
+            w.full_name, w.login, vw.facility_id, fa.name AS facility, fa.group_name,
+            to_char(vw.bhp_date, 'YYYY-MM-DD') AS bhp, to_char(vw.last_work_date, 'YYYY-MM-DD') AS lwd, vw.status::text AS wstatus,
+            COALESCE((SELECT sum(h.hours) FROM hours_log h WHERE h.worker_id = x.worker_id
+                       AND date_trunc('month', h.work_date) = date_trunc('month', CURRENT_DATE)), 0) AS hours_month,
+            COALESCE((SELECT sum(h.hours) FROM hours_log h WHERE h.worker_id = x.worker_id
+                       AND date_trunc('month', h.work_date) = date_trunc('month', CURRENT_DATE) - interval '1 month'), 0) AS hours_prev
+       FROM ${adv ? "advances" : "day_off_requests"} x
+       JOIN workers w ON w.id = x.worker_id
+       JOIN v_worker_current vw ON vw.id = x.worker_id
+       LEFT JOIN facilities fa ON fa.id = vw.facility_id
+       LEFT JOIN public.coordinators dc ON dc.id = ${adv ? "x.approved_by" : "x.reviewed_by"}
+      WHERE ($1::int[] IS NULL OR vw.facility_id = ANY($1))
+        AND ${status === "all" ? "(x.status = 'pending' OR COALESCE(x.requested_at, now()) > now() - interval '30 days')" : "x.status = 'pending'"}
+      ORDER BY fa.name NULLS LAST, (x.status = 'pending') DESC, x.requested_at DESC
+      LIMIT 400`,
+    [f.all],
+  );
+  const items = [];
+  for (const x of r.rows) {
+    const it = {
+      id: x.id, status: x.status, worker_id: x.worker_id, full_name: x.full_name, login: x.login,
+      facility_id: x.facility_id, facility: x.facility || "—", group: x.group_name || x.facility || "—",
+      bhp: x.bhp, lwd: x.lwd, wstatus: x.wstatus,
+      requested_at: x.requested_at, decided_at: x.decided_at, decided_by: x.decided_by, note: x.note,
+      hours_month: num(x.hours_month), hours_prev: num(x.hours_prev),
+      can_edit: f.edit === null || f.edit.includes(x.facility_id),
+      office_at: x.office_at,
+    };
+    if (!adv) {
+      it.days = [...new Set((Array.isArray(x.days) ? x.days : []).map(toISO))].filter(Boolean).sort();
+      if (x.status === "pending" && x.facility_id && it.days.length) it.load = await dayLoad(x.facility_id, it.days, x.worker_id);
+    }
+    items.push(it);
+  }
+  const office = adv ? await require("./office").unsentCount(c, f) : 0;
+  return { scope: f.scope, scopes: f.avail, advance_std: CFG.advanceStd, office_unsent: office, items };
 }
 const loadReq = (kind, id) => (kind === "adv" ? loadAdv(id) : loadDof(id));
 
@@ -578,7 +656,7 @@ async function listPending(c, kind) {
     const x = await loadReq(kind, id);
     if (x) await sendReq(c, kind, x);
   }
-  if (ids.length > CFG.listMax) await send(c.telegram_chat_id, t.more(ids.length - CFG.listMax), [[webAppBtn(t.b_panel, "#go=/index.html")].filter(Boolean)]);
+  if (ids.length > CFG.listMax) await send(c.telegram_chat_id, t.more(ids.length - CFG.listMax), [[webAppBtn(t.b_panel, "#" + kind)].filter(Boolean)]);
   if (kind === "dof" && ids.length > 1) {
     const batch = ids.slice(0, CFG.listMax);
     const st = await getState(c.telegram_chat_id);
@@ -662,7 +740,7 @@ async function digestData(c) {
   const f = await facsOf(c);
   let gapMin = 4;
   try { gapMin = require("./gaps").CFG.minDays; } catch (e) { /* без модуля */ }
-  const out = { today, company: f.company, facilities: f.names, arrivals: [], departures: [], gaps: [], gap_min: gapMin,
+  const out = { today, scope: f.scope, scopes: f.avail, company: f.company, facilities: f.names, arrivals: [], departures: [], gaps: [], gap_min: gapMin,
     pending: { adv: 0, dof: 0 }, plan: null };
   try {
     const a = await db.query(
@@ -686,7 +764,7 @@ async function digestData(c) {
   out.gaps = g.filter((x) => !f.all || f.all.includes(x.facility_id))
     .map((x) => ({ worker_id: x.worker_id, full_name: x.full_name, facility: x.facility_name, facility_id: x.facility_id,
       days: (x.dates || []).length, runs: x.runs, in_bot: !!x.inBot }));
-  out.pending = await pendingCounts(c);
+  out.pending = await pendingCounts(c, f);
   try {
     out.plan = await planStatus(c.id, today);
   } catch (e) {
@@ -848,7 +926,7 @@ async function planAsk(c) {
   const q = st.plan && st.plan.queue && st.plan.queue[0];
   if (!q) return planFinish(c, st);
   const nums = [0, 1, 2, 3, 5];
-  return send(c.telegram_chat_id, t.plan_ask(esc(q.site), t.plan_wk(q.weeks.map(dd).join(", "))), [
+  return send(c.telegram_chat_id, t.plan_ask(esc(q.site), t.plan_wk(q.weeks.map(dd))), [
     nums.map((n) => ({ text: String(n), callback_data: `KC:pl:n:${n}` })),
     [{ text: t.plan_other, callback_data: "KC:pl:x" }, { text: t.plan_skip, callback_data: "KC:pl:s" }],
   ]);
@@ -908,7 +986,7 @@ async function search(c, qRaw) {
   const t = T(c);
   const q = String(qRaw || "").trim().replace(/\s+/g, " ");
   if (q.replace(/\s/g, "").length < 3) return send(c.telegram_chat_id, t.s_short);
-  const f = await facsOf(c);
+  const f = await facsOf(c, "wide");
   const vars = latinVariants(q).map((v) => `%${v}%`);
   const r = await db.query(
     `SELECT w.id, w.full_name, f.name AS facility, vw.status::text AS status
@@ -928,7 +1006,7 @@ async function search(c, qRaw) {
     r.rows.map((x) => [{ text: `${x.full_name} · ${x.facility || "—"}`.slice(0, 60), callback_data: `KC:cd:${x.id}` }]));
 }
 async function workerVisible(c, workerId) {
-  const f = await facsOf(c);
+  const f = await facsOf(c, "wide");
   if (!f.all) return true;
   const r = await db.query(`SELECT 1 FROM v_worker_current WHERE id = $1 AND facility_id = ANY($2::int[])`, [workerId, f.all]);
   return r.rows.length > 0;
@@ -1143,6 +1221,6 @@ function schedule() {
 
 module.exports = {
   CFG, onUpdate, notifyNew, afterDecision, sendPlanReminder, schedule, digestData, createLinkCode, botUsername,
-  coordByChat, coordById, langOf, facsOf, setMenuButton, clearMenuButton, syncMenuButtons, sendDigestAll,
+  coordByChat, coordById, langOf, facsOf, listRequests, setMenuButton, clearMenuButton, syncMenuButtons, sendDigestAll,
   _test: { setTg: (fn) => { TG = fn; }, tick, latinVariants, planStatus, search, card, sendDigest, sendMenu, onCallback, TX },
 };

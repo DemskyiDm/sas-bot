@@ -112,11 +112,12 @@ router.get("/facilities", requireAuth, async (req, res) => {
     const c = await me(req);
     const f = await coord().facsOf(c);
     let rows = f.rows || [];
-    if (!rows.length && c.is_admin) {
-      rows = (await db.query(`SELECT id AS facility_id, name, group_name, true AS can_edit FROM facilities
-                               WHERE is_active ORDER BY name`)).rows;
+    if (f.scope === "all") {
+      rows = (await db.query(`SELECT id AS facility_id, name, group_name FROM facilities WHERE is_active ORDER BY name`)).rows
+        .map((x) => ({ ...x, can_edit: f.edit === null || f.edit.includes(x.facility_id) }));
     }
-    res.json({ ok: true, data: rows.map((x) => ({ id: x.facility_id, name: x.name, group_name: x.group_name, can_edit: c.is_admin || !!x.can_edit })) });
+    res.json({ ok: true, scope: f.scope, scopes: f.avail,
+      data: rows.map((x) => ({ id: x.facility_id, name: x.name, group_name: x.group_name, can_edit: c.is_admin || !!x.can_edit })) });
   } catch (e) { fail(res, e); }
 });
 
@@ -174,6 +175,87 @@ router.post("/remind/:id", requireAuth, async (req, res) => {
     if (r && r.sent) return res.json({ ok: true, sent: r.sent });
     const why = !r ? "error" : r.skipped ? r.skipped : r.notInBot ? "not_in_bot" : r.candidates === 0 ? "no_gaps" : r.blocked ? "blocked" : r.error || "not_sent";
     res.json({ ok: false, error: why });
+  } catch (e) { fail(res, e); }
+});
+
+// Зріз: own — свої обʼєкти, region — регіон (для регіональних), all — уся фірма (адмін / керівник)
+router.post("/scope", requireAuth, async (req, res) => {
+  try {
+    const c = await me(req);
+    const want = String((req.body && req.body.scope) || "");
+    const f = await coord().facsOf(c, want);
+    if (f.scope !== want) return res.status(400).json({ ok: false, error: "scope not available", scopes: f.avail });
+    await db.query(`INSERT INTO tgc.prefs (coordinator_id, lang, scope) VALUES ($1, $2, $3)
+                    ON CONFLICT (coordinator_id) DO UPDATE SET scope = EXCLUDED.scope, updated_at = now()`,
+      [c.id, coord().langOf(c), want]);
+    res.json({ ok: true, scope: want, scopes: f.avail });
+  } catch (e) { fail(res, e); }
+});
+
+// Аванси / вихідні в мініпанелі
+router.get("/requests", requireAuth, async (req, res) => {
+  try {
+    const kind = req.query.kind === "dof" ? "dof" : "adv";
+    const c = await me(req);
+    res.json({ ok: true, kind, ...(await coord().listRequests(c, kind, req.query.status === "all" ? "all" : "pending")) });
+  } catch (e) { fail(res, e); }
+});
+// Рішення: ті самі функції, що в панелі (права — головний обʼєкт / адмін), причина відмови — як у боті
+const REASON_CODES = { adv: ["hours", "had", "leaving"], dof: ["staff", "late"] };
+router.post("/decide", requireAuth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const kind = b.kind === "dof" ? "dof" : "adv";
+    const status = b.status === "approved" ? "approved" : b.status === "rejected" ? "rejected" : null;
+    const ids = (Array.isArray(b.ids) ? b.ids : [b.id]).map((x) => parseInt(x, 10)).filter(Boolean).slice(0, 100);
+    if (!status || !ids.length) return res.status(400).json({ ok: false, error: "bad params" });
+    const reason = status === "rejected" && REASON_CODES[kind].includes(b.reason) ? b.reason : null;
+    const routes = require("./routes");
+    const fn = kind === "adv" ? routes.decideAdvance : routes.decideDayOff;
+    const done = [], failed = [];
+    for (const id of ids) {
+      // лише заявки, що ще чекають (двоє координаторів одночасно — друге натискання нічого не міняє)
+      const t = kind === "adv" ? "advances" : "day_off_requests";
+      const p = await db.query(`SELECT status::text AS s FROM ${t} WHERE id = $1`, [id]);
+      if (!p.rows[0] || p.rows[0].s !== "pending") { failed.push({ id, error: "decided" }); continue; }
+      const r = await fn(req.coordinator, id, status, null, reason);
+      if (r.ok) done.push(id); else failed.push({ id, error: "forbidden" });
+    }
+    res.json({ ok: failed.length === 0, done, failed });
+  } catch (e) { fail(res, e); }
+});
+
+// ── «Відправити в офіс»: схвалені аванси одним листом (bot/office.js, пошта — api/mail.js) ──
+const office = () => require("../bot/office");
+router.get("/office", requireAuth, async (req, res) => {
+  try {
+    const c = await me(req);
+    const f = await coord().facsOf(c);
+    const [items, rc, hist, my] = await Promise.all([office().pendingAdvances(c, f), office().recipients(c), office().history(c), office().myEmail(c)]);
+    res.json({
+      ok: true, configured: require("./mail").configured(), mail: require("./mail").status(), from: require("./mail").fromAddress(), is_admin: !!c.is_admin,
+      scope: f.scope, scopes: f.avail, advance_std: coord().CFG.advanceStd, window_days: office().WINDOW_DAYS,
+      my_email: my, items, recipients: rc.list, last: rc.last, history: hist,
+    });
+  } catch (e) { fail(res, e); }
+});
+router.post("/office/recipients", requireAuth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const r = await office().addRecipient(await me(req), b.email, b.name, !!b.shared);
+    res.status(r.ok ? 200 : 400).json(r);
+  } catch (e) { fail(res, e); }
+});
+router.delete("/office/recipients/:id", requireAuth, async (req, res) => {
+  try {
+    res.json(await office().removeRecipient(await me(req), parseInt(req.params.id, 10)));
+  } catch (e) { fail(res, e); }
+});
+router.post("/office/send", requireAuth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const r = await office().sendAdvances(await me(req), b.ids, b.to);
+    res.status(r.ok ? 200 : r.error === "send_failed" ? 502 : 400).json(r);
   } catch (e) { fail(res, e); }
 });
 

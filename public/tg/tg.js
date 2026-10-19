@@ -56,10 +56,16 @@ const L = {
       no_microsoft: "У .env немає MS_TENANT_ID / MS_CLIENT_ID / MS_CLIENT_SECRET / MAIL_FROM." },
     off_err: { not_configured: "Пошта не налаштована", no_recipients: "Оберіть адресата", bad_email: "Неправильна адреса e-mail",
       no_items: "Оберіть аванси", changed: "Список змінився (хтось уже надіслав) — оновлено", busy: "Лист уже надсилається",
-      admin_only: "Спільних адресатів додає адмін", send_failed: "Не вдалося надіслати" },
+      admin_only: "Спільних адресатів додає адмін", send_failed: "Не вдалося надіслати", range_too_long: "Діапазон — не більше 31 дня" },
     off_sent: (t) => `в офісі ${t}`, off_st_err: "помилка",
     req_title: "Заявки", req_sub: "Заявки до офісу",
-    req_med: "Медогляд", req_med_d: "Запис працівників на медичний огляд",
+    req_med: "Медогляд", req_med_d: "Замовлення медогляду для тих, хто починає роботу",
+    med_title: "Медогляд", med_sub: "Хто починає роботу (BHP) у вибрані дні — одним листом у клініку",
+    med_q: { today: "Сьогодні", tomorrow: "Завтра", week: "Цей тиждень", next: "Наступний тиждень" }, med_from: "з", med_to: "по",
+    med_items: (n) => `BHP у ці дні · ${n}`, med_empty: "У ці дні ніхто не починає роботу на ваших обʼєктах.",
+    med_done: (t) => `замовлено ${t}`, med_to_h: "Кому (клініка)", med_send: "Замовити медогляд",
+    med_sum: (n) => `${ppl(n)} · таблиця в листі + Excel`, med_ok: (n) => `Замовлення надіслано: ${ppl(n)}`,
+    med_date_note: "Дата медогляду в листі — дата відправки, але не пізніше BHP.",
     req_fine: "Штрафи", req_fine_d: "Штрафи й утримання працівників",
     soon: "Розділ у розробці",
     e_title: "Вхід не вдався", e_not_linked: "Цей Telegram не привʼязаний до панелі. Увійдіть у панель на компʼютері → кнопка «Telegram» → відкрийте посилання тут.",
@@ -116,10 +122,16 @@ const L = {
       no_microsoft: "В .env нет MS_TENANT_ID / MS_CLIENT_ID / MS_CLIENT_SECRET / MAIL_FROM." },
     off_err: { not_configured: "Почта не настроена", no_recipients: "Выберите адресата", bad_email: "Неправильный адрес e-mail",
       no_items: "Выберите авансы", changed: "Список изменился (кто-то уже отправил) — обновлено", busy: "Письмо уже отправляется",
-      admin_only: "Общих адресатов добавляет админ", send_failed: "Не удалось отправить" },
+      admin_only: "Общих адресатов добавляет админ", send_failed: "Не удалось отправить", range_too_long: "Диапазон — не больше 31 дня" },
     off_sent: (t) => `в офисе ${t}`, off_st_err: "ошибка",
     req_title: "Заявки", req_sub: "Заявки в офис",
-    req_med: "Медосмотр", req_med_d: "Запись работников на медицинский осмотр",
+    req_med: "Медосмотр", req_med_d: "Заказ медосмотра для тех, кто начинает работу",
+    med_title: "Медосмотр", med_sub: "Кто начинает работу (BHP) в выбранные дни — одним письмом в клинику",
+    med_q: { today: "Сегодня", tomorrow: "Завтра", week: "Эта неделя", next: "Следующая неделя" }, med_from: "с", med_to: "по",
+    med_items: (n) => `BHP в эти дни · ${n}`, med_empty: "В эти дни никто не начинает работу на ваших объектах.",
+    med_done: (t) => `заказано ${t}`, med_to_h: "Кому (клиника)", med_send: "Заказать медосмотр",
+    med_sum: (n) => `${n} чел. · таблица в письме + Excel`, med_ok: (n) => `Заказ отправлен: ${n} чел.`,
+    med_date_note: "Дата медосмотра в письме — дата отправки, но не позже BHP.",
     req_fine: "Штрафы", req_fine_d: "Штрафы и удержания работников",
     soon: "Раздел в разработке",
     e_title: "Вход не удался", e_not_linked: "Этот Telegram не привязан к панели. Войдите в панель на компьютере → кнопка «Telegram» → откройте ссылку здесь.",
@@ -142,7 +154,7 @@ const ST = {
   lang: "uk", token: null, user: null, viaTg: false, view: "home",
   home: null, facs: null, fac: null, end: null, hours: null, onlyGaps: false,
   sheet: null, req: { adv: null, dof: null }, reqStatus: "pending", lastDec: "adv", reject: null,
-  office: null, offSel: null, offTo: null,
+  off: {}, medRange: null,
 };
 const T = () => L[ST.lang] || L.uk;
 
@@ -228,6 +240,7 @@ async function authTelegram() {
 function onBack() {
   if (!$("sheet").hidden || !$("rsheet").hidden) return closeSheets();
   if (ST.view === "office") return go("adv");
+  if (ST.view === "med") return go("req");
   if (ST.view !== "home") return go("home");
 }
 
@@ -298,9 +311,9 @@ function openPanel(path) {
 }
 function route() {
   const [v, arg] = hashRoute().split(":");
-  const view = ["home", "hours", "req", "adv", "dof", "office"].includes(v) ? v : "home";
+  const view = ["home", "hours", "req", "adv", "dof", "office", "med"].includes(v) ? v : "home";
   ST.view = view;
-  const tab = view === "adv" || view === "dof" || view === "office" ? "dec" : view;
+  const tab = view === "adv" || view === "dof" || view === "office" ? "dec" : view === "med" ? "req" : view;
   document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
   if (TGW) { try { if (view === "home") TGW.BackButton.hide(); else TGW.BackButton.show(); } catch (e) { /* старий клієнт */ } }
   closeSheets();
@@ -311,7 +324,8 @@ function route() {
     return renderHours(true);
   }
   if (view === "adv" || view === "dof") { ST.lastDec = view; return renderDec(view); }
-  if (view === "office") return renderOffice();
+  if (view === "office") return renderOffice("adv");
+  if (view === "med") return renderOffice("med");
   if (view === "req") return renderReq();
   return renderHome();
 }
@@ -338,7 +352,7 @@ function scopeSeg(scope, scopes) {
 async function setScope(s) {
   const r = await api("/api/tg/scope", { method: "POST", body: { scope: s } });
   if (!r || !r.ok) return toast((r && r.error) || T().e_net, true);
-  ST.home = null; ST.facs = null; ST.hours = null; ST.fac = null; ST.req = { adv: null, dof: null };
+  ST.home = null; ST.facs = null; ST.hours = null; ST.fac = null; ST.req = { adv: null, dof: null }; ST.off = {};
   route();
 }
 
@@ -702,113 +716,167 @@ async function decide(kind, ids, status, reason) {
   await renderDec(kind);
 }
 
-// ── Відправити в офіс: схвалені аванси одним листом (таблиця + Excel) ──────
-async function renderOffice(keepSel) {
-  if (!ST.office) loading();
-  const r = await api("/api/tg/office");
-  if (!r || !r.ok) { if (!ST.office) showError("net"); else toast((r && r.error) || T().e_net, true); return; }
-  const prevSel = ST.offSel;
-  ST.office = r;
-  const ids = r.items.map((x) => x.id);
-  ST.offSel = new Set(keepSel && prevSel ? ids.filter((id) => prevSel.has(id)) : ids);
-  if (!ST.offTo || !keepSel) {
-    const known = new Set(r.recipients.map((x) => x.email.toLowerCase()));
-    ST.offTo = new Set((r.last || []).filter((e) => known.has(String(e).toLowerCase())).map((e) => String(e).toLowerCase()));
-  }
-  if (ST.view === "office") drawOffice();
+// ── Листи в офіс: аванси (kind adv, #office) і замовлення медогляду (kind med, #med) ──────
+// Таблиця в листі + Excel; адресати окремі для кожного виду (спільні від адміна + свої), минулі — вибрані одразу.
+const offState = (kind) => (ST.off[kind] = ST.off[kind] || { data: null, sel: null, to: null });
+function medRangeQuick(k) {
+  const t0 = today();
+  const mon = (iso) => addDays(iso, -((dow(iso) + 6) % 7));
+  if (k === "today") return { from: t0, to: t0 };
+  if (k === "tomorrow") { const d = addDays(t0, 1); return { from: d, to: d }; }
+  if (k === "week") { const m = mon(t0); return { from: m, to: addDays(m, 6) }; }
+  if (k === "next") { const m = addDays(mon(t0), 7); return { from: m, to: addDays(m, 6) }; }
+  return ST.medRange;
 }
-function drawOffice() {
+async function renderOffice(kind, keepSel) {
+  const o = offState(kind);
+  if (!o.data) loading();
+  let q = `/api/tg/office?kind=${kind}`;
+  if (kind === "med") {
+    if (!ST.medRange) ST.medRange = medRangeQuick("today");
+    q += `&from=${ST.medRange.from}&to=${ST.medRange.to}`;
+  }
+  const r = await api(q);
+  if (!r || !r.ok) { if (!o.data) showError("net"); else toast((r && T().off_err[r.error]) || (r && r.error) || T().e_net, true); return; }
+  const prevSel = o.sel;
+  o.data = r;
+  const ids = r.items.filter((x) => !x.ordered_at).map((x) => x.id);
+  o.sel = new Set(keepSel && prevSel ? ids.filter((id) => prevSel.has(id)) : ids);
+  if (!o.to || !keepSel) {
+    const known = new Set(r.recipients.map((x) => x.email.toLowerCase()));
+    o.to = new Set((r.last || []).filter((e) => known.has(String(e).toLowerCase())).map((e) => String(e).toLowerCase()));
+  }
+  if (ST.view === (kind === "med" ? "med" : "office")) drawOffice(kind);
+}
+function drawOffice(kind) {
   const t = T();
-  const r = ST.office;
+  const o = offState(kind);
+  const r = o.data;
+  const med = kind === "med";
   const std = r.advance_std || 300;
-  const n = r.items.filter((x) => ST.offSel.has(x.id)).length;
-  const canSend = r.configured && n > 0 && ST.offTo.size > 0;
+  const free = r.items.filter((x) => !x.ordered_at);
+  const n = free.filter((x) => o.sel.has(x.id)).length;
+  const canSend = r.configured && n > 0 && o.to.size > 0;
   const rcpt = (x) => {
-    const on = ST.offTo.has(x.email.toLowerCase());
+    const on = o.to.has(x.email.toLowerCase());
     const del = !x.shared || r.is_admin;
     return `<span class="chip rc ${on ? "on" : ""}">
-        <button class="rc-b" onclick="toggleTo('${esc(x.email.toLowerCase())}')">${on ? "✓ " : ""}${esc(x.name ? `${x.name} · ${x.email}` : x.email)}${x.shared ? ` <em>${esc(t.off_tag)}</em>` : ""}</button>
-        ${del ? `<button class="rc-x" aria-label="✕" onclick="delRcpt(${x.id}, '${esc(x.email)}')">✕</button>` : ""}</span>`;
+        <button class="rc-b" onclick="toggleTo('${kind}', '${esc(x.email.toLowerCase())}')">${on ? "✓ " : ""}${esc(x.name ? `${x.name} · ${x.email}` : x.email)}${x.shared ? ` <em>${esc(t.off_tag)}</em>` : ""}</button>
+        ${del ? `<button class="rc-x" aria-label="✕" onclick="delRcpt('${kind}', ${x.id}, '${esc(x.email)}')">✕</button>` : ""}</span>`;
+  };
+  const row = (x) => {
+    const done = !!x.ordered_at;
+    const line2 = med
+      ? `${esc(x.facility)} · BHP ${esc(dd(x.bhp))}${done ? ` · <span class="sent">✉ ${esc(t.med_done(ddhm(x.ordered_at)))}</span>` : ""}`
+      : `${esc(x.facility)} · ${esc(t.off_appr(ddhm(x.approved_at), fmtH(x.hours)))}`;
+    const name = med ? `${x.last_name} ${x.first_name}`.trim() : x.full_name;
+    return `<label class="ck ${done ? "done" : ""}">
+        <input type="checkbox" ${done ? "disabled" : o.sel.has(x.id) ? "checked" : ""} onchange="offPick('${kind}', ${x.id}, this.checked)" />
+        <div class="nm"><b>${esc(name)}</b><span class="pass">${esc(x.login || "")}</span><span>${line2}</span></div></label>`;
+  };
+  const rng = ST.medRange || {};
+  const quick = (k, label) => {
+    const q = medRangeQuick(k);
+    return `<button class="chip ${q.from === rng.from && q.to === rng.to ? "on" : ""}" onclick="medQuick('${k}')">${esc(label)}</button>`;
   };
   $("view").innerHTML = `
-    <div class="top"><div class="ttl"><h1>${esc(t.off_title)}</h1><div class="sub">${esc(t.off_sub(r.window_days || 31))}</div></div>${langSeg()}</div>
+    <div class="top"><div class="ttl"><h1>${esc(med ? t.med_title : t.off_title)}</h1>
+      <div class="sub">${esc(med ? t.med_sub : t.off_sub(r.window_days || 31))}</div></div>${langSeg()}</div>
     ${r.configured ? "" : `<div class="note-ro">${esc(t.off_nocfg)}${r.mail && r.mail.reason && t.off_why[r.mail.reason] ? `<br>${esc(t.off_why[r.mail.reason])}` : ""}</div>`}
+    ${scopeSeg(r.scope, r.scopes)}
+    ${med ? `<section class="sec">
+      <div class="chips">${quick("today", t.med_q.today)}${quick("tomorrow", t.med_q.tomorrow)}${quick("week", t.med_q.week)}${quick("next", t.med_q.next)}</div>
+      <div class="daterow">
+        <label><span>${esc(t.med_from)}</span><input type="date" value="${esc(rng.from)}" onchange="medDates(this.value, null)" /></label>
+        <label><span>${esc(t.med_to)}</span><input type="date" value="${esc(rng.to)}" onchange="medDates(null, this.value)" /></label>
+      </div></section>` : ""}
     <section class="sec">
-      <div class="grp-h"><h2>${esc(t.off_items(r.items.length))}</h2>
-        ${r.items.length ? `<button class="mini" onclick="offAll(${n < r.items.length})">${esc(n < r.items.length ? t.off_all : t.off_none)}</button>` : ""}</div>
-      ${r.items.length ? `<div class="list">${r.items.map((x) => `<label class="ck">
-          <input type="checkbox" ${ST.offSel.has(x.id) ? "checked" : ""} onchange="offPick(${x.id}, this.checked)" />
-          <div class="nm"><b>${esc(x.full_name)}</b><span class="pass">${esc(x.login || "")}</span>
-            <span>${esc(x.facility)} · ${esc(t.off_appr(ddhm(x.approved_at), fmtH(x.hours)))}</span></div></label>`).join("")}</div>`
-        : `<div class="list"><div class="empty">${esc(t.off_empty)}</div></div>`}
+      <div class="grp-h"><h2>${esc(med ? t.med_items(r.items.length) : t.off_items(r.items.length))}</h2>
+        ${free.length ? `<button class="mini" onclick="offAll('${kind}', ${n < free.length})">${esc(n < free.length ? t.off_all : t.off_none)}</button>` : ""}</div>
+      ${r.items.length ? `<div class="list">${r.items.map(row).join("")}</div>`
+        : `<div class="list"><div class="empty">${esc(med ? t.med_empty : t.off_empty)}</div></div>`}
     </section>
     <section class="sec">
-      <h2>${esc(t.off_to)}</h2>
+      <h2>${esc(med ? t.med_to_h : t.off_to)}</h2>
       <div class="rcpts">${r.recipients.map(rcpt).join("")}</div>
       <div class="addrow">
-        <input id="offEmail" type="email" inputmode="email" autocomplete="email" placeholder="${esc(t.off_email_ph)}" onkeydown="if(event.key==='Enter')addRcpt()" />
-        <button class="btn ghost" onclick="addRcpt()">${esc(t.off_add)}</button>
+        <input id="offEmail" type="email" inputmode="email" autocomplete="email" placeholder="${esc(t.off_email_ph)}" onkeydown="if(event.key==='Enter')addRcpt('${kind}')" />
+        <button class="btn ghost" onclick="addRcpt('${kind}')">${esc(t.off_add)}</button>
       </div>
       ${r.is_admin ? `<label class="shared"><input id="offShared" type="checkbox" /> ${esc(t.off_shared)}</label>` : ""}
-      <div class="sub">${esc(r.my_email ? t.off_cc(r.my_email) : t.off_nocc)}${r.from ? `<br>${esc(t.off_from(r.from))}` : ""}</div>
+      <div class="sub">${esc(r.my_email ? t.off_cc(r.my_email) : t.off_nocc)}${r.from ? `<br>${esc(t.off_from(r.from))}` : ""}${med ? `<br>${esc(t.med_date_note)}` : ""}</div>
     </section>
     <div class="sendbar">
-      <div class="sum">${esc(t.off_sum(n, n * std))}</div>
-      <button id="offSend" class="btn primary wide" ${canSend ? "" : "disabled"} onclick="sendOffice()">${esc(t.off_send)}</button>
+      <div class="sum">${esc(med ? t.med_sum(n) : t.off_sum(n, n * std))}</div>
+      <button id="offSend" class="btn primary wide" ${canSend ? "" : "disabled"} onclick="sendOffice('${kind}')">${esc(med ? t.med_send : t.off_send)}</button>
     </div>
     ${r.history && r.history.length ? `<section class="sec"><h2>${esc(t.off_hist)}</h2><div class="list">${r.history.map((h) => `<div class="row"><div class="nm">
-        <b>${esc(ddhm(h.sent_at))} · ${h.items} · ${esc(String(h.total || ""))} zł</b>
+        <b>${esc(ddhm(h.sent_at))} · ${esc(ppl(h.items))}${h.total ? ` · ${esc(String(h.total))} zł` : ""}</b>
         <span class="${h.status === "sent" ? "" : "warn"}">${esc((h.mail_to || []).join(", "))}${h.status === "sent" ? "" : ` · ${esc(t.off_st_err)}: ${esc(h.error || "")}`}</span></div></div>`).join("")}</div></section>` : ""}`;
 }
-function offPick(id, on) { if (on) ST.offSel.add(id); else ST.offSel.delete(id); drawOffice(); }
-function offAll(on) { ST.offSel = new Set(on ? ST.office.items.map((x) => x.id) : []); drawOffice(); }
-function toggleTo(email) { if (ST.offTo.has(email)) ST.offTo.delete(email); else ST.offTo.add(email); drawOffice(); }
-async function addRcpt() {
+const redraw = (kind) => drawOffice(kind);
+function offPick(kind, id, on) { const o = offState(kind); if (on) o.sel.add(id); else o.sel.delete(id); redraw(kind); }
+function offAll(kind, on) { const o = offState(kind); o.sel = new Set(on ? o.data.items.filter((x) => !x.ordered_at).map((x) => x.id) : []); redraw(kind); }
+function toggleTo(kind, email) { const o = offState(kind); if (o.to.has(email)) o.to.delete(email); else o.to.add(email); redraw(kind); }
+function medQuick(k) { ST.medRange = medRangeQuick(k); renderOffice("med", false); }
+function medDates(from, to) {
+  const r = Object.assign({}, ST.medRange);
+  if (from) r.from = from;
+  if (to) r.to = to;
+  if (r.to < r.from) { if (from) r.to = r.from; else r.from = r.to; }
+  ST.medRange = r;
+  renderOffice("med", false);
+}
+async function addRcpt(kind) {
   const t = T();
+  const o = offState(kind);
   const email = ($("offEmail").value || "").trim();
   if (!email) return;
   const shared = !!($("offShared") && $("offShared").checked);
-  const r = await api("/api/tg/office/recipients", { method: "POST", body: { email, shared } }).catch(() => null);
+  const r = await api("/api/tg/office/recipients", { method: "POST", body: { kind, email, shared } }).catch(() => null);
   if (!r || !r.ok) return toast((r && t.off_err[r.error]) || t.e_net, true);
-  if (!ST.office.recipients.some((x) => x.id === r.recipient.id)) ST.office.recipients.push(r.recipient);
-  ST.offTo.add(r.recipient.email.toLowerCase());
-  drawOffice();
+  if (!o.data.recipients.some((x) => x.id === r.recipient.id)) o.data.recipients.push(r.recipient);
+  o.to.add(r.recipient.email.toLowerCase());
+  redraw(kind);
 }
-async function delRcpt(id, email) {
+async function delRcpt(kind, id, email) {
   const t = T();
+  const o = offState(kind);
   if (!(await ask(t.off_del_q(email)))) return;
   const r = await api(`/api/tg/office/recipients/${id}`, { method: "DELETE" }).catch(() => null);
   if (!r || !r.ok) return toast(t.e_net, true);
-  ST.office.recipients = ST.office.recipients.filter((x) => x.id !== id);
-  ST.offTo.delete(String(email).toLowerCase());
-  drawOffice();
+  o.data.recipients = o.data.recipients.filter((x) => x.id !== id);
+  o.to.delete(String(email).toLowerCase());
+  redraw(kind);
 }
-async function sendOffice() {
+async function sendOffice(kind) {
   const t = T();
-  const ids = ST.office.items.filter((x) => ST.offSel.has(x.id)).map((x) => x.id);
-  const to = ST.office.recipients.filter((x) => ST.offTo.has(x.email.toLowerCase())).map((x) => x.email);
+  const o = offState(kind);
+  const ids = o.data.items.filter((x) => !x.ordered_at && o.sel.has(x.id)).map((x) => x.id);
+  const to = o.data.recipients.filter((x) => o.to.has(x.email.toLowerCase())).map((x) => x.email);
   $("offSend").disabled = true;
-  const r = await api("/api/tg/office/send", { method: "POST", body: { ids, to } }).catch(() => null);
-  ST.req.adv = null;
+  const r = await api("/api/tg/office/send", { method: "POST", body: { kind, ids, to } }).catch(() => null);
+  if (kind === "adv") ST.req.adv = null;
   if (r && r.ok) {
-    toast(t.off_ok(r.count));
-    return renderOffice(false);
+    toast(kind === "med" ? t.med_ok(r.count) : t.off_ok(r.count));
+    return renderOffice(kind, false);
   }
   const e = r && r.error;
   toast(`${t.off_err[e] || t.e_net}${r && r.detail ? `: ${r.detail}` : ""}`, true);
-  return renderOffice(e !== "changed");
+  return renderOffice(kind, e !== "changed");
 }
 
 // ── Заявки (розділи заповнимо пізніше) ─────────────────────────────────
 function renderReq() {
   const t = T();
-  const card = (title, desc, icon) => `<div class="req">
+  const card = (title, desc, icon, go) => `<${go ? `button onclick="go('${go}')"` : "div"} class="req ${go ? "link" : ""}">
       <div class="ic">${icon}</div>
-      <div class="b"><div class="t">${esc(title)}</div><div class="d">${esc(desc)}</div><span class="soon">${esc(t.soon)}</span></div>
-    </div>`;
+      <div class="b"><div class="t">${esc(title)}</div><div class="d">${esc(desc)}</div>${go ? "" : `<span class="soon">${esc(t.soon)}</span>`}</div>
+      ${go ? CHEV : ""}
+    </${go ? "button" : "div"}>`;
   $("view").innerHTML = `
     <div class="top"><div class="ttl"><h1>${esc(t.req_title)}</h1><div class="sub">${esc(t.req_sub)}</div></div>${langSeg()}</div>
-    <section id="reqMed">${card(t.req_med, t.req_med_d, `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/><rect x="3" y="3" width="18" height="18" rx="4"/></svg>`)}</section>
+    <section id="reqMed">${card(t.req_med, t.req_med_d, `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/><rect x="3" y="3" width="18" height="18" rx="4"/></svg>`, "med")}</section>
     <section id="reqFine">${card(t.req_fine, t.req_fine_d, `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>`)}</section>`;
 }
 

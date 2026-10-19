@@ -122,7 +122,7 @@ const TX = {
     s_short: "Напишіть щонайменше 3 літери прізвища або ID.",
     s_none: (q) => `За «${q}» нікого не знайдено на ваших обʼєктах.`, s_found: (n) => `Знайдено ${n} на ваших обʼєктах:`,
     st: { pracuje: "працює", zwolniony: "звільнений", rezygnacja: "відмовився", przeniesiony: "переведений", unknown: "без статусу", urlop: "відпустка", l4: "L4" },
-    since: (d) => `з ${d}`, c_hours: "Годин за місяць", c_last: "Останні години", c_adv: "Аванси цього місяця",
+    since: (d) => `з ${d}`, c_pos: "Посада", c_hours: "Годин за місяць", c_last: "Останні години", c_adv: "Аванси цього місяця",
     c_bot: (b) => (b ? "Бот: підключений" : "Бот: не підключений"), c_hist: "Заклади",
     b_hours: "Години за місяць", b_hist: "Історія", b_open: "Відкрити в панелі",
     h_title: (n, m) => `<b>${n}</b> · години за ${m}`, h_none: "Цього місяця записів немає.", total: "Разом",
@@ -172,7 +172,7 @@ const TX = {
     s_short: "Напишите минимум 3 буквы фамилии или ID.",
     s_none: (q) => `По «${q}» никого не найдено на ваших объектах.`, s_found: (n) => `Найдено ${n} на ваших объектах:`,
     st: { pracuje: "работает", zwolniony: "уволен", rezygnacja: "отказался", przeniesiony: "переведён", unknown: "без статуса", urlop: "отпуск", l4: "L4" },
-    since: (d) => `с ${d}`, c_hours: "Часов за месяц", c_last: "Последние часы", c_adv: "Авансы в этом месяце",
+    since: (d) => `с ${d}`, c_pos: "Должность", c_hours: "Часов за месяц", c_last: "Последние часы", c_adv: "Авансы в этом месяце",
     c_bot: (b) => (b ? "Бот: подключён" : "Бот: не подключён"), c_hist: "Объекты",
     b_hours: "Часы за месяц", b_hist: "История", b_open: "Открыть в панели",
     h_title: (n, m) => `<b>${n}</b> · часы за ${m}`, h_none: "В этом месяце записей нет.", total: "Итого",
@@ -1021,7 +1021,10 @@ async function card(c, workerId) {
                        AND date_trunc('month', h.work_date) = date_trunc('month', CURRENT_DATE)), 0) AS hours_month,
             (SELECT max(h.work_date) FROM hours_log h WHERE h.worker_id = w.id AND (h.hours IS NOT NULL OR h.absence_type IS NOT NULL)) AS last_hours,
             (SELECT count(*) FROM advances a WHERE a.worker_id = w.id AND a.status = 'approved'
-               AND date_trunc('month', COALESCE(a.approved_at, a.requested_at)) = date_trunc('month', CURRENT_DATE))::int AS adv_month
+               AND date_trunc('month', COALESCE(a.approved_at, a.requested_at)) = date_trunc('month', CURRENT_DATE))::int AS adv_month,
+            (SELECT to_jsonb(h)->>'stanowisko' FROM worker_facility_history h
+              WHERE h.worker_id = w.id AND h.facility_id = vw.facility_id AND h.bhp_date IS NOT DISTINCT FROM vw.bhp_date
+              ORDER BY h.imported_at DESC LIMIT 1) AS stanowisko
        FROM workers w JOIN v_worker_current vw ON vw.id = w.id LEFT JOIN facilities f ON f.id = vw.facility_id
       WHERE w.id = $1`, [workerId]);
   const x = r.rows[0];
@@ -1034,6 +1037,7 @@ async function card(c, workerId) {
     `<b>${esc(x.full_name)}</b>`,
     `<code>${esc(maskLogin(x.login))}</code>`,
     `${t.st[x.status] || esc(x.status)} · ${esc(x.facility || "—")} · ${t.since(dd(toISO(x.bhp_date)))}${x.last_work_date ? ` – ${dd(toISO(x.last_work_date))}` : ""}`,
+    ...(x.stanowisko ? [`${t.c_pos}: ${esc(x.stanowisko)}`] : []),
     "",
     `${t.c_hours}: <b>${num(x.hours_month)}</b>`,
     `${t.c_last}: ${x.last_hours ? dd(toISO(x.last_hours)) : "—"}`,

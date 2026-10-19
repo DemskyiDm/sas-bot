@@ -875,6 +875,7 @@ function exportToExcel(type) {
         ID: w.login,
         "Imię i Nazwisko": w.full_name,
         Obiekt: w.facility_name || "—",
+        Stanowisko: w.stanowisko || "—",
         Status: w.status || "—",
         Telegram: w.telegram_chat_id ? "TAK" : "NIE",
         BHP: w.bhp_date ? new Date(w.bhp_date).toLocaleDateString("pl") : "—",

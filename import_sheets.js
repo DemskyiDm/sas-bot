@@ -187,6 +187,8 @@ function parseSheet(rows, strict = false) {
   let iLastDay = headers.findIndex(
     (h) => h.includes("ostatni roboczy") || h.includes("ostatni rob"),
   );
+  // Посада (колонка «Stanowisko»). Немає колонки — посаду в базі не чіпаємо.
+  const iStan = headers.findIndex((h) => h.includes("stanowisk"));
 
   if (iPassport === -1 && iNazwisko === -1) {
     if (strict) {
@@ -209,7 +211,7 @@ function parseSheet(rows, strict = false) {
   }
 
   res.headerIdx = headerIdx;
-  res.cols = { iPassport, iNazwisko, iStatus, iBhp };
+  res.cols = { iPassport, iNazwisko, iStatus, iBhp, iStan };
 
   const MAX_COL = 26;
 
@@ -237,6 +239,9 @@ function parseSheet(rows, strict = false) {
     }
 
     const fullName = imie ? `${nazwisko} ${imie}` : nazwisko;
+    // undefined — колонки немає (не чіпати), null — порожня клітинка
+    const stanowisko = iStan === -1 ? undefined
+      : String(rows[i][iStan] || "").replace(/\s+/g, " ").trim().slice(0, 120) || null;
     const status = parseStatus(iStatus !== -1 ? row[iStatus] : "");
     const bhpDate = iBhp !== -1 ? parseDate(row[iBhp]) : null;
     const lastWorkDay = iLastDay !== -1 ? parseDate(row[iLastDay]) : null;
@@ -245,7 +250,7 @@ function parseSheet(rows, strict = false) {
 
     // Унікальний ключ: паспорт + BHP (один працівник може бути кілька разів)
     const mapKey = `${passport}_${safeBhp}`;
-    const data = { passport, fullName, status, safeBhp, safeLastDay, pesel };
+    const data = { passport, fullName, nazwisko, imie: imie || null, stanowisko, status, safeBhp, safeLastDay, pesel };
     const prev = workerMap[mapKey];
 
     if (!prev) {
@@ -321,7 +326,8 @@ async function importSource(source, facilityId, cache) {
   }
 
   console.log(
-    `  Header row: ${parsed.headerIdx}, passport=${parsed.cols.iPassport} nazwisko=${parsed.cols.iNazwisko} status=${parsed.cols.iStatus} bhp=${parsed.cols.iBhp}`,
+    `  Header row: ${parsed.headerIdx}, passport=${parsed.cols.iPassport} nazwisko=${parsed.cols.iNazwisko} status=${parsed.cols.iStatus} bhp=${parsed.cols.iBhp}` +
+      (parsed.cols.iStan !== undefined && parsed.cols.iStan !== -1 ? ` stanowisko=${parsed.cols.iStan}` : ""),
   );
 
   const workerMap = parsed.workerMap;
@@ -334,7 +340,8 @@ async function importSource(source, facilityId, cache) {
   const processedWorkerIds = new Set();
 
   for (const [mapKey, data] of Object.entries(workerMap)) {
-    const { passport, fullName, status, safeBhp, safeLastDay, pesel } = data;
+    const { passport, fullName, nazwisko, imie, stanowisko, status, safeBhp, safeLastDay, pesel } = data;
+    const names = !!cache.hasNames;     // колонки workers.last_name / first_name є (db/migration_tg_coord.sql)
 
     try {
       // ── 1. Знаходимо worker з кешу (без запитів до БД) ──
@@ -354,15 +361,19 @@ async function importSource(source, facilityId, cache) {
         const needsUpdate =
           worker.full_name !== fullName ||
           (pesel && worker.pesel !== pesel) ||
-          (worker.login !== loginToSave);
+          (worker.login !== loginToSave) ||
+          (names && (worker.last_name !== nazwisko || worker.first_name !== imie));
 
         if (needsUpdate) {
           await db.query(
-            `UPDATE workers SET full_name = $1, login = $2, pesel = COALESCE($3, pesel), updated_at = now() WHERE id = $4`,
-            [fullName, loginToSave, pesel, workerId],
+            names
+              ? `UPDATE workers SET full_name = $1, login = $2, pesel = COALESCE($3, pesel), last_name = $5, first_name = $6, updated_at = now() WHERE id = $4`
+              : `UPDATE workers SET full_name = $1, login = $2, pesel = COALESCE($3, pesel), updated_at = now() WHERE id = $4`,
+            names ? [fullName, loginToSave, pesel, workerId, nazwisko, imie] : [fullName, loginToSave, pesel, workerId],
           );
           // Оновлюємо кеш
           worker.full_name = fullName;
+          if (names) { worker.last_name = nazwisko; worker.first_name = imie; }
           worker.login = loginToSave;
           if (pesel) {
             worker.pesel = pesel;
@@ -374,8 +385,10 @@ async function importSource(source, facilityId, cache) {
       } else {
         // Новий працівник
         const insertRes = await db.query(
-          `INSERT INTO workers (login, full_name, pesel) VALUES ($1, $2, $3) RETURNING id`,
-          [passport, fullName, pesel],
+          names
+            ? `INSERT INTO workers (login, full_name, pesel, last_name, first_name) VALUES ($1, $2, $3, $4, $5) RETURNING id`
+            : `INSERT INTO workers (login, full_name, pesel) VALUES ($1, $2, $3) RETURNING id`,
+          names ? [passport, fullName, pesel, nazwisko, imie] : [passport, fullName, pesel],
         );
         workerId = insertRes.rows[0].id;
         const newWorker = {
@@ -383,6 +396,8 @@ async function importSource(source, facilityId, cache) {
           login: passport,
           full_name: fullName,
           pesel,
+          last_name: nazwisko,
+          first_name: imie,
         };
         cache.byLogin.set(passport, newWorker);
         if (pesel) cache.byPesel.set(pesel, newWorker);
@@ -398,6 +413,7 @@ async function importSource(source, facilityId, cache) {
         source.facilityName,
         safeBhp,
         safeLastDay,
+        stanowisko,
       ]);
       historyAdded++;
     } catch (err) {
@@ -419,8 +435,13 @@ async function importSource(source, facilityId, cache) {
       if (!sheetBhps.has(k)) sheetBhps.set(k, new Set());
       sheetBhps.get(k).add(bhp || "null");
     }
+    // Посада: лише якщо в базі є колонка і на листі є колонка «Stanowisko» (undefined — не чіпати)
+    const setStan = async (hid, stan) => {
+      if (!cache.hasStan || stan === undefined || !hid) return;
+      await db.query(`UPDATE worker_facility_history SET stanowisko = $2 WHERE id = $1 AND stanowisko IS DISTINCT FROM $2`, [hid, stan]);
+    };
     for (const row of dbInserts) {
-      const [rowWorkerId, rowFacilityId, status, sourceSheet, bhpDate, lastWorkDate] = row;
+      const [rowWorkerId, rowFacilityId, status, sourceSheet, bhpDate, lastWorkDate, stan] = row;
 
       try {
         if (bhpDate === null) {
@@ -443,6 +464,13 @@ async function importSource(source, facilityId, cache) {
                AND bhp_date IS NULL`,
             [rowWorkerId, rowFacilityId, status, sourceSheet, lastWorkDate],
           );
+          if (cache.hasStan && stan !== undefined) {
+            await db.query(
+              `UPDATE worker_facility_history SET stanowisko = $3
+                WHERE worker_id = $1 AND facility_id = $2 AND bhp_date IS NULL AND stanowisko IS DISTINCT FROM $3`,
+              [rowWorkerId, rowFacilityId, stan],
+            );
+          }
           continue;
         }
 
@@ -455,6 +483,7 @@ async function importSource(source, facilityId, cache) {
         );
         if (byBhp.rows.length) {
           await updatePeriod(byBhp.rows[0].id, row, sheetBhps, false);
+          await setStan(byBhp.rows[0].id, stan);
           continue;
         }
 
@@ -470,12 +499,13 @@ async function importSource(source, facilityId, cache) {
           );
           if (openRow.rows.length) {
             await updatePeriod(openRow.rows[0].id, row, sheetBhps, true);
+            await setStan(openRow.rows[0].id, stan);
             continue;
           }
         }
 
         // (3) Новий період (повторний найм тощо) → вставляємо
-        await db.query(
+        const ins = await db.query(
           `INSERT INTO worker_facility_history
              (worker_id, facility_id, status, source_sheet, bhp_date, last_work_date, imported_at)
            VALUES ($1, $2, $3::worker_status, $4, $6, $5, now())
@@ -483,9 +513,11 @@ async function importSource(source, facilityId, cache) {
            DO UPDATE SET
              bhp_date = EXCLUDED.bhp_date,
              source_sheet = EXCLUDED.source_sheet,
-             imported_at = now()`,
+             imported_at = now()
+           RETURNING id`,
           [rowWorkerId, rowFacilityId, status, sourceSheet, lastWorkDate, bhpDate],
         );
+        if (ins.rows[0]) await setStan(ins.rows[0].id, stan);
       } catch (err) {
         const who = [...cache.byLogin.values()].find((w) => w.id === rowWorkerId);
         console.warn(`  HISTORY SKIP worker=${rowWorkerId}${who ? ` ${who.login} ${who.full_name}` : ""} fac=${rowFacilityId} bhp=${bhpDate || "—"}: ${err.message}`);
@@ -660,14 +692,25 @@ async function updatePeriod(id, row, sheetBhps, setBhp) {
 // ── CACHE ─────────────────────────────────────────────────────
 async function loadCache() {
   console.log("  Loading cache from DB...");
+  // Нові колонки (db/migration_tg_coord.sql): є — заповнюємо, немає — імпорт як раніше
+  const colsRes = await db.query(
+    `SELECT table_name, column_name FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND ((table_name = 'workers' AND column_name IN ('last_name', 'first_name'))
+          OR (table_name = 'worker_facility_history' AND column_name = 'stanowisko'))`,
+  );
+  const hasNames = colsRes.rows.filter((r) => r.table_name === "workers").length === 2;
+  const hasStan = colsRes.rows.some((r) => r.column_name === "stanowisko");
   const [workersRes, historyRes, facilitiesRes] = await Promise.all([
-    db.query(`SELECT id, login, pesel, full_name FROM workers`),
+    db.query(`SELECT id, login, pesel, full_name${hasNames ? ", last_name, first_name" : ""} FROM workers`),
     db.query(`SELECT worker_id, facility_id, status::text, last_work_date, bhp_date FROM worker_facility_history`),
     db.query(`SELECT id, name FROM facilities ORDER BY id`),
   ]);
 
   // Будуємо індекси
   const cache = {
+    hasNames,
+    hasStan,
     byLogin: new Map(),
     byPesel: new Map(),
     historySet: new Set(),

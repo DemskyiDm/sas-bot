@@ -188,6 +188,14 @@ h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1.25; }
 .sendbar .sum { font-size: 13px; color: var(--text2); text-align: center; }
 .dec .sent { color: var(--green); }
 
+/* Медогляд */
+.daterow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.daterow label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text2); }
+.daterow input { height: 42px; border-radius: 10px; border: 1px solid var(--line2); background: var(--bg); color: var(--text); padding: 0 10px; font: 15px var(--sans); color-scheme: dark; min-width: 0; }
+.ck.done { opacity: 0.6; cursor: default; }
+.ck .sent { color: var(--green); }
+.req.link { width: 100%; text-align: left; color: inherit; font: inherit; cursor: pointer; align-items: center; }
+
 /* Нижнє меню */
 .tabs { position: fixed; left: 0; right: 0; bottom: 0; height: calc(64px + var(--safe-b)); padding-bottom: var(--safe-b); display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr)); background: var(--surface); border-top: 1px solid var(--line); z-index: 5; }

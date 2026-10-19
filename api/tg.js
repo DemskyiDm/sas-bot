@@ -225,24 +225,38 @@ router.post("/decide", requireAuth, async (req, res) => {
   } catch (e) { fail(res, e); }
 });
 
-// ── «Відправити в офіс»: схвалені аванси одним листом (bot/office.js, пошта — api/mail.js) ──
+// ── Листи в офіс (bot/office.js, пошта — api/mail.js): kind=adv — аванси, kind=med — замовлення медогляду ──
+// Ті самі запити — з мініпанелі й з веб-панелі (public/js/office.js). scope (необовʼязково) — зріз лише для цього запиту.
 const office = () => require("../bot/office");
+const kindOf = (k) => (k === "med" ? "med" : "adv");
+async function scoped(req, c) {
+  const want = String(req.query.scope || (req.body && req.body.scope) || "");
+  return coord().facsOf(c, ["own", "region", "all"].includes(want) ? want : undefined);
+}
 router.get("/office", requireAuth, async (req, res) => {
   try {
+    const kind = kindOf(req.query.kind);
     const c = await me(req);
-    const f = await coord().facsOf(c);
-    const [items, rc, hist, my] = await Promise.all([office().pendingAdvances(c, f), office().recipients(c), office().history(c), office().myEmail(c)]);
+    const f = await scoped(req, c);
+    let items, range = null;
+    if (kind === "med") {
+      range = office().medRange(req.query.from, req.query.to);
+      if (range.error) return res.status(400).json({ ok: false, error: range.error });
+      items = await office().medList(c, f, range);
+    } else items = await office().pendingAdvances(c, f);
+    const [rc, hist, my] = await Promise.all([office().recipients(c, kind), office().history(c, kind), office().myEmail(c)]);
+    const m = require("./mail");
     res.json({
-      ok: true, configured: require("./mail").configured(), mail: require("./mail").status(), from: require("./mail").fromAddress(), is_admin: !!c.is_admin,
+      ok: true, kind, configured: m.configured(), mail: m.status(), from: m.fromAddress(), is_admin: !!c.is_admin,
       scope: f.scope, scopes: f.avail, advance_std: coord().CFG.advanceStd, window_days: office().WINDOW_DAYS,
-      my_email: my, items, recipients: rc.list, last: rc.last, history: hist,
+      range, my_email: my, items, recipients: rc.list, last: rc.last, history: hist,
     });
   } catch (e) { fail(res, e); }
 });
 router.post("/office/recipients", requireAuth, async (req, res) => {
   try {
     const b = req.body || {};
-    const r = await office().addRecipient(await me(req), b.email, b.name, !!b.shared);
+    const r = await office().addRecipient(await me(req), b.email, b.name, !!b.shared, kindOf(b.kind));
     res.status(r.ok ? 200 : 400).json(r);
   } catch (e) { fail(res, e); }
 });
@@ -254,7 +268,8 @@ router.delete("/office/recipients/:id", requireAuth, async (req, res) => {
 router.post("/office/send", requireAuth, async (req, res) => {
   try {
     const b = req.body || {};
-    const r = await office().sendAdvances(await me(req), b.ids, b.to);
+    const c = await me(req);
+    const r = await office().send(kindOf(b.kind), c, b.ids, b.to, await scoped(req, c));
     res.status(r.ok ? 200 : r.error === "send_failed" ? 502 : 400).json(r);
   } catch (e) { fail(res, e); }
 });

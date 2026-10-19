@@ -152,15 +152,15 @@ async function history(c, kind) {
 // ── Листи ─────────────────────────────────────────────────────────────
 const HEAD = {
   adv: ["Lp", "Nazwisko i imię", "Paszport", "Obiekt", "Data BHP", "Data wniosku", "Kwota (zł)", "Godziny (m-c wniosku)", "Zatwierdził"],
-  med: ["Lp", "Nazwisko", "Imię", "Paszport", "Przedsiębiorstwo", "Stanowisko", "Data BHP", "Data badania", "Adres"],
+  med: ["Lp", "Nazwisko", "Imię", "Paszport", "Przedsiębiorstwo", "Stanowisko", "Data BHP", "Data badania", "Koordynator", "Adres"],
 };
-const WIDTHS = { adv: [5, 30, 14, 26, 12, 13, 11, 12, 24], med: [5, 20, 18, 14, 26, 22, 12, 13, 30] };
+const WIDTHS = { adv: [5, 30, 14, 26, 12, 13, 11, 12, 24], med: [5, 20, 18, 14, 26, 22, 12, 13, 24, 30] };
 const RIGHT = { adv: [0, 6, 7], med: [0] };
 
-function rowsOf(kind, items, std, sentIso) {
+function rowsOf(kind, items, std, sentIso, c) {
   if (kind === "med") {
     return items.map((x, i) => [i + 1, x.last_name, x.first_name, x.login || "", x.facility, x.stanowisko || "",
-      dmyIso(x.bhp), dmyIso(medDate(x.bhp, sentIso)), ""]);
+      dmyIso(x.bhp), dmyIso(medDate(x.bhp, sentIso)), (c && c.full_name) || "", ""]);   // Koordynator — хто замовляє
   }
   return items.map((x, i) => [i + 1, x.full_name, x.login || "", x.facility, dmyIso(x.bhp), dmy(x.requested_at), std, x.hours, x.approved_by || ""]);
 }
@@ -205,7 +205,7 @@ async function send(kind, c, ids, to, f0) {
     if (items.length !== want.size) return { ok: false, error: "changed" };   // хтось уже надіслав / змінилось
     const std = coord().CFG.advanceStd;
     const sentIso = todayIso();
-    const rows = rowsOf(kind, items, std, sentIso);
+    const rows = rowsOf(kind, items, std, sentIso, c);
     const me = await myEmail(c);
     let subject, html, file, total = null;
     if (kind === "adv") {

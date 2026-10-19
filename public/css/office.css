@@ -42,3 +42,10 @@
   .ofc-box { padding: 12px; }
   .ofc-add input[type=email] { min-width: 0; max-width: none; }
 }
+/* Zaliczki: przełącznik Moje obiekty / Region / Cała firma (modules.js → renderAdvScope) */
+.adv-scope { display: inline-flex; gap: 0; }
+.adv-scope:empty { display: none; }
+.adv-scope .btn { border-radius: 0; margin-left: -1px; }
+.adv-scope .btn:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.adv-scope .btn:last-child { border-radius: 0 6px 6px 0; }
+.adv-scope .adv-scope-on { border-color: var(--accent); color: var(--text); background: rgba(59, 130, 246, 0.15); position: relative; z-index: 1; }

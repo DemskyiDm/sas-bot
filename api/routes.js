@@ -278,9 +278,20 @@ router.post("/remind/:worker_id", requireAuth, async (req, res) => {
 });
 
 // ── Advances list ─────────────────────────────────────────────
+// scope (як у мініпанелі Telegram): own — свої обʼєкти, region — разом з регіоном, all — уся фірма.
+// Без scope — збережений вибір координатора (tgc.prefs.scope). У відповіді — scope і scopes для перемикача.
 router.get("/advances", requireAuth, async (req, res) => {
   try {
-    const allowedFacilities = await getFacilityFilter(req.coordinator);
+    const coord = require("../bot/coord");   // ліниво: bot/coord.js сам підключає цей файл
+    const c = await coord.coordById(req.coordinator.coordinator_id);
+    let allowedFacilities = await getFacilityFilter(req.coordinator), scope = null, scopes = [];
+    if (c) {
+      c.is_admin = !!req.coordinator.is_admin;
+      const want = ["own", "region", "all"].includes(req.query.scope) ? req.query.scope : undefined;
+      const f = await coord.facsOf(c, want);
+      scope = f.scope; scopes = f.avail;
+      allowedFacilities = f.all;   // null — уся фірма
+    }
     let query = `
       SELECT a.*, w.full_name, w.login, w.bhp_date, f.name AS facility_name,
         COALESCE((
@@ -297,13 +308,13 @@ router.get("/advances", requireAuth, async (req, res) => {
     const params = [];
     if (allowedFacilities !== null) {
       if (allowedFacilities.length === 0)
-        return res.json({ ok: true, data: [] });
+        return res.json({ ok: true, data: [], scope, scopes });
       params.push(allowedFacilities);
       query += ` AND w.facility_id = ANY($${params.length})`;
     }
     query += ` ORDER BY a.requested_at DESC LIMIT 500`;
     const result = await db.query(query, params);
-    res.json({ ok: true, data: result.rows });
+    res.json({ ok: true, data: result.rows, scope, scopes });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }

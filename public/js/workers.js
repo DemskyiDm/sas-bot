@@ -122,6 +122,15 @@ async function loadWorkerStats() {
     if (!res || !res.data) return;
     const { data } = res;
     document.getElementById("statAllWorkers").textContent = data.total;
+    // координатор / регіональний: перший рядок — свої обʼєкти (регіон), нижче — уся фірма; адмін — як було
+    const allSub = document.getElementById("statAllSub");
+    const allCo = document.getElementById("statAllCompany");
+    if (allSub && allCo) {
+      const two = data.company_total != null;
+      allSub.textContent = !two ? "aktywnych" : data.scope === "region" ? "aktywnych w regionie" : "aktywnych na Twoich obiektach";
+      allCo.innerHTML = two ? `Cała firma: <b style="color:var(--text)">${Number(data.company_total)}</b>` : "";
+      allCo.hidden = !two;
+    }
     document.getElementById("statNewWorkers").textContent = data.new_this_week;
     document.getElementById("statStartedWorkers").textContent = data.started_this_week ?? "—";
     document.getElementById("statLeavingWeek").textContent = data.leaving_this_week;
@@ -255,7 +264,7 @@ async function saveWorker() {
 
   if (!res || !res.ok) { document.getElementById("wm_err").textContent = res?.error || "Blad zapisu"; return; }
   closeWorkerModal();
-  loadWorkersPage(); loadWorkers(); loadStats();
+  loadWorkersPage(); loadWorkers(); loadStats(); loadWorkerStats();
 }
 
 // ── HISTORY MODAL ─────────────────────────────────────────────

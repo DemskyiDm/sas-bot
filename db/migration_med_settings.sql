@@ -23,10 +23,13 @@ CREATE TABLE IF NOT EXISTS tgc.med_coords (
 
 CREATE TABLE IF NOT EXISTS tgc.med_facility (
   facility_id INT PRIMARY KEY REFERENCES public.facilities(id) ON DELETE CASCADE,
-  kind        TEXT NOT NULL DEFAULT 'badanie' CHECK (kind IN ('badanie', 'badanie_sanepid')),
+  kind        TEXT NOT NULL DEFAULT 'badanie',
   address     TEXT,
   updated_by  INT,
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- типи: badanie | badanie + sanepid | тільки sanepid (перезапуск міграції оновлює перевірку на вже створеній таблиці)
+ALTER TABLE tgc.med_facility DROP CONSTRAINT IF EXISTS med_facility_kind_check;
+ALTER TABLE tgc.med_facility ADD CONSTRAINT med_facility_kind_check CHECK (kind IN ('badanie', 'badanie_sanepid', 'sanepid'));
 
 COMMIT;

@@ -96,12 +96,17 @@ app.get("/", (req, res) => {
 });
 
 //Bot settings
-app.get("/api/facility-settings/:id", async (req, res) => {
-  const r = await db.query(
-    "SELECT * FROM facility_settings WHERE facility_id = $1",
-    [req.params.id],
-  );
-  res.json(r.rows[0]);
+// тільки з логіном; id — число (сканери смикають адреси з JS буквально: «/api/facility-settings/${facilityId}»)
+app.get("/api/facility-settings/:id", requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ ok: false, error: "Bad id" });
+  try {
+    const r = await db.query("SELECT * FROM facility_settings WHERE facility_id = $1", [id]);
+    res.json(r.rows[0] || null);
+  } catch (err) {
+    console.error("facility-settings error:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 // ── Reminder trigger ──────────────────────────────────────────

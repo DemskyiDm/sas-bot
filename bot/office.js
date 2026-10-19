@@ -110,7 +110,7 @@ async function medList(c, f0, opts) {
 // ── Медогляд: налаштування (db/migration_med_settings.sql) ─────────────
 // Тип медогляду (колонка «Typ badania») і адреса закладу (колонка «Adres») — однакові для всіх працівників закладу.
 // Панель «Badania lekarskie»: адмін / head і регіональні — завжди; координатори — якщо увімкнено в налаштуваннях.
-const MED_KINDS = { badanie: "badanie", badanie_sanepid: "badanie + sanepid" };
+const MED_KINDS = { badanie: "badanie", badanie_sanepid: "badanie + sanepid", sanepid: "sanepid" };
 const ADDRESS_MAX = 300;
 // Хто керує налаштуваннями: адмін / head — усе ({ regionIds: null }); регіональний — свої регіони; інші — null
 async function medManager(c) {

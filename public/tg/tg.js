@@ -325,7 +325,7 @@ function route() {
   }
   if (view === "adv" || view === "dof") { ST.lastDec = view; return renderDec(view); }
   if (view === "office") return renderOffice("adv");
-  if (view === "med") return renderOffice("med");
+  if (view === "med") return ST.home && ST.home.med_access === false ? go("req") : renderOffice("med");   // панель вимкнена (Ustawienia badań)
   if (view === "req") return renderReq();
   return renderHome();
 }
@@ -876,7 +876,7 @@ function renderReq() {
     </${go ? "button" : "div"}>`;
   $("view").innerHTML = `
     <div class="top"><div class="ttl"><h1>${esc(t.req_title)}</h1><div class="sub">${esc(t.req_sub)}</div></div>${langSeg()}</div>
-    <section id="reqMed">${card(t.req_med, t.req_med_d, `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/><rect x="3" y="3" width="18" height="18" rx="4"/></svg>`, "med")}</section>
+    ${ST.home && ST.home.med_access === false ? "" : `<section id="reqMed">${card(t.req_med, t.req_med_d, `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/><rect x="3" y="3" width="18" height="18" rx="4"/></svg>`, "med")}</section>`}
     <section id="reqFine">${card(t.req_fine, t.req_fine_d, `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>`)}</section>`;
 }
 

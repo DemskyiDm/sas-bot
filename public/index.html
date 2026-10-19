@@ -9,6 +9,7 @@
   <!-- xlsx-js-style: те саме API, що й xlsx, але вміє кольори/рамки (як у raporty.html) -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
   <link rel="stylesheet" href="/css/mobile.css" />
+  <link rel="stylesheet" href="/css/office.css" />
   <style>
     /* ── меню розділами ── */
     .nav-group { margin-bottom: 4px; }
@@ -42,6 +43,7 @@
           <div class="nav-item" data-page="advances" onclick="showPage('advances')">💰 Zaliczki</div>
           <div class="nav-item" data-page="workers" onclick="showPage('workers')">👥 Pracownicy</div>
           <div class="nav-item" data-page="dayoff" onclick="showPage('dayoff')">🏖️ Вихідні</div>
+          <div class="nav-item" data-page="medical" onclick="showPage('medical')">🩺 Badania lekarskie</div>
           <div class="nav-item" data-page="tabele" onclick="showPage('tabele')">🗂️ Табелі</div>
           <div class="nav-item" data-page="history" onclick="showPage('history')">📋 Historia</div>
         </div>
@@ -350,6 +352,8 @@
                   flex-wrap: wrap;
                   align-items: center;
                 ">
+              <!-- zatwierdzone zaliczki jednym mailem do biura (public/js/office.js) -->
+              <button class="btn btn-primary btn-sm" id="advOfficeBtn" onclick="openOfficeModal()">✉ Wyślij do biura</button>
               <label
                 style="display:flex; align-items:center; gap:6px; color:var(--text2); font-size:13px; cursor:pointer;">
                 <input type="checkbox" id="advSelectAll" onchange="toggleAllAdvances(this.checked)">
@@ -578,6 +582,7 @@
                   <th>ID</th>
                   <th>Imie i Nazwisko</th>
                   <th>Obiekt</th>
+                  <th>Stanowisko</th>
                   <th>Status</th>
                   <th>Telegram</th>
                   <th>BHP</th>
@@ -676,6 +681,17 @@
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      <!-- PAGE: BADANIA LEKARSKIE (public/js/office.js) — zamówienie badań dla osób z BHP w wybrane dni -->
+      <div id="pageMedical" style="display: none">
+        <div class="card">
+          <div style="display: flex; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); gap: 10px; flex-wrap: wrap">
+            <span style="font-size: 13px; font-weight: 600">🩺 Badania lekarskie</span>
+            <span style="font-size: 12px; color: var(--text2)">kto zaczyna pracę (BHP) w wybrane dni — jednym mailem do kliniki</span>
+          </div>
+          <div id="medBox" class="ofc-box"></div>
         </div>
       </div>
 
@@ -1047,6 +1063,7 @@
   <script src="/js/hours.js"></script>
   <script src="/js/workers.js"></script>
   <script src="/js/modules.js"></script>
+  <script src="/js/office.js"></script>  <!-- «Wyślij do biura» (zaliczki) i «Badania lekarskie» -->
 
   <!-- TABELE MODAL -->
   <div class="modal-overlay" id="tabeleModal">

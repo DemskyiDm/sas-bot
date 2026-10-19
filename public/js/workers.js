@@ -5,6 +5,11 @@ let pageWorkers = 1;
 let workersCurrentGroup = '';
 let workersCurrentFac = '';
 
+// Посада (Stanowisko) — з імпорту таблиць; ще не імпортована — «—»
+function escStan(s) {
+  return s ? String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])) : "—";
+}
+
 async function loadWorkersPage() {
   try {
     const res = await apiFetch("/api/workers/all");
@@ -162,6 +167,7 @@ function filterWorkers(reset = true) {
       <td><span style="font-family:var(--mono);font-size:11px">${w.login}</span></td>
       <td class="worker-name">${w.full_name}</td>
       <td style="color:var(--text2);font-size:12px">${w.facility_name || "—"}</td>
+      <td style="color:var(--text2);font-size:12px">${escStan(w.stanowisko)}</td>
       <td><span class="badge ${w.status === "pracuje" ? "badge-green"
       : w.status === "urlop" || w.status === "l4" ? "badge-purple"
         : w.status === "przeniesiony" ? "badge-orange"
@@ -176,7 +182,7 @@ function filterWorkers(reset = true) {
         <button class="btn btn-ghost btn-sm" onclick="openHistoryModal(${w.id},'${w.full_name.replace(/'/g, "\\'").replace(/"/g, "&quot;")}')">Historia</button>
       </td>
     </tr>`).join("") ||
-    `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
+    `<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
 
   renderPagination("paginationWorkers", pageWorkers, pages, "goPageWorkers");
 }

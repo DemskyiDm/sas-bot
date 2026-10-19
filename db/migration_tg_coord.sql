@@ -55,18 +55,23 @@ CREATE TABLE IF NOT EXISTS tgc.job_runs (
   PRIMARY KEY (job, key)
 );
 
--- ── «Відправити в офіс» (аванси листом через Microsoft 365) ─────────────────
--- Адресати: coordinator_id NULL — спільні (додає адмін, бачать усі), інакше — свої координатора
+-- ── Листи в офіс: аванси (adv) і замовлення медогляду (med) ────────────────
+-- Адресати: coordinator_id NULL — спільні (додає адмін, бачать усі), інакше — свої координатора.
+-- kind — окремі списки: аванси (бухгалтерія) і медогляд (клініка).
 CREATE TABLE IF NOT EXISTS tgc.mail_recipients (
   id             SERIAL PRIMARY KEY,
+  kind           TEXT NOT NULL DEFAULT 'adv',
   email          TEXT NOT NULL,
   name           TEXT,
   coordinator_id INT REFERENCES public.coordinators(id) ON DELETE CASCADE,
   created_by     INT,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS tgc_mail_recipients_uq ON tgc.mail_recipients (lower(email), COALESCE(coordinator_id, 0));
-ALTER TABLE tgc.prefs ADD COLUMN IF NOT EXISTS mail_last TEXT[];   -- кому надсилав минулого разу
+ALTER TABLE tgc.mail_recipients ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'adv';
+DROP INDEX IF EXISTS tgc.tgc_mail_recipients_uq;                                  -- версія 3 (без kind)
+CREATE UNIQUE INDEX IF NOT EXISTS tgc_mail_recipients_kind_uq ON tgc.mail_recipients (kind, lower(email), COALESCE(coordinator_id, 0));
+ALTER TABLE tgc.prefs ADD COLUMN IF NOT EXISTS mail_last TEXT[];       -- кому надсилав аванси минулого разу
+ALTER TABLE tgc.prefs ADD COLUMN IF NOT EXISTS mail_last_med TEXT[];   -- … і медогляд
 
 -- Надіслані листи і що в них було (status: sent / error — помилка теж записується, для історії)
 CREATE TABLE IF NOT EXISTS tgc.office_mails (
@@ -89,6 +94,12 @@ CREATE TABLE IF NOT EXISTS tgc.office_items (
   PRIMARY KEY (mail_id, kind, ref_id)
 );
 CREATE INDEX IF NOT EXISTS tgc_office_items_ref_idx ON tgc.office_items (kind, ref_id);
+
+-- ── Імпорт з таблиць: посада (Stanowisko) і окремо прізвище / імʼя ──────────
+-- Заповнюються при наступному імпорті (import_sheets.js). Без цих колонок імпорт працює, як раніше.
+ALTER TABLE public.worker_facility_history ADD COLUMN IF NOT EXISTS stanowisko TEXT;   -- посада в цьому періоді / на цьому обʼєкті
+ALTER TABLE public.workers ADD COLUMN IF NOT EXISTS last_name  TEXT;                   -- Nazwisko з таблиці
+ALTER TABLE public.workers ADD COLUMN IF NOT EXISTS first_name TEXT;                   -- Imię з таблиці
 
 COMMIT;
 

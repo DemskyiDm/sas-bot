@@ -221,13 +221,29 @@ function renderWeek() {
         <th title="Fakt / plan">Real.</th>${th("arr_unconf", "Bez<br>statusu")}${th("arr_rez", "Nie<br>dojechali")}${th("tr_entered", "Z przenie-<br>sienia")}
         ${th("dep_plan", "Plan", "sep")}${th("dep_now", "Wpisano")}${th("dep_fact", "Fakt")}${th("dep_unplanned", "Poza<br>planem")}${th("dep_fact_tr", "Przenie-<br>sienia")}
         <th class="sep">Liczeb-<br>ność</th></tr>
-    </thead><tbody>${rows.map((x) => line(x, false)).join("")}${line(t, true)}</tbody></table>`;
+    </thead><tbody>${ST.sort.key ? rows.map((x) => line(x, false)).join("") : withRegionRows(rows, 14, (x) => line(x, false))}${line(t, true)}</tbody></table>`;
   document.getElementById("weekNote").innerHTML = `
     <b>Nabór:</b> plan — ile ludzi trzeba zrekrutować (wpisuje koordynator w niedzielę); wpisano — nowi z pierwszym dniem w tym tygodniu,
     status „pracuje” lub bez statusu; fakt — rozpoczęli pracę (pierwszy dzień minął, status ustawiony); przeniesienia z innych obiektów liczone osobno.
     <b>Wyjazdy</b> — po ostatnim dniu pracy, bez rezygnacji. Plan — co było wpisane na tydzień w poniedziałek o 00:00;
     poza planem — wyjechali, a nie było ich w planie. Przeniesienie to wyjazd dla obiektu, ale nie dla firmy.
     Kliknij liczbę — lista ludzi.`;
+}
+// Порядок обʼєктів: регіон → координатор → обʼєкт, усе за алфавітом (без регіону / координатора — у кінці)
+function siteCmp(a, b) {
+  const pl = (x, y) => (x == null || x === "") - (y == null || y === "") || String(x || "").localeCompare(String(y || ""), "pl");
+  return pl(a.region_name, b.region_name) || pl(a.coordinator_name, b.coordinator_name) || pl(a.site_key, b.site_key);
+}
+// Рядки (уже в порядку siteCmp) з заголовком перед кожним регіоном — коли регіонів більше одного
+function withRegionRows(rows, cols, rowHtml) {
+  const multi = new Set(rows.map((x) => x.region_name || null)).size > 1;
+  let cur;
+  return rows.map((x, i) => {
+    const r = x.region_name || null;
+    const head = multi && r !== cur ? `<tr class="rg"><td class="l" colspan="${cols}" style="background:var(--surface2);font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">📍 ${esc(r || "Bez regionu")}</td></tr>` : "";
+    cur = r;
+    return head + rowHtml(x, i);
+  }).join("");
 }
 // Рядки таблиці тижня з урахуванням пошуку, «показати без руху» і сортування (і для Excel)
 function weekRowsShown() {
@@ -242,7 +258,7 @@ function weekRowsShown() {
   const key = ST.sort.key;
   rows.sort((a, b) => key
     ? ((key === "site_key" ? a.site_key.localeCompare(b.site_key) : (Number(a[key]) || 0) - (Number(b[key]) || 0)) * ST.sort.dir)
-    : gap(b) - gap(a) || (b.dep_unplanned || 0) - (a.dep_unplanned || 0) || a.site_key.localeCompare(b.site_key));
+    : siteCmp(a, b));
   return { rows, hidden, showEmpty };
 }
 function sortWeek(k) {
@@ -383,6 +399,7 @@ async function loadOrders() {
   const r = await api("/orders" + qs());
   if (my !== ST.seq || !r) return;
   if (!r.ok) { document.getElementById("ordTable").innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
+  r.rows.sort(siteCmp);   // індекс рядка (data-i) — у цьому порядку
   ST.orders = r;
   renderOrders();
 }
@@ -453,7 +470,7 @@ function renderOrders() {
       ${r.weeks.map((w) => `<th class="sep">${dd(w)}–${dd(addDays(w, 6))}</th>`).join("")}
       <th class="l sep">Stan</th><th></th></tr></thead><tbody>
     ${totalRow}
-    ${r.rows.map((row, i) => `<tr>
+    ${withRegionRows(r.rows, 12 + r.weeks.length, (row, i) => `<tr>
       <td class="l">${esc(row.site_key)}<div class="sub">${row.coordinator_name ? esc(row.coordinator_name) : "— bez koordynatora —"}</div></td>
       <td>${row.headcount}</td>
       <td class="sep">${planCur(row, i)}</td>
@@ -464,7 +481,7 @@ function renderOrders() {
         : `<span class="no-mark">do wpisania</span>`}
         <div class="sub">${row.weeks[0].entered_at ? "ost. zmiana " + esc(row.weeks[0].entered_at.slice(8, 10) + "." + row.weeks[0].entered_at.slice(5, 7) + " " + row.weeks[0].entered_at.slice(11)) : ""}</div></td>
       <td><button class="btn btn-ghost btn-sm" data-i="${i}" onclick="saveOrders(Number(this.dataset.i))">Zapisz</button></td>
-    </tr>`).join("")}</tbody></table>`;
+    </tr>`)}</tbody></table>`;
 }
 async function saveOrders(onlyRow) {
   const r = ST.orders;
@@ -698,7 +715,7 @@ async function exportPeople() {
     else if (started(x)) { if (x.kind === "transfer") s.trIn++; else s.newS++; }
   });
   plan.forEach((x) => { const s = g(x); s.plan++; if (!x.now_date) s.planNo++; });
-  const list = Object.values(S).sort((a, b) => a.site.localeCompare(b.site));
+  const list = Object.values(S).sort((a, b) => siteCmp({ site_key: a.site, coordinator_name: a.co, region_name: a.rg }, { site_key: b.site, coordinator_name: b.co, region_name: b.rg }));
   const sumK = (k) => list.reduce((a, x) => a + x[k], 0);
   const keys = ["out", "trOut", "unpl", "plan", "planNo", "newS", "trIn", "unc", "rez"];
   const ws0 = xlsxSheet("Podsumowanie po obiektach", sub,

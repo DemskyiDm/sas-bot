@@ -45,8 +45,9 @@ const rect = (x, y, w, h, fill) => `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}
 const hline = (x1, x2, y, color, w = 1) => `<line x1="${x1.toFixed(1)}" x2="${x2.toFixed(1)}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" stroke="${color}" stroke-width="${w}"/>`;
 const vline = (x, y1, y2, color) => `<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${y1.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${color}" stroke-width="1"/>`;
 
-// Клітинка: число, рядок або { v, tone: "red" | "amber" | "muted" | "bold" }
-function cellOf(c) {
+// Клітинка: число, рядок або { v, tone: "red" | "amber" | "muted" | "bold" }. Нуль у числовій колонці — порожньо
+function cellOf(c, col) {
+  if (col && col.kind === "num" && (c === 0 || c === "0")) return { v: "", tone: null, raw: 0 };
   if (c && typeof c === "object") return { v: c.v == null ? "—" : String(c.v), tone: c.tone || null, raw: c.v };
   return { v: c == null ? "—" : String(c), tone: null, raw: c };
 }
@@ -71,7 +72,7 @@ function cellStyle(col, cell, rowTone, isTotal) {
 // spec: { title, sub, groups: [{ label, span }] | null (над колонками після lead перших),
 //         lead: скільки перших колонок без групи, cols: [{ label: "…" | ["рядок 1", "рядок 2"],
 //         kind: "site" | "muted" | "num" | "pct" | "text" | "status", align: "left" | "center", sep }],
-//         rows: [{ cells: [...], tone: null | "red" | "amber" }], total: { cells } | null,
+//         rows: [{ cells: [...], tone: null | "red" | "amber" } | { section: "Регіон" }], total: { cells } | null,
 //         totalTop: true — «Разом» одразу під шапкою на кожній картинці (інакше — внизу останньої),
 //         legend: [{ tone: "red" | "amber", text }], note: "рядок" | ["рядок", …], footRight, maxRows, scale }
 function render(spec) {
@@ -86,7 +87,8 @@ function render(spec) {
   const widths = cols.map((c, i) => {
     let w = Math.max(...c.lines.map((l) => width(String(l).toUpperCase(), F.head, 600)));
     for (const r of all.concat(spec.total ? [spec.total] : [])) {
-      const cell = cellOf(r.cells[i]);
+      if (r.section) continue;
+      const cell = cellOf(r.cells[i], c);
       const st = cellStyle(c, cell, r.tone, r === spec.total);
       w = Math.max(w, width(cell.v, st.size, st.weight));
     }
@@ -106,11 +108,12 @@ function render(spec) {
   let tableW = widths.reduce((a, b) => a + b, 0);
   const legendW = (spec.legend || []).reduce((a, l) => a + 22 + width(l.text, F.foot, 400), 0) + Math.max(0, (spec.legend || []).length - 1) * 14;
   const notes = [].concat(spec.note || []).filter(Boolean);
+  const sectionW = Math.max(0, ...all.filter((r) => r.section).map((r) => width(String(r.section).toUpperCase(), F.head, 700) + 2 * CELL));
   const noteW = notes.length ? Math.max(...notes.map((n) => width(n, F.foot, 400))) : 0;
   const footRightW = spec.footRight ? width(spec.footRight, F.foot, 400) : 0;
   const titleW = width(spec.title + (pages.length > 1 ? " (9/9)" : ""), F.title, 700);
   const subW = spec.sub ? width(spec.sub, F.sub, 400) : 0;
-  const inner = Math.ceil(Math.max(tableW, titleW, subW, legendW, noteW, Math.min(footRightW + 200, tableW)));
+  const inner = Math.ceil(Math.max(tableW, sectionW, titleW, subW, legendW, noteW, Math.min(footRightW + 200, tableW)));
   if (inner > tableW) { widths[0] += inner - tableW; tableW = inner; }
   const W = inner + 2 * PAD;
 
@@ -154,12 +157,19 @@ function render(spec) {
     const top = !!(spec.total && spec.totalTop);
     // рядки
     const drawRow = (r, isTotal) => {
+      if (r.section) {   // заголовок групи (регіон) на всю ширину
+        S.push(rect(x0, y, tableW, ROW, C.totalBg));
+        S.push(txt(x0 + CELL + 2, y + ROW / 2 + F.head * 0.36 + 1, String(r.section).toUpperCase(), { size: F.head, weight: 700, fill: C.muted }));
+        y += ROW;
+        S.push(hline(x0, x0 + tableW, y, C.rule));
+        return;
+      }
       if (isTotal && top) S.push(rect(x0, y, tableW, ROW, C.totalBg));
       else if (isTotal) { S.push(rect(x0, y, tableW, ROW, C.totalBg)); S.push(hline(x0, x0 + tableW, y, C.ruleStrong, 2)); }
       else if (r.tone === "red") { S.push(rect(x0, y, tableW, ROW, C.redBg)); S.push(rect(x0, y, 4, ROW, C.red)); }
       else if (r.tone === "amber") { S.push(rect(x0, y, tableW, ROW, C.amberBg)); S.push(rect(x0, y, 4, ROW, C.amber)); }
       cols.forEach((c, i) => {
-        const cell = cellOf(r.cells[i]);
+        const cell = cellOf(r.cells[i], c);
         const st = cellStyle(c, cell, r.tone, isTotal);
         const left = c.align === "left";
         S.push(txt(left ? xs[i] + CELL + (i === 0 ? 2 : 0) : xs[i] + widths[i] / 2, y + ROW / 2 + st.size * 0.36, cell.v,

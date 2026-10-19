@@ -884,11 +884,12 @@ const TXD = {
     lagL: (s, f, p) => `• ${s} — ${B(f)} z ${B(p)} (${Math.round((f / p) * 100)}%)`,
   },
 };
-const txOf = (l) => ({ ...TX[langOf(l)], ...TXD[langOf(l)] });
+const txOf = (l) => ({ ...TX[langOf(l)], ...TXD[langOf(l)], noReg: IMGTX[langOf(l)].noReg });
 
 // Підписи картинок-таблиць (без HTML і емодзі: шрифт картинки їх не має)
 const IMGTX = {
   uk: {
+    noReg: "Без регіону",
     site: "Обʼєкт", coord: "Координатор", out: "Закінчили", in: "Почали", inTr: ["в т.ч.", "переведенням"], rez: ["Не", "доїхали"], unc: ["Без", "статусу"],
     rec: "Набір / план", total: "Разом", gToday: "Сьогодні", gWtd: "Тиждень на сьогодні", gSince: "З понеділка", gPlan: "План тижня", gFull: "За тиждень",
     dayTitle: (d) => `Виїзди і приїзди · ${d}`, daySub: "за день", weekTitle: (a, b) => `Тиждень ${a}${a === b ? "" : " – " + b}`,
@@ -901,6 +902,7 @@ const IMGTX = {
     oLegRed: "план не введено", oLegAmber: "не підтверджено після суботи",
   },
   ru: {
+    noReg: "Без региона",
     site: "Объект", coord: "Координатор", out: "Закончили", in: "Начали", inTr: ["в т.ч.", "переводом"], rez: ["Не", "доехали"], unc: ["Нет", "статуса"],
     rec: "Набор / план", total: "Итого", gToday: "Сегодня", gWtd: "Неделя на сегодня", gSince: "С понедельника", gPlan: "План недели", gFull: "За неделю",
     dayTitle: (d) => `Выезды и приезды · ${d}`, daySub: "за день", weekTitle: (a, b) => `Неделя ${a}${a === b ? "" : " – " + b}`,
@@ -913,6 +915,7 @@ const IMGTX = {
     oLegRed: "план не введён", oLegAmber: "не подтверждён после субботы",
   },
   pl: {
+    noReg: "Bez regionu",
     site: "Obiekt", coord: "Koordynator", out: "Zakończyli", in: "Rozpoczęli", inTr: ["w tym z", "przeniesienia"], rez: ["Nie", "dojechali"], unc: ["Bez", "statusu"],
     rec: "Nabór / plan", total: "Razem", gToday: "Dziś", gWtd: "Tydzień do dziś", gSince: "Od poniedziałku", gPlan: "Plan tygodnia", gFull: "Za tydzień",
     dayTitle: (d) => `Wyjazdy i przyjazdy · ${d}`, daySub: "dzień", weekTitle: (a, b) => `Tydzień ${a}${a === b ? "" : " – " + b}`,
@@ -1097,14 +1100,35 @@ async function dailyData(day, record) {
 const NAMES_MAX = 40;
 const NB = "\u00A0\u00A0\u00A0";       // відступ перед прізвищем
 function bySite(list, keyset) { return list.filter((x) => keyset.has(x.site_key)); }
+// Порядок обʼєктів у звітах: регіон → координатор → обʼєкт, усе за алфавітом (без регіону / координатора — у кінці)
+const metaOf = (k) => (SITES_CACHE || []).find((x) => x.site_key === k) || {};
+const byPl = (a, b) => (a == null) - (b == null) || String(a || "").localeCompare(String(b || ""), "pl");
+const siteCmp = (a, b) => {
+  const x = metaOf(a), y = metaOf(b);
+  return byPl(x.region_name, y.region_name) || byPl(x.coordinator_name, y.coordinator_name) || byPl(a, b);
+};
+// Сортує items за siteCmp; якщо в списку більше одного регіону — перед кожним регіоном вставляє head(назва)
+function withRegions(items, keyOf, head, noReg) {
+  items.sort((a, b) => siteCmp(keyOf(a), keyOf(b)));
+  const regOf = (x) => metaOf(keyOf(x)).region_name || null;
+  if (new Set(items.map(regOf)).size < 2) return items;
+  const out = [];
+  let cur;
+  items.forEach((x) => { const r = regOf(x); if (r !== cur) { out.push(head(r || noReg)); cur = r; } out.push(x); });
+  return out;
+}
+const regHead = (name) => `\n📍 <b>${esc(name)}</b>`;
 const coordOf = (k) => { const c = (SITES_CACHE || []).find((s) => s.site_key === k); return c && c.coordinator_name ? ` (${esc(c.coordinator_name)})` : ""; };
 // Рядок «Обʼєкт — N»; detail own / region — під ним прізвища, кожне з нового рядка; all — тільки кількість
 function siteBlocks(list, t, detail, extra) {
   const g = {};
   list.forEach((x) => { (g[x.site_key] = g[x.site_key] || []).push(x); });
-  const keys = Object.keys(g).sort((a, b) => g[b].length - g[a].length || a.localeCompare(b));
+  const keys = Object.keys(g);
   const out = [];
-  for (const k of keys.slice(0, 40)) {
+  let n = 0;
+  for (const k of withRegions(keys, (x) => x, (r) => ({ head: r }), t.noReg)) {
+    if (k.head) { out.push(regHead(k.head)); continue; }
+    if (++n > 40) break;
     out.push(`${esc(k)} — ${B(g[k].length)}${detail === "own" ? "" : coordOf(k)}`);
     if (detail === "all") continue;
     g[k].slice(0, NAMES_MAX).forEach((x) => out.push(NB + esc(x.full_name) + (extra ? extra(x) : "")));
@@ -1122,8 +1146,8 @@ function trDestLines(list, t) {
     const f = x.from_site || "?";
     d.n += n; d.from[f] = (d.from[f] || 0) + n;
   });
-  return Object.keys(g).sort((a, b) => g[b].n - g[a].n || a.localeCompare(b)).map((k) =>
-    `${esc(k)} ← ${B(g[k].n)}: ${Object.entries(g[k].from).sort((a, b) => b[1] - a[1]).map(([f, n]) => t.fromN(esc(f), n)).join(", ")}`);
+  return withRegions(Object.keys(g), (k) => k, (r) => ({ head: r }), t.noReg).map((k) => (k.head ? regHead(k.head) :
+    `${esc(k)} ← ${B(g[k].n)}: ${Object.entries(g[k].from).sort((a, b) => b[1] - a[1]).map(([f, n]) => t.fromN(esc(f), n)).join(", ")}`));
 }
 const scopeLine = (t, ts) => `<i>${ts.label === "own" ? t.sOwn : ts.label === "region" ? esc(t.sRegion(ts.regionName || "—")) : t.sAll}</i>`;
 const detailOf = (ts) => (ts.label === "own" ? "own" : ts.label === "region" ? "region" : "all");
@@ -1211,11 +1235,16 @@ function buildWeekToDate(data, ts, target) {
     if (n(s.arr_rez)) L.push(t.wRez(n(s.arr_rez)));
     if (n(s.arr_unconf)) L.push(t.wUnc(n(s.arr_unconf)));
     const act = (x) => n(x.dep_fact) + n(x.arr_fact) + n(x.tr_fact) + n(x.arr_rez);
-    const rows = wr.filter((x) => act(x) > 0).sort((a, b) => act(b) - act(a) || a.site_key.localeCompare(b.site_key));
+    const rows = wr.filter((x) => act(x) > 0);
     if (rows.length) {
       L.push("", t.bySite);
-      rows.slice(0, 70).forEach((x) => L.push(t.siteLine(esc(x.site_key) + (detail === "own" ? "" : coordOf(x.site_key)),
-        n(x.dep_fact) - n(x.dep_fact_tr), n(x.arr_fact) + n(x.tr_fact), n(x.tr_fact), n(x.arr_rez), n(x.dep_fact_tr))));
+      let cnt = 0;
+      withRegions(rows, (x) => x.site_key, (r) => ({ head: r }), t.noReg).forEach((x) => {
+        if (x.head) { if (cnt < 70) L.push(regHead(x.head)); return; }
+        if (++cnt > 70) return;
+        L.push(t.siteLine(esc(x.site_key) + (detail === "own" ? "" : coordOf(x.site_key)),
+        n(x.dep_fact) - n(x.dep_fact_tr), n(x.arr_fact) + n(x.tr_fact), n(x.tr_fact), n(x.arr_rez), n(x.dep_fact_tr)));
+      });
       if (rows.length > 70) L.push(t.more(rows.length - 70));
     }
     if (detail === "all") {
@@ -1230,7 +1259,7 @@ function buildWeekToDate(data, ts, target) {
   // хто відстає від темпу набору (як червоні рядки на картинці)
   const lag = wr.filter((x) => isLagging(n(x.arr_fact) + n(x.tr_fact), x.order_qty, data.pace))
     .map((x) => ({ k: x.site_key, f: n(x.arr_fact) + n(x.tr_fact), p: n(x.order_qty) }))
-    .sort((a, b) => a.f / a.p - b.f / b.p || b.p - a.p || a.k.localeCompare(b.k));
+    .sort((a, b) => siteCmp(a.k, b.k));
   if (lag.length) {
     L.push("", t.lagT(data.pace));
     lag.slice(0, 25).forEach((x) => L.push(t.lagL(esc(x.k) + (detail === "own" ? "" : coordOf(x.k)), x.f, x.p)));
@@ -1282,14 +1311,13 @@ function moveCols(it, own, groupLabels) {
 }
 // Набір / план, %, чи відстає від темпу
 function recCells(f, p, pace) {
-  if (p == null) return [{ v: `${f} / —`, tone: "muted" }, null, false];
+  if (p == null) return [{ v: f ? `${f} / —` : "", tone: "muted" }, null, false];   // ні набору, ні плану — порожньо
   return [`${f} / ${p}`, Number(p) > 0 ? `${Math.round((f / p) * 100)}%` : null, isLagging(f, p, pace)];
 }
-// Рядки: спершу найбільше відставання (найменший %), обʼєкти без плану — внизу
-function moveRows(items, own, pace) {
-  const pc = (x) => (x.p != null && Number(x.p) > 0 ? x.f / x.p : 9);
-  items.sort((a, b) => (a.p == null) - (b.p == null) || pc(a) - pc(b) || (b.p || 0) - (a.p || 0) || a.site.localeCompare(b.site));
-  return items.map((x) => {
+// Рядки: регіон (заголовком) → координатор → обʼєкт; відставання підсвічене червоним
+function moveRows(items, own, pace, noReg) {
+  return withRegions(items, (x) => x.site, (r) => ({ section: r }), noReg).map((x) => {
+    if (x.section) return x;
     const [rec, pct, lag] = recCells(x.f, x.p, pace);
     const cells = [x.site];
     if (!own) cells.push(x.coord || "—");
@@ -1337,7 +1365,7 @@ function dayTableSpec(data, ts, target) {
   return {
     title: it.dayTitle(`${t.days[dow]} ${dd(data.day)}`), sub: `${scopeText(t, ts)} · ${it.daySub}`,
     ...moveCols(it, own, [it.gToday, it.gWtd]),
-    rows: moveRows(items, own, data.pace),
+    rows: moveRows(items, own, data.pace, it.noReg),
     total: moveTotal(it, own, { out: sum("out"), in: sum("in"), unc: sum("unc"), inTr: sum("inTr"), rez: sum("rez"), f: wt.f, p: wt.p }, data.pace),
     totalTop: true,
     legend: [{ tone: "red", text: it.lag(data.pace) }], note: it.note, footRight: stamp(data.day),
@@ -1359,7 +1387,7 @@ function weekTableSpec(weekRows, ts, target, o) {
     }));
   return {
     title: o.title, sub: o.sub, ...moveCols(it, own, o.groups),
-    rows: moveRows(items, own, o.pace), total: moveTotal(it, own, weekTotalItem(wr), o.pace), totalTop: true,
+    rows: moveRows(items, own, o.pace, it.noReg), total: moveTotal(it, own, weekTotalItem(wr), o.pace), totalTop: true,
     empty: o.empty, legend: [{ tone: "red", text: o.legend }], note: it.note, footRight: stamp(o.day),
   };
 }
@@ -1374,17 +1402,17 @@ function wtdTableSpec(data, ts, target) {
 function ordersSpec(od, ts, target, today) {
   const t = txOf(target.lang), it = IMGTX[langOf(target.lang)];
   const own = ts.label === "own";
-  const order = { miss: 0, unc: 1, ok: 2 };
-  // спершу не введені, далі не підтверджені, далі готові; усередині — за координатором (без координатора — у кінці)
-  const rows = od.rows.slice().sort((a, b) => order[a.status] - order[b.status]
-    || (a.coordinator_name == null) - (b.coordinator_name == null)
-    || (a.coordinator_name || "").localeCompare(b.coordinator_name || "") || a.site_key.localeCompare(b.site_key));
+  // регіон → координатор → обʼєкт; рядки з самими нулями (план підтверджено, набору немає) не показуємо —
+  // «не введено» / «не підтверджено» лишаються: це і є те, що треба зробити
+  const rows = withRegions(od.rows.filter((x) => x.status !== "ok" || x.q.some((v) => Number(v) > 0)),
+    (x) => x.site_key, (r) => ({ section: r }), it.noReg);
   const label = { ok: it.oOk, unc: it.oUnc, miss: it.oMiss };
   const cols = [{ label: it.site, kind: "site", align: "left" }];
   if (!own) cols.push({ label: it.coord, kind: "muted", align: "left" });
   od.weeks.forEach((w, i) => cols.push({ label: dd(w), kind: "num", sep: i === 0 }));
   cols.push({ label: it.oStatus, kind: "status", align: "left", sep: true });
   const mk = (x) => {
+    if (x.section) return x;
     const cells = [x.site_key];
     if (!own) cells.push(x.coordinator_name || "—");
     x.q.forEach((v) => cells.push(v));
@@ -1578,17 +1606,20 @@ async function buildMonday(t, today) {
   if (t.orders) {
     const od = await ordersData(ts, today);
     L.push("", od.missing.length ? tx.missing(od.missing.length) : tx.allIn);
-    // по обʼєктах: «• NOTINO — 12 · 10 · 10 ✅», по фірмі й регіону — згруповано за координатором
+    // по обʼєктах: «• NOTINO — 12 · 10 · 10 ✅»; по фірмі й регіону — регіон → координатор → обʼєкти
     L.push("", tx.plansBy(od.weeks.map(dd).join(" · ")));
     const icon = { ok: "✅", unc: "⚠️", miss: "❌" };
-    const order = { miss: 0, unc: 1, ok: 2 };
     const line = (x) => `• ${esc(x.site_key)}: ${x.q.map((v) => (v == null ? "—" : B(v))).join(" · ")} ${icon[x.status]}`;
-    const sorted = od.rows.slice().sort((a, b) => order[a.status] - order[b.status] || a.site_key.localeCompare(b.site_key));
-    if (ts.label === "own") sorted.forEach((x) => L.push(line(x)));
+    const sorted = withRegions(od.rows.slice(), (x) => x.site_key, (r) => ({ head: r }), txOf(t.lang).noReg);
+    if (ts.label === "own") sorted.forEach((x) => { if (!x.head) L.push(line(x)); });
     else {
-      const g = {};
-      sorted.forEach((x) => { const c = x.coordinator_name || tx.noCoord; (g[c] = g[c] || []).push(x); });
-      Object.keys(g).sort((a, b) => a.localeCompare(b)).forEach((c) => { L.push(`<b>${esc(c)}</b>`); g[c].forEach((x) => L.push(line(x))); });
+      let coordNow;
+      sorted.forEach((x) => {
+        if (x.head) { L.push(regHead(x.head)); coordNow = undefined; return; }
+        const c = x.coordinator_name || tx.noCoord;
+        if (c !== coordNow) { L.push(`<b>${esc(c)}</b>`); coordNow = c; }
+        L.push(line(x));
+      });
     }
     const sums = od.weeks.map((_, i) => od.rows.reduce((a, x) => a + (x.q[i] || 0), 0));
     L.push(`${tx.plansTotal}: ${sums.map(B).join(" · ")}`, tx.plansLegend);

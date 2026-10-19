@@ -20,7 +20,9 @@ const ofcMedDate = (bhp) => { const t = ofcToday(); return bhp && bhp < t ? bhp 
 const OFC_ERR = {
   not_configured: "Poczta nie jest skonfigurowana", no_recipients: "Wybierz adresata", bad_email: "Nieprawidłowy adres e-mail",
   no_items: "Zaznacz osoby", changed: "Lista się zmieniła (ktoś już wysłał) — odświeżono", busy: "Mail jest już wysyłany",
-  admin_only: "Wspólnych adresatów dodaje admin", send_failed: "Nie udało się wysłać", range_too_long: "Zakres — maks. 31 dni",
+  admin_only: "Wspólnych adresatów dodaje admin",
+  med_off: "Panel badań nie jest dla Ciebie włączony (Ustawienia badań)", forbidden: "Brak dostępu",
+  bad_kind: "Nieprawidłowy typ badania", address_too_long: "Adres jest za długi", send_failed: "Nie udało się wysłać", range_too_long: "Zakres — maks. 31 dni",
 };
 const OFC_WHY = {
   no_nodemailer: "Na serwerze: npm install nodemailer, potem pm2 restart index.",
@@ -256,4 +258,88 @@ if (typeof loadAdvances === "function") {
 // ── Strona «Badania lekarskie» ─────────────────────────────────────────
 function loadMedicalPage() {
   ofcLoad("med", !!OFC.med);
+}
+
+// ── Ustawienia badań (admin i regionalni): komu panel badań, typ badania i adres zakładu ──────────
+// Jedna tabela: region → koordynator → obiekt → zakład. Panel włącza się koordynatorowi (pierwszy wiersz jego grupy),
+// typ i adres — dla zakładu; trafiają do kolumn «Typ badania» i «Adres» w mailu i Excelu.
+const MEDSET = { data: null, q: "" };
+async function loadMedSettingsPage() {
+  const box = document.getElementById("medSetBox");
+  box.innerHTML = `<div class="ofc-empty">Ładowanie…</div>`;
+  let r;
+  try { r = await apiFetch("/api/tg/office/med-settings"); } catch (e) { r = null; }
+  if (!r || !r.ok) { box.innerHTML = `<div class="ofc-bad">${ofcEsc((r && (OFC_ERR[r.error] || r.error)) || "Błąd")}</div>`; return; }
+  MEDSET.data = r;
+  box.innerHTML = `
+    <div class="ofc-bar">
+      <input type="text" id="medSetQ" placeholder="Szukaj: obiekt, zakład, koordynator…" value="${ofcEsc(MEDSET.q)}"
+        oninput="MEDSET.q=this.value;drawMedSettings()" style="min-width:260px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 9px;border-radius:6px;font-size:12px">
+      <span class="ofc-dim">${r.all ? "cała firma" : "Twoje regiony"} · zapis od razu po zmianie</span>
+    </div>
+    <div class="ofc-table" style="max-height:none"><table><thead><tr>
+      <th style="text-align:left">Koordynator</th><th>Panel badań</th><th style="text-align:left">Obiekt / zakład</th>
+      <th style="text-align:left">Typ badania</th><th style="text-align:left">Adres (dla wszystkich z zakładu)</th><th></th>
+    </tr></thead><tbody id="medSetBody"></tbody></table></div>
+    <div class="ofc-dim">Panel badań: admin, kierownictwo i koordynatorzy regionalni widzą go zawsze. Koordynator bez obiektu nie pojawia się w tabeli.</div>`;
+  drawMedSettings();
+}
+function drawMedSettings() {
+  const r = MEDSET.data;
+  const q = MEDSET.q.trim().toLowerCase();
+  const rows = r.rows.filter((x) => !q || [x.object, x.facility, x.coordinator, x.region].some((s) => (s || "").toLowerCase().includes(q)));
+  const body = document.getElementById("medSetBody");
+  if (!rows.length) { body.innerHTML = `<tr><td colspan="6" class="ofc-empty">Nic nie znaleziono</td></tr>`; return; }
+  const multiReg = new Set(rows.map((x) => x.region || null)).size > 1;
+  const kinds = Object.entries(r.kinds);
+  let reg, co, html = "";
+  rows.forEach((x) => {
+    const rg = x.region || null;
+    if (multiReg && rg !== reg) {
+      html += `<tr><td colspan="6" style="background:var(--surface2);font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">📍 ${ofcEsc(rg || "Bez regionu")}</td></tr>`;
+      reg = rg; co = undefined;
+    }
+    const first = x.coordinator_id !== co;
+    co = x.coordinator_id;
+    const panel = !first ? "" : !x.coordinator_id ? `<span class="ofc-dim">—</span>`
+      : x.always ? `<span class="ofc-dim" title="Admin / kierownik / regionalny — zawsze">zawsze</span>`
+      : `<label style="display:inline-flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" ${x.enabled ? "checked" : ""}
+           onchange="medSetCoord(${x.coordinator_id}, this)"> <span>${x.enabled ? "włączony" : "wyłączony"}</span></label>`;
+    const name = x.object === x.facility ? ofcEsc(x.facility) : `${ofcEsc(x.object)} <span class="ofc-dim">· ${ofcEsc(x.facility)}</span>`;
+    html += `<tr data-f="${x.facility_id}">
+      <td style="${first ? "font-weight:600" : ""}">${first ? ofcEsc(x.coordinator || "— bez koordynatora —") : ""}</td>
+      <td style="text-align:center">${panel}</td>
+      <td>${name}</td>
+      <td><select onchange="medSetFac(${x.facility_id})" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:5px;font-size:12px">
+        ${kinds.map(([k, l]) => `<option value="${k}" ${x.kind === k ? "selected" : ""}>${ofcEsc(l)}</option>`).join("")}</select></td>
+      <td><input type="text" maxlength="${r.address_max}" value="${ofcEsc(x.address || "")}" placeholder="np. ul. Lekarska 1, 00-001 Warszawa"
+        onchange="medSetFac(${x.facility_id})" style="width:100%;min-width:260px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:5px;font-size:12px"></td>
+      <td class="st" style="white-space:nowrap;font-size:12px"></td></tr>`;
+  });
+  body.innerHTML = html;
+}
+async function medSetCoord(id, el) {
+  el.disabled = true;
+  const r = await apiFetch("/api/tg/office/med-settings/coord", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ coordinator_id: id, enabled: el.checked }),
+  }).catch(() => null);
+  el.disabled = false;
+  if (!r || !r.ok) { el.checked = !el.checked; ofcToast((r && (OFC_ERR[r.error] || r.error)) || "Nie zapisano", true); return; }
+  MEDSET.data.rows.forEach((x) => { if (x.coordinator_id === id) x.enabled = el.checked; });
+  el.nextElementSibling.textContent = el.checked ? "włączony" : "wyłączony";
+  ofcToast(el.checked ? "Panel badań włączony" : "Panel badań wyłączony");
+}
+async function medSetFac(id) {
+  const tr = document.querySelector(`#medSetBody tr[data-f="${id}"]`);
+  const kind = tr.querySelector("select").value;
+  const address = tr.querySelector("input[type=text]").value;
+  const st = tr.querySelector(".st");
+  st.innerHTML = `<span class="ofc-dim">zapis…</span>`;
+  const r = await apiFetch("/api/tg/office/med-settings/facility", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ facility_id: id, kind, address }),
+  }).catch(() => null);
+  if (!r || !r.ok) { st.innerHTML = `<span class="ofc-bad">${ofcEsc((r && (OFC_ERR[r.error] || r.error)) || "Nie zapisano")}</span>`; return; }
+  const row = MEDSET.data.rows.find((x) => x.facility_id === id);
+  if (row) { row.kind = kind; row.address = address.trim(); }
+  st.innerHTML = `<span class="ofc-ok">✓ zapisano</span>`;
 }

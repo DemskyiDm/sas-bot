@@ -99,10 +99,10 @@ async function me(req) {
 router.get("/home", requireAuth, async (req, res) => {
   try {
     const c = await me(req);
-    const d = await coord().digestData(c);
+    const [d, medAccess] = await Promise.all([coord().digestData(c), require("../bot/office").medAccess(c)]);
     res.json({
       ok: true, lang: coord().langOf(c), full_name: c.full_name, linked: !!c.telegram_chat_id,
-      digest: c.digest, advance_std: coord().CFG.advanceStd, ...d,
+      digest: c.digest, advance_std: coord().CFG.advanceStd, med_access: medAccess, ...d,
     });
   } catch (e) { fail(res, e); }
 });
@@ -233,10 +233,42 @@ async function scoped(req, c) {
   const want = String(req.query.scope || (req.body && req.body.scope) || "");
   return coord().facsOf(c, ["own", "region", "all"].includes(want) ? want : undefined);
 }
+// Панель «Badania lekarskie» — лише кому увімкнено (Ustawienia badań); адмін / head і регіональні — завжди
+const MED_OFF = { ok: false, error: "med_off" };
+router.get("/office/med-access", requireAuth, async (req, res) => {
+  try {
+    const c = await me(req);
+    const [access, manage] = await Promise.all([office().medAccess(c), office().medManager(c)]);
+    res.json({ ok: true, access, manage: !!manage });
+  } catch (e) { fail(res, e); }
+});
+router.get("/office/med-settings", requireAuth, async (req, res) => {
+  try {
+    const r = await office().medSettings(await me(req));
+    if (!r) return res.status(403).json({ ok: false, error: "forbidden" });
+    res.json({ ok: true, ...r });
+  } catch (e) { fail(res, e); }
+});
+router.post("/office/med-settings/coord", requireAuth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const r = await office().medSaveCoord(await me(req), b.coordinator_id, !!b.enabled);
+    res.status(r.ok ? 200 : r.error === "forbidden" ? 403 : 400).json(r);
+  } catch (e) { fail(res, e); }
+});
+router.post("/office/med-settings/facility", requireAuth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const r = await office().medSaveFacility(await me(req), b.facility_id, b.kind, b.address);
+    res.status(r.ok ? 200 : r.error === "forbidden" ? 403 : 400).json(r);
+  } catch (e) { fail(res, e); }
+});
+
 router.get("/office", requireAuth, async (req, res) => {
   try {
     const kind = kindOf(req.query.kind);
     const c = await me(req);
+    if (kind === "med" && !(await office().medAccess(c))) return res.status(403).json(MED_OFF);
     const f = await scoped(req, c);
     let items, range = null;
     if (kind === "med") {
@@ -269,6 +301,7 @@ router.post("/office/send", requireAuth, async (req, res) => {
   try {
     const b = req.body || {};
     const c = await me(req);
+    if (kindOf(b.kind) === "med" && !(await office().medAccess(c))) return res.status(403).json(MED_OFF);
     const r = await office().send(kindOf(b.kind), c, b.ids, b.to, await scoped(req, c));
     res.status(r.ok ? 200 : r.error === "send_failed" ? 502 : 400).json(r);
   } catch (e) { fail(res, e); }

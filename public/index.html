@@ -43,7 +43,7 @@
           <div class="nav-item" data-page="advances" onclick="showPage('advances')">💰 Zaliczki</div>
           <div class="nav-item" data-page="workers" onclick="showPage('workers')">👥 Pracownicy</div>
           <div class="nav-item" data-page="dayoff" onclick="showPage('dayoff')">🏖️ Вихідні</div>
-          <div class="nav-item" data-page="medical" onclick="showPage('medical')">🩺 Badania lekarskie</div>
+          <div id="medicalLink" class="nav-item" data-page="medical" onclick="showPage('medical')" style="display: none">🩺 Badania lekarskie</div>
           <div class="nav-item" data-page="tabele" onclick="showPage('tabele')">🗂️ Табелі</div>
           <div class="nav-item" data-page="history" onclick="showPage('history')">📋 Historia</div>
         </div>
@@ -74,6 +74,7 @@
         <div class="nav-gh" onclick="toggleNavGroup('system')"><span>Ustawienia</span><span class="n"></span><span class="chev">▾</span></div>
         <div class="nav-gb">
           <div class="nav-item" data-page="settings" onclick="showPage('settings')">⚙️ Ustawienia</div>
+          <div id="medSetLink" class="nav-item" data-page="medset" onclick="showPage('medset')" style="display: none">🩺 Ustawienia badań</div>
           <div id="hoursReportLink" class="nav-item" onclick="location.href='raport-godzin.html'" style="display: none">⏰ Raport godzin</div>
           <div id="adminLink" class="nav-item" onclick="window.location = '/admin.html'" style="display: none">🛠️ Admin panel</div>
         </div>
@@ -703,6 +704,17 @@
         </div>
       </div>
 
+      <!-- PAGE: USTAWIENIA BADAŃ (public/js/office.js) — kto ma panel badań, typ badania i adres zakładu; admin i regionalni -->
+      <div id="pageMedset" style="display: none">
+        <div class="card">
+          <div style="display: flex; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); gap: 10px; flex-wrap: wrap">
+            <span style="font-size: 13px; font-weight: 600">🩺 Ustawienia badań</span>
+            <span style="font-size: 12px; color: var(--text2)">panel dla koordynatorów, typ badania i adres — trafiają do maila i Excela</span>
+          </div>
+          <div id="medSetBox" class="ofc-box"></div>
+        </div>
+      </div>
+
       <!-- PAGE: TABELE -->
       <div id="pageTabele" style="display: none">
         <div class="card">
@@ -1187,6 +1199,14 @@ fetch('/api/flow/me', { headers: { 'x-session': localStorage.getItem('sas_sessio
     .then(function (d) { if (d && d.has_access) document.getElementById('rozmowyLink').style.display = ''; })
     .catch(function () {});
 });
+// «Badania lekarskie» — komu włączono (Ustawienia badań); «Ustawienia badań» — admin i regionalni
+fetch('/api/tg/office/med-access', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (d) {
+    if (d && d.access) document.getElementById('medicalLink').style.display = '';
+    if (d && d.manage) document.getElementById('medSetLink').style.display = '';
+  })
+  .catch(function () {});
 fetch('/api/broadcast/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
   .then(function (r) { return r.ok ? r.json() : null; })
   .then(function (d) { if (d && d.has_access) document.getElementById('wysylkaLink').style.display = ''; })

@@ -181,6 +181,7 @@ function showPage(page) {
     "workers",
     "dayoff",
     "medical",
+    "medset",
     "tabele",
     "history",
     "settings",
@@ -225,6 +226,7 @@ async function loadPage(page) {
   }
   if (page === "dayoff") loadDayoffPage();
   if (page === "medical" && typeof loadMedicalPage === "function") loadMedicalPage();   // public/js/office.js
+  if (page === "medset" && typeof loadMedSettingsPage === "function") loadMedSettingsPage();
   if (page === "tabele") loadTabelePage();
   if (page === "history") loadHistoryPage();
   if (page === "settings") loadSettingsTable();

@@ -8,11 +8,30 @@ function isTestLogin(login) {
   return /^TEST_/i.test(login || "");
 }
 
+// Zakres jak w mini-panelu Telegram: own — moje obiekty, region — z regionem, all — cała firma.
+// Wybór zapamiętany w przeglądarce; bez niego — ten z Telegrama (serwer).
+const ADV_SCOPE_KEY = "sas_adv_scope";
+const ADV_SCOPE_PL = { own: "Moje obiekty", region: "Region", all: "Cała firma" };
+function advScopeGet() { try { return localStorage.getItem(ADV_SCOPE_KEY) || ""; } catch (e) { return ""; } }
+function setAdvScope(s) {
+  try { localStorage.setItem(ADV_SCOPE_KEY, s); } catch (e) { /* prywatne okno */ }
+  selectedAdvances.clear();
+  loadAdvances();
+}
+function renderAdvScope(scope, scopes) {
+  const box = document.getElementById("advScope");
+  if (!box) return;
+  box.innerHTML = scopes && scopes.length > 1 ? scopes.map((s) =>
+    `<button class="btn btn-ghost btn-sm${s === scope ? " adv-scope-on" : ""}" onclick="setAdvScope('${s}')">${ADV_SCOPE_PL[s] || s}</button>`).join("") : "";
+}
+
 async function loadAdvances() {
   try {
-    const res = await apiFetch("/api/advances");
+    const sc = advScopeGet();
+    const res = await apiFetch("/api/advances" + (sc ? "?scope=" + encodeURIComponent(sc) : ""));
     if (!res) return;
     allAdvancesData = res.data;
+    renderAdvScope(res.scope, res.scopes);
     const facSel = document.getElementById("advancesFacility");
     const facSet = new Set();
     allAdvancesData.forEach((a) => {

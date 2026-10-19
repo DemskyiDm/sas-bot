@@ -368,6 +368,8 @@
                 <input type="checkbox" id="advSelectAll" onchange="toggleAllAdvances(this.checked)">
                 Zaznacz wszystkie
               </label>
+              <!-- Moje obiekty / Region / Cała firma — jak w mini-panelu Telegram (modules.js → loadAdvances) -->
+              <span id="advScope" class="adv-scope"></span>
               <select id="advancesFacility" onchange="filterAdvances()" style="width: 180px">
                 <option value="">Wszystkie obiekty</option>
               </select>

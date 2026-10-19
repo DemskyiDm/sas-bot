@@ -648,6 +648,15 @@ router.get("/workers", requireAuth, async (req, res) => {
     `;
 
     const workers = await db.query(query, params);
+    // регіон і головний координатор обʼєкта (Region → Przypisania) — для порядку регіон → координатор → обʼєкт
+    const siteMeta = await db.query(
+      `SELECT f.id AS facility_id, rg.name AS region_name, c.full_name AS coordinator_name
+         FROM facilities f
+         JOIN reg.site_owner so ON so.site_key = reg.site_key(f.group_name, f.name) AND so.valid_to IS NULL
+         LEFT JOIN reg.regions rg ON rg.id = so.region_id
+         LEFT JOIN coordinators c ON c.id = so.coordinator_id`,
+    ).catch(() => ({ rows: [] }));   // без модуля регіонів
+    const metaByFac = Object.fromEntries(siteMeta.rows.map((x) => [x.facility_id, x]));
 
     const hoursRes = await db.query(
       `SELECT worker_id, work_date, hours, absence_type
@@ -677,7 +686,8 @@ router.get("/workers", requireAuth, async (req, res) => {
         return true;
       });
 
-      return { ...w, hours: filteredHours };
+      const m = metaByFac[w.facility_id] || {};
+      return { ...w, region_name: m.region_name || null, coordinator_name: m.coordinator_name || null, hours: filteredHours };
     });
 
     result.sort((a, b) =>

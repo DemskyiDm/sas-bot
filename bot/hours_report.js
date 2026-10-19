@@ -95,13 +95,44 @@ async function facilitiesFor(c, scope) {
   return [...ids];
 }
 
+// Регіон і головний координатор кожного закладу (Region → Przypisania); без модуля регіонів — порожньо
+async function facMeta() {
+  const r = await db.query(
+    `SELECT f.id AS facility_id, rg.name AS region_name, c.full_name AS coordinator_name
+       FROM facilities f
+       JOIN reg.site_owner so ON so.site_key = reg.site_key(f.group_name, f.name) AND so.valid_to IS NULL
+       LEFT JOIN reg.regions rg ON rg.id = so.region_id
+       LEFT JOIN coordinators c ON c.id = so.coordinator_id`,
+  ).catch(() => ({ rows: [] }));
+  return Object.fromEntries(r.rows.map((x) => [x.facility_id, x]));
+}
+// Блоки по закладах у порядку регіон → координатор → заклад (за алфавітом, без регіону — у кінці);
+// перед кожним регіоном — заголовок, коли регіонів більше одного. block(f) → текст блоку закладу { name, items }
+function byFacility(rows, meta, block) {
+  const g = {};
+  rows.forEach((x) => { (g[x.facility_id] = g[x.facility_id] || { name: x.facility_name, items: [] }).items.push(x); });
+  const pl = (a, b) => (a == null) - (b == null) || String(a || "").localeCompare(String(b || ""), "pl");
+  const list = Object.entries(g).map(([id, v]) => ({ ...v, region: (meta[id] || {}).region_name || null, coord: (meta[id] || {}).coordinator_name || null }));
+  list.sort((a, b) => pl(a.region, b.region) || pl(a.coord, b.coord) || pl(a.name, b.name));
+  const multi = new Set(list.map((x) => x.region)).size > 1;
+  const out = [];
+  let cur;
+  list.forEach((f) => {
+    if (multi && f.region !== cur) out.push(`\n📍 *${md(f.region || "Без регіону")}*`);
+    cur = f.region;
+    out.push(block(f));
+  });
+  return out.join("\n");
+}
+
 // ── Тексти (як у старому звіті) ───────────────────────────────────────
 async function buildMessages(facIds, y, st) {
   const out = [];
   const fac = facIds == null ? null : facIds;
+  const meta = await facMeta();
   if (st.yesterday_msg !== "0") {
     const r = await db.query(
-      `SELECT DISTINCT w.full_name, f.name AS facility_name
+      `SELECT DISTINCT w.full_name, f.name AS facility_name, f.id AS facility_id
          FROM worker_facility_history h
          JOIN workers w ON w.id = h.worker_id
          JOIN facilities f ON f.id = h.facility_id
@@ -113,10 +144,8 @@ async function buildMessages(facIds, y, st) {
         ORDER BY f.name, w.full_name`, [y, fac]);
     if (!r.rows.length) out.push(`✅ *Вчора (${dd(y)})*\nВсі заповнили години!`);
     else {
-      const byFac = {};
-      r.rows.forEach((x) => { (byFac[x.facility_name] = byFac[x.facility_name] || []).push(x.full_name); });
-      const lines = Object.entries(byFac).map(([f, names]) =>
-        `\n🏭 *${md(f)}* (${names.length}):\n` + names.map((n) => `  • ${md(n)}`).join("\n")).join("\n");
+      const lines = byFacility(r.rows, meta, (f) =>
+        `\n🏭 *${md(f.name)}* (${f.items.length}):\n` + f.items.map((x) => `  • ${md(x.full_name)}`).join("\n"));
       out.push(`⚠️ *Не заповнили вчора (${dd(y)})*\nВсього: ${r.rows.length}\n${lines}`);
     }
   }
@@ -124,7 +153,7 @@ async function buildMessages(facIds, y, st) {
     // з 1-го числа місяця вчорашнього дня по вчора включно (1-го числа — увесь попередній місяць)
     const from = y.slice(0, 8) + "01";
     const r = await db.query(
-      `SELECT w.full_name, f.name AS facility_name,
+      `SELECT w.full_name, f.name AS facility_name, f.id AS facility_id,
               ARRAY(SELECT to_char(gs::date, 'DD.MM')
                       FROM generate_series($1::date, $2::date, interval '1 day') gs
                      WHERE gs::date >= h.bhp_date
@@ -142,11 +171,8 @@ async function buildMessages(facIds, y, st) {
     const withMissing = r.rows.filter((x) => (x.missing_dates || []).length);
     if (!withMissing.length) out.push(`✅ *Місяць (${dd(from)}–${dd(y)})*\nНемає пропусків!`);
     else {
-      const byFac = {};
-      withMissing.forEach((x) => {
-        (byFac[x.facility_name] = byFac[x.facility_name] || []).push(`  • ${md(x.full_name)}: ${x.missing_dates.join(", ")}`);
-      });
-      const lines = Object.entries(byFac).map(([f, items]) => `\n🏭 *${md(f)}*:\n` + items.join("\n")).join("\n");
+      const lines = byFacility(withMissing, meta, (f) =>
+        `\n🏭 *${md(f.name)}*:\n` + f.items.map((x) => `  • ${md(x.full_name)}: ${x.missing_dates.join(", ")}`).join("\n"));
       out.push(`📋 *Пропуски з початку місяця (${dd(from)}–${dd(y)}, без сьогодні)*\nПрацівників: ${withMissing.length}\n${lines}`);
     }
   }

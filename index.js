@@ -20,6 +20,7 @@ const care = require("./api/care");
 const board = require("./api/board");
 const hoursReport = require("./bot/hours_report");
 const flow = require("./api/flow");
+const broadcast = require("./api/broadcast");   // Rekrutacja → Wysyłka wiadomości
 const referral = require("./bot/referral");
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -67,6 +68,7 @@ app.use("/api/board", board.router);
 app.use("/api/flow", flow.router);
 app.use("/api/hours-report", hoursReport.router);
 app.use("/api/ref", require("./api/ref").router);
+app.use("/api/broadcast", broadcast.router);
 app.use("/api", apiRoutes);
 app.use("/api", require("./api/reports"));
 app.use("/admin", adminRoutes);
@@ -387,5 +389,6 @@ require("./bot/coord").schedule(bot);
 hoursReport.schedule(bot);
 referral.schedule(bot);
 medcheck.schedule(bot);
+broadcast.schedule(bot);
 
 //new

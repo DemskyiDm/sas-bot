@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SAS Logistic — Wysyłka wiadomości</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <style>
+    /* ── tylko dla Rekrutacja → Wysyłka wiadomości ── */
+    .fl-view { display: none; }
+    .fl-view.active { display: block; }
+    .nav-sec { padding: 10px 10px 4px; font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+      color: var(--text3); font-family: var(--mono); user-select: none; }
+    .nav-badge { margin-left: auto; background: var(--accent); color: #fff; font-size: 10px; font-weight: 700;
+      border-radius: 9px; padding: 1px 7px; font-family: var(--mono); }
+    .nav-badge:empty { display: none; }
+    input[type="date"], input[type="text"].inp, textarea {
+      background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-size: 13px;
+      padding: 6px 9px; border-radius: 5px; outline: none; font-family: inherit; color-scheme: dark; }
+    textarea { width: 100%; min-height: 150px; resize: vertical; line-height: 1.45; box-sizing: border-box; }
+    textarea.small { min-height: 90px; }
+
+    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+    .section-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border);
+      font-size: 13px; font-weight: 600; flex-wrap: wrap; }
+    .section-head .cnt { font-size: 11px; color: var(--text2); font-weight: 400; }
+    .section-head .spacer { margin-left: auto; }
+    .section-body { padding: 12px 14px; }
+    .note { font-size: 11px; color: var(--text3); line-height: 1.5; margin-top: 8px; }
+    .error { color: var(--red); padding: 10px 14px; font-size: 12px; }
+    .empty, .loading { color: var(--text3); padding: 14px; font-size: 12px; }
+    .good { color: var(--green); } .warn { color: var(--accent2); } .bad { color: var(--red); } .dim { color: var(--text3); }
+
+    .modes { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+    .chip { padding: 6px 12px; font-size: 12px; border-radius: 14px; border: 1px solid var(--border);
+      background: transparent; color: var(--text2); cursor: pointer; white-space: nowrap; }
+    .chip.active { background: var(--surface2); color: var(--text); border-color: var(--accent); }
+    .chip.sm { padding: 3px 9px; font-size: 11px; }
+
+    .picklist { max-height: 340px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+    .pk-reg { padding: 7px 10px 3px; font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+      color: var(--text3); background: var(--surface2); position: sticky; top: 0; z-index: 1; }
+    .pk-row { display: flex; align-items: center; gap: 8px; padding: 5px 10px; font-size: 12px; cursor: pointer; border-bottom: 1px solid var(--border); }
+    .pk-row:hover { background: var(--surface2); }
+    .pk-row.grp { font-weight: 600; }
+    .pk-row.sub { padding-left: 32px; color: var(--text2); }
+    .pk-row .meta { margin-left: auto; font-size: 11px; color: var(--text3); font-family: var(--mono); }
+    .pk-row input { margin: 0; }
+
+    .sel-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .sel-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 12px; padding: 3px 4px 3px 10px; font-size: 12px; }
+    .sel-chip button { background: none; border: none; color: var(--text3); cursor: pointer; font-size: 13px; padding: 0 4px; }
+    .found { margin-top: 8px; }
+
+    .langs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
+    .langs label, .lbl { font-size: 11px; color: var(--text2); display: block; margin-bottom: 4px; }
+    details.more summary { cursor: pointer; font-size: 12px; color: var(--text2); margin-top: 10px; }
+    .counter { font-size: 11px; color: var(--text3); text-align: right; margin-top: 3px; font-family: var(--mono); }
+
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 12px; }
+    .kpi { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+    .kpi .l { font-size: 11px; color: var(--text2); }
+    .kpi .v { font-size: 22px; font-weight: 700; margin-top: 3px; font-variant-numeric: tabular-nums; }
+    .kpi .s { font-size: 11px; color: var(--text3); margin-top: 2px; }
+    .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .actions .msg { font-size: 12px; }
+
+    .tblwrap { overflow-x: auto; }
+    table.fl { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.fl th { text-align: left; padding: 7px 8px; font-size: 10px; letter-spacing: .6px; color: var(--text3);
+      border-bottom: 1px solid var(--border); font-family: var(--mono); text-transform: uppercase; white-space: nowrap; }
+    table.fl th.r, table.fl td.r { text-align: right; }
+    table.fl td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    table.fl td.r { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    table.fl td .sub { font-size: 10px; color: var(--text3); margin-top: 1px; }
+    table.fl tbody tr:hover td { background: var(--surface2); }
+    table.fl tr.rowlink { cursor: pointer; }
+    .txt { white-space: pre-wrap; max-width: 420px; color: var(--text2); }
+    .tag { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--border); color: var(--text2); white-space: nowrap; }
+    .tag.ok { color: var(--green); border-color: var(--green); }
+    .tag.bad { color: var(--red); border-color: var(--red); }
+    .tag.run { color: var(--accent); border-color: var(--accent); }
+
+    .drawer-bg { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 50; display: none; }
+    .drawer-bg.open { display: block; }
+    .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(720px, 100%); background: var(--surface);
+      border-left: 1px solid var(--border); z-index: 51; overflow-y: auto; transform: translateX(100%); transition: transform .2s; }
+    .drawer.open { transform: none; }
+    .dw-head { position: sticky; top: 0; background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 14px 18px; display: flex; gap: 12px; align-items: flex-start; z-index: 2; }
+    .dw-head h2 { font-size: 15px; margin: 0; }
+    .dw-head .sub { font-size: 12px; color: var(--text2); margin-top: 3px; }
+    .dw-close { margin-left: auto; background: var(--surface2); border: 1px solid var(--border); color: var(--text2);
+      border-radius: 5px; width: 28px; height: 28px; cursor: pointer; font-size: 14px; }
+    .dw-body { padding: 14px 18px; }
+
+    @media (max-width: 900px) { .langs { grid-template-columns: 1fr; } }
+    @media (max-width: 800px) { .content { padding: 12px; } .kpis { grid-template-columns: 1fr 1fr; } }
+  </style>
+  <link rel="stylesheet" href="/css/mobile.css" />
+</head>
+<body>
+  <div class="sidebar">
+    <button class="sidebar-toggle" onclick="toggleSidebar()" title="Ukryj / Przypnij menu">◀</button>
+    <div class="logo">
+      <div class="logo-tag">SAS LOGISTIC</div>
+      <div class="logo-name">Rekrutacja</div>
+    </div>
+    <div class="nav">
+      <div class="nav-item" onclick="location.href='index.html'">⬅️ Panel główny</div>
+      <div class="nav-sec">🎯 Rekrutacja</div>
+      <div class="nav-item active" data-view="compose" onclick="showView('compose')">✉️ Nowa wiadomość</div>
+      <div class="nav-item" data-view="history" onclick="showView('history')">🕘 Historia wysyłek <span class="nav-badge" id="badgeRun" title="W trakcie wysyłki"></span></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-title" id="topTitle">Wysyłka wiadomości</div>
+      <div class="topbar-right"><span id="userName" style="font-size: 12px; color: var(--text2)"></span></div>
+    </div>
+
+    <div class="content">
+      <div id="noAccess" class="section" style="display:none"><div class="error">Brak dostępu. Wysyłkę mają kierownictwo i koordynatorzy regionalni.</div></div>
+
+      <!-- ── Nowa wiadomość ── -->
+      <div class="fl-view active" id="view-compose">
+        <div class="section">
+          <div class="section-head">1. Do kogo <span class="cnt" id="scopeNote"></span></div>
+          <div class="section-body">
+            <div class="modes" id="modes">
+              <button class="chip active" data-mode="facility" onclick="setMode(this.dataset.mode)">🏭 Pracujący na obiekcie</button>
+              <button class="chip" data-mode="region" onclick="setMode(this.dataset.mode)">🗺️ Pracujący w regionie</button>
+              <button class="chip" data-mode="inactive" onclick="setMode(this.dataset.mode)">💤 Niepracujący</button>
+              <button class="chip" data-mode="workers" onclick="setMode(this.dataset.mode)">👤 Wybrane osoby</button>
+            </div>
+
+            <div id="pick-facility">
+              <input type="text" class="inp" id="facSearch" placeholder="Szukaj obiektu, zakładu, koordynatora…" oninput="renderFacilities()" style="width: 100%; max-width: 380px; margin-bottom: 8px" />
+              <div class="picklist" id="facList"><div class="loading">Ładowanie…</div></div>
+              <div class="note">Zaznacz obiekt — wybierze wszystkie jego zakłady. Liczba po prawej — ilu pracuje dziś.</div>
+            </div>
+
+            <div id="pick-region" style="display:none">
+              <div class="picklist" id="regList"></div>
+            </div>
+
+            <div id="pick-inactive" style="display:none">
+              <span class="lbl">Ostatni dzień pracy</span>
+              <div class="modes" id="sincePresets">
+                <button class="chip sm active" data-d="" onclick="setSince(this.dataset.d)">kiedykolwiek</button>
+                <button class="chip sm" data-d="30" onclick="setSince(this.dataset.d)">ostatnie 30 dni</button>
+                <button class="chip sm" data-d="90" onclick="setSince(this.dataset.d)">3 miesiące</button>
+                <button class="chip sm" data-d="180" onclick="setSince(this.dataset.d)">6 miesięcy</button>
+                <button class="chip sm" data-d="365" onclick="setSince(this.dataset.d)">rok</button>
+                <span class="lbl" style="display:inline; margin: 0 4px 0 8px">od</span><input type="date" id="sinceDate" onchange="setSince('date')" />
+              </div>
+              <span class="lbl">Region ostatniego miejsca pracy (nic nie zaznaczone — wszystkie)</span>
+              <div class="picklist" id="inRegList"></div>
+            </div>
+
+            <div id="pick-workers" style="display:none">
+              <input type="text" class="inp" id="wSearch" placeholder="Nazwisko lub ID (min. 2 znaki)…" oninput="searchWorkers()" style="width: 100%; max-width: 380px" />
+              <div class="found" id="wFound"></div>
+              <div class="sel-chips" id="wSelected"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">2. Treść <span class="cnt">Zwykły tekst; linki działają. Pracownik dostaje wersję w swoim języku, jeśli jest wpisana — inaczej główną.</span></div>
+          <div class="section-body">
+            <textarea id="body" placeholder="Np. Szukamy ludzi na nowy obiekt od poniedziałku… Napisz do koordynatora: +48 …" oninput="onText()"></textarea>
+            <div class="counter" id="bodyCnt"></div>
+            <details class="more" id="langBox">
+              <summary>Wersje językowe (opcjonalnie)</summary>
+              <div class="langs">
+                <div><label for="t_uk">🇺🇦 Українська</label><textarea class="small" id="t_uk" oninput="onText()"></textarea></div>
+                <div><label for="t_ru">Русский</label><textarea class="small" id="t_ru" oninput="onText()"></textarea></div>
+                <div><label for="t_pl">🇵🇱 Polski</label><textarea class="small" id="t_pl" oninput="onText()"></textarea></div>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">3. Odbiorcy i wysyłka <span class="cnt" id="audLabel"></span>
+            <span class="spacer"></span>
+            <button class="btn btn-ghost btn-sm" onclick="preview()">🔍 Pokaż odbiorców</button>
+          </div>
+          <div class="section-body">
+            <div id="audBox"><div class="dim" style="font-size:12px">Wybierz, do kogo wysłać, i kliknij „Pokaż odbiorców”.</div></div>
+            <div class="actions" style="margin-top: 12px">
+              <button class="btn btn-ghost btn-sm" onclick="sendTest()">🧪 Wyślij test do mnie</button>
+              <button class="btn btn-primary btn-sm" id="btnSend" onclick="sendAll()" disabled>📣 Wyślij</button>
+              <span class="msg" id="sendMsg"></span>
+            </div>
+            <div class="note">Wysyłka idzie w tle (ok. 20 wiadomości na sekundę) — można zamknąć stronę. Postęp i błędy — w „Historii wysyłek”.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Historia ── -->
+      <div class="fl-view" id="view-history">
+        <div class="section">
+          <div class="section-head">Historia wysyłek <span class="cnt" id="histCnt"></span><span class="spacer"></span>
+            <button class="btn btn-ghost btn-sm" onclick="loadHistory()">↻ Odśwież</button></div>
+          <div class="tblwrap" id="histTable"><div class="loading">Ładowanie…</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="drawer-bg" id="drawerBg" onclick="closeDrawer()"></div>
+  <div class="drawer" id="drawer" aria-hidden="true"></div>
+
+  <script src="js/wysylka.js"></script>
+  <script>
+  function toggleSidebar() {
+    const hidden = document.body.classList.toggle('sidebar-hidden');
+    const btn = document.querySelector('.sidebar-toggle');
+    if (btn) { btn.textContent = hidden ? '▶' : '◀'; btn.title = hidden ? 'Przypnij menu' : 'Ukryj / Przypnij menu'; }
+    try { localStorage.setItem('sas_sidebar_hidden', hidden ? '1' : '0'); } catch (e) {}
+  }
+  if ((function () { try { return localStorage.getItem('sas_sidebar_hidden') === '1'; } catch (e) { return false; } })() || window.innerWidth < 800) {
+    document.body.classList.add('sidebar-hidden');
+    const btn = document.querySelector('.sidebar-toggle');
+    if (btn) { btn.textContent = '▶'; btn.title = 'Przypnij menu'; }
+  }
+  </script>
+</body>
+</html>

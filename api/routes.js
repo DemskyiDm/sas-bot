@@ -458,11 +458,25 @@ router.get("/history", requireAuth, async (req, res) => {
 });
 
 // ── Workers stats ─────────────────────────────────────────────
+// Плитка «Wszyscy»: адмін — уся фірма; координатор / регіональний — свої обʼєкти (регіон),
+// а під ними — уся фірма (company_total; scope: own | region — є обʼєкти як регіональний).
+async function companyHeadcount(coordinator) {
+  const [all, lead] = await Promise.all([
+    db.query(`SELECT COUNT(*)::int AS n FROM v_worker_current w WHERE w.status = 'pracuje' AND w.${NOT_TEST}`),
+    db.query(
+      `SELECT EXISTS (SELECT 1 FROM reg.v_access v WHERE v.coordinator_id = $1 AND 'lead' = ANY(v.kinds)) AS lead`,
+      [coordinator.coordinator_id],
+    ).catch(() => ({ rows: [{ lead: false }] })),   // без модуля регіонів
+  ]);
+  return { company_total: all.rows[0].n, scope: lead.rows[0].lead ? "region" : "own" };
+}
+
 router.get("/workers/stats", requireAuth, async (req, res) => {
   try {
     const allowedFacilities = await getFacilityFilter(req.coordinator);
     let facFilter = "";
     const params = [];
+    const company = allowedFacilities !== null ? await companyHeadcount(req.coordinator) : {};
 
     if (allowedFacilities !== null) {
       if (allowedFacilities.length === 0) {
@@ -473,6 +487,8 @@ router.get("/workers/stats", requireAuth, async (req, res) => {
             new_this_week: 0,
             leaving_this_week: 0,
             leaving_this_month: 0,
+            started_this_week: 0,
+            ...company,
           },
         });
       }
@@ -531,6 +547,7 @@ router.get("/workers/stats", requireAuth, async (req, res) => {
         leaving_this_week: parseInt(leavingWeek.rows[0].count),
         leaving_this_month: parseInt(leavingMonth.rows[0].count),
         started_this_week: parseInt(startedWeek.rows[0].count),
+        ...company,
       },
     });
   } catch (err) {

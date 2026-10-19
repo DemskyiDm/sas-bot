@@ -257,10 +257,8 @@ async function loadStats() {
       data.hours,
     );
     document.getElementById("statMissingCount").textContent = data.missing;
-    document.getElementById("statAllWorkers").textContent = data.workers;
-    document.getElementById("statNewWorkers").textContent = "—";
-    document.getElementById("statLeavingWeek").textContent = "—";
-    document.getElementById("statLeavingMonth").textContent = "—";
+    // плитки вкладки «Pracownicy» (Wszyscy, Przyjęcia, Odejścia) заповнює тільки loadWorkerStats (workers.js):
+    // інакше, якщо ця відповідь приходила пізніше, там лишались «—» і число за вибраним обʼєктом
   } catch (e) {
     console.error(e);
   }

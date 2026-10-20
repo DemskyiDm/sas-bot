@@ -296,6 +296,17 @@ function scheduleImport() {
   );
 }
 
+const cron = require('node-cron');
+const { main: runHrappkaAudit } = require('./sync_hrrappka_diff');
+
+// Запуск щочетверга (або щопонеділка) о 08:00 ранку за Варшавою
+cron.schedule('0 8 * * 1', async () => {
+  console.log('--- Запуск щотижневого аудиту HRappka ---');
+  await runHrappkaAudit();
+}, {
+  timezone: "Europe/Warsaw"
+});
+
 app.get("/api/facility-settings-all", requireAuth, async (req, res) => {
   try {
     const user = req.coordinator;

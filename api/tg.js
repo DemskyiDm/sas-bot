@@ -228,7 +228,7 @@ router.post("/decide", requireAuth, async (req, res) => {
 // ── Листи в офіс (bot/office.js, пошта — api/mail.js): kind=adv — аванси, kind=med — замовлення медогляду ──
 // Ті самі запити — з мініпанелі й з веб-панелі (public/js/office.js). scope (необовʼязково) — зріз лише для цього запиту.
 const office = () => require("../bot/office");
-const kindOf = (k) => (k === "med" ? "med" : "adv");
+const kindOf = (k) => (k === "med" || k === "fin" ? k : "adv");
 async function scoped(req, c) {
   const want = String(req.query.scope || (req.body && req.body.scope) || "");
   return coord().facsOf(c, ["own", "region", "all"].includes(want) ? want : undefined);
@@ -275,6 +275,8 @@ router.get("/office", requireAuth, async (req, res) => {
       range = office().medRange(req.query.from, req.query.to);
       if (range.error) return res.status(400).json({ ok: false, error: range.error });
       items = await office().medList(c, f, range);
+    } else if (kind === "fin") {
+      items = (await fines().unsent(c, f)).map((x) => ({ ...x, id: Number(x.id), ordered_at: null }));
     } else items = await office().pendingAdvances(c, f);
     const [rc, hist, my] = await Promise.all([office().recipients(c, kind), office().history(c, kind), office().myEmail(c)]);
     const m = require("./mail");
@@ -305,6 +307,39 @@ router.post("/office/send", requireAuth, async (req, res) => {
     const r = await office().send(kindOf(b.kind), c, b.ids, b.to, await scoped(req, c));
     res.status(r.ok ? 200 : r.error === "send_failed" ? 502 : 400).json(r);
   } catch (e) { fail(res, e); }
+});
+
+// ── Штрафи (bot/fines.js): виписка з картки працівника (мініпанель) і з веб-панелі (Kary) ──
+const fines = () => require("../bot/fines");
+const FIN_CODE = { forbidden: 403, not_found: 404, sent_admin_only: 403 };
+const finOut = (res, r) => res.status(r.ok ? 200 : FIN_CODE[r.error] || 400).json(r);
+router.get("/fines", requireAuth, async (req, res) => {
+  try { res.json(await fines().page(await me(req), req.query || {})); } catch (e) { fail(res, e); }
+});
+router.get("/fines/search", requireAuth, async (req, res) => {
+  try { res.json({ ok: true, rows: await fines().search(await me(req), req.query.q) }); } catch (e) { fail(res, e); }
+});
+router.get("/fines/worker/:id", requireAuth, async (req, res) => {
+  try { finOut(res, await fines().workerInfo(await me(req), req.params.id)); } catch (e) { fail(res, e); }
+});
+router.get("/fines/types", requireAuth, async (req, res) => {
+  try {
+    const c = await me(req);
+    const all = fines().isManager(c);
+    res.json({ ok: true, types: await fines().types(all), can_manage: all });
+  } catch (e) { fail(res, e); }
+});
+router.post("/fines/types", requireAuth, async (req, res) => {
+  try { finOut(res, await fines().saveType(await me(req), req.body || {})); } catch (e) { fail(res, e); }
+});
+router.post("/fines", requireAuth, async (req, res) => {
+  try { finOut(res, await fines().issue(await me(req), req.body || {})); } catch (e) { fail(res, e); }
+});
+router.post("/fines/:id/update", requireAuth, async (req, res) => {
+  try { finOut(res, await fines().update(await me(req), req.params.id, req.body || {})); } catch (e) { fail(res, e); }
+});
+router.post("/fines/:id/cancel", requireAuth, async (req, res) => {
+  try { finOut(res, await fines().cancel(await me(req), req.params.id, (req.body || {}).reason)); } catch (e) { fail(res, e); }
 });
 
 router.post("/lang", requireAuth, async (req, res) => {

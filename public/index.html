@@ -43,6 +43,7 @@
           <div class="nav-item" data-page="advances" onclick="showPage('advances')">💰 Zaliczki</div>
           <div class="nav-item" data-page="workers" onclick="showPage('workers')">👥 Pracownicy</div>
           <div class="nav-item" data-page="dayoff" onclick="showPage('dayoff')">🏖️ Вихідні</div>
+          <div class="nav-item" data-page="fines" onclick="showPage('fines')">⚠️ Kary</div>
           <div id="medicalLink" class="nav-item" data-page="medical" onclick="showPage('medical')" style="display: none">🩺 Badania lekarskie</div>
           <div class="nav-item" data-page="tabele" onclick="showPage('tabele')">🗂️ Табелі</div>
           <div class="nav-item" data-page="history" onclick="showPage('history')">📋 Historia</div>
@@ -706,6 +707,17 @@
         </div>
       </div>
 
+      <!-- PAGE: KARY (public/js/fines.js) — wystawione kary: Moje obiekty / Region / Cała firma, nowa kara, mail do biura -->
+      <div id="pageFines" style="display: none">
+        <div class="card">
+          <div style="display: flex; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); gap: 10px; flex-wrap: wrap">
+            <span style="font-size: 13px; font-weight: 600">⚠️ Kary</span>
+            <span style="font-size: 12px; color: var(--text2)">kary pracowników — wystawienie, anulowanie, wysyłka do biura</span>
+          </div>
+          <div id="finBox" class="ofc-box"></div>
+        </div>
+      </div>
+
       <!-- PAGE: USTAWIENIA BADAŃ (public/js/office.js) — kto ma panel badań, typ badania i adres zakładu; admin i regionalni -->
       <div id="pageMedset" style="display: none">
         <div class="card">
@@ -1085,7 +1097,8 @@
   <script src="/js/hours.js"></script>
   <script src="/js/workers.js"></script>
   <script src="/js/modules.js"></script>
-  <script src="/js/office.js"></script>  <!-- «Wyślij do biura» (zaliczki) i «Badania lekarskie» -->
+  <script src="/js/office.js"></script>
+  <script src="/js/fines.js"></script>  <!-- «Kary» (po office.js — korzysta z ofcEsc / ofcToast) -->  <!-- «Wyślij do biura» (zaliczki) i «Badania lekarskie» -->
 
   <!-- TABELE MODAL -->
   <div class="modal-overlay" id="tabeleModal">

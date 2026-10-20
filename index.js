@@ -395,5 +395,6 @@ hoursReport.schedule(bot);
 referral.schedule(bot);
 medcheck.schedule(bot);
 broadcast.schedule(bot);
+require("./bot/fines").schedule(bot);   // штрафи: повідомлення працівнику
 
 //new

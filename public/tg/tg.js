@@ -68,6 +68,24 @@ const L = {
     med_date_note: "Дата медогляду в листі — дата відправки, але не пізніше BHP.",
     req_fine: "Штрафи", req_fine_d: "Штрафи й утримання працівників",
     soon: "Розділ у розробці",
+    fin_title: "Штрафи", fin_sub: "Виписані штрафи · ваші обʼєкти",
+    fin_new_title: "Новий штраф", fin_edit_title: "Змінити штраф",
+    fin_search_ph: "Прізвище або паспорт працівника", fin_found: "Оберіть працівника", fin_nobody: "Нікого не знайдено",
+    fin_kpi: (n, z, o) => `${n} шт. · ${z} zł · не в офісі: ${o}`, fin_month: "Цей місяць", fin_empty: "Цього місяця штрафів немає.",
+    fin_office: (n) => `Надіслати в офіс · ${n}`,
+    fin_fac: "Підприємство", fin_pass: "Паспорт", fin_hm: "Годин цей міс.", fin_hp: "Годин мин. міс.",
+    fin_type: "Тип штрафу", fin_amount: "Сума, zł", fin_date: "Дата", fin_note: "Коментар", fin_note_ph: "Необовʼязково",
+    fin_manual: "вписати", fin_save: "Виписати штраф", fin_update: "Зберегти зміни",
+    fin_ok: (z) => `Штраф виписано: ${z} zł`, fin_ok_upd: "Зміни збережено", fin_notified: "Працівник отримав повідомлення в боті.",
+    fin_hist: "Штрафи працівника", fin_cancel_q: "Скасувати штраф? Працівник отримає повідомлення.", fin_cancelled: "Штраф скасовано",
+    fin_cancel: "Скасувати", fin_edit: "Змінити", fin_no_rights: "На цьому обʼєкті ви не можете виписувати штрафи.",
+    fin_st: { open: "не в офісі", sent: "в офісі", cancelled: "скасовано" },
+    fin_err: { bad_amount: "Вкажіть суму", bad_date: "Дата — не пізніше сьогодні і не раніше 120 днів", bad_type: "Оберіть тип штрафу",
+      forbidden: "Немає прав на цьому обʼєкті", not_found: "Не знайдено", sent_admin_only: "Уже в офісі — змінити може лише адмін",
+      already_cancelled: "Уже скасовано" },
+    fin_off_title: "Штрафи в офіс", fin_off_sub: "Виписані й не надіслані — одним листом з Excel",
+    fin_off_items: (n) => `Штрафи · ${n}`, fin_off_empty: "Усі штрафи вже надіслані.",
+    fin_off_sum: (n, z) => `${n} шт. · разом ${z} zł · таблиця в листі + Excel`, fin_off_ok: (n) => `Лист надіслано: ${n} шт.`,
     e_title: "Вхід не вдався", e_not_linked: "Цей Telegram не привʼязаний до панелі. Увійдіть у панель на компʼютері → кнопка «Telegram» → відкрийте посилання тут.",
     e_no_account: "Для вашого профілю немає облікового запису панелі. Зверніться до адміністратора.",
     e_bad_init: "Не вдалося перевірити вхід Telegram. Закрийте панель і відкрийте знову кнопкою «Panel».",
@@ -134,6 +152,24 @@ const L = {
     med_date_note: "Дата медосмотра в письме — дата отправки, но не позже BHP.",
     req_fine: "Штрафы", req_fine_d: "Штрафы и удержания работников",
     soon: "Раздел в разработке",
+    fin_title: "Штрафы", fin_sub: "Выписанные штрафы · ваши объекты",
+    fin_new_title: "Новый штраф", fin_edit_title: "Изменить штраф",
+    fin_search_ph: "Фамилия или паспорт работника", fin_found: "Выберите работника", fin_nobody: "Никого не найдено",
+    fin_kpi: (n, z, o) => `${n} шт. · ${z} zł · не в офисе: ${o}`, fin_month: "Этот месяц", fin_empty: "В этом месяце штрафов нет.",
+    fin_office: (n) => `Отправить в офис · ${n}`,
+    fin_fac: "Предприятие", fin_pass: "Паспорт", fin_hm: "Часов этот мес.", fin_hp: "Часов прош. мес.",
+    fin_type: "Тип штрафа", fin_amount: "Сумма, zł", fin_date: "Дата", fin_note: "Комментарий", fin_note_ph: "Необязательно",
+    fin_manual: "вписать", fin_save: "Выписать штраф", fin_update: "Сохранить изменения",
+    fin_ok: (z) => `Штраф выписан: ${z} zł`, fin_ok_upd: "Изменения сохранены", fin_notified: "Работник получил сообщение в боте.",
+    fin_hist: "Штрафы работника", fin_cancel_q: "Отменить штраф? Работник получит сообщение.", fin_cancelled: "Штраф отменён",
+    fin_cancel: "Отменить", fin_edit: "Изменить", fin_no_rights: "На этом объекте вы не можете выписывать штрафы.",
+    fin_st: { open: "не в офисе", sent: "в офисе", cancelled: "отменён" },
+    fin_err: { bad_amount: "Укажите сумму", bad_date: "Дата — не позже сегодня и не раньше 120 дней", bad_type: "Выберите тип штрафа",
+      forbidden: "Нет прав на этом объекте", not_found: "Не найдено", sent_admin_only: "Уже в офисе — изменить может только админ",
+      already_cancelled: "Уже отменён" },
+    fin_off_title: "Штрафы в офис", fin_off_sub: "Выписанные и не отправленные — одним письмом с Excel",
+    fin_off_items: (n) => `Штрафы · ${n}`, fin_off_empty: "Все штрафы уже отправлены.",
+    fin_off_sum: (n, z) => `${n} шт. · всего ${z} zł · таблица в письме + Excel`, fin_off_ok: (n) => `Письмо отправлено: ${n} шт.`,
     e_title: "Вход не удался", e_not_linked: "Этот Telegram не привязан к панели. Войдите в панель на компьютере → кнопка «Telegram» → откройте ссылку здесь.",
     e_no_account: "Для вашего профиля нет учётной записи панели. Обратитесь к администратору.",
     e_bad_init: "Не удалось проверить вход Telegram. Закройте панель и откройте снова кнопкой «Panel».",
@@ -240,7 +276,8 @@ async function authTelegram() {
 function onBack() {
   if (!$("sheet").hidden || !$("rsheet").hidden) return closeSheets();
   if (ST.view === "office") return go("adv");
-  if (ST.view === "med") return go("req");
+  if (ST.view === "med" || ST.view === "fines") return go("req");
+  if (ST.view === "fine" || ST.view === "finoff") return go("fines");
   if (ST.view !== "home") return go("home");
 }
 
@@ -311,9 +348,9 @@ function openPanel(path) {
 }
 function route() {
   const [v, arg] = hashRoute().split(":");
-  const view = ["home", "hours", "req", "adv", "dof", "office", "med"].includes(v) ? v : "home";
+  const view = ["home", "hours", "req", "adv", "dof", "office", "med", "fines", "fine", "finoff"].includes(v) ? v : "home";
   ST.view = view;
-  const tab = view === "adv" || view === "dof" || view === "office" ? "dec" : view === "med" ? "req" : view;
+  const tab = view === "adv" || view === "dof" || view === "office" ? "dec" : ["med", "fines", "fine", "finoff"].includes(view) ? "req" : view;
   document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
   if (TGW) { try { if (view === "home") TGW.BackButton.hide(); else TGW.BackButton.show(); } catch (e) { /* старий клієнт */ } }
   closeSheets();
@@ -326,6 +363,9 @@ function route() {
   if (view === "adv" || view === "dof") { ST.lastDec = view; return renderDec(view); }
   if (view === "office") return renderOffice("adv");
   if (view === "med") return ST.home && ST.home.med_access === false ? go("req") : renderOffice("med");   // панель вимкнена (Ustawienia badań)
+  if (view === "fines") return renderFines();
+  if (view === "fine") return renderFine(arg);
+  if (view === "finoff") return renderOffice("fin");
   if (view === "req") return renderReq();
   return renderHome();
 }
@@ -746,14 +786,16 @@ async function renderOffice(kind, keepSel) {
     const known = new Set(r.recipients.map((x) => x.email.toLowerCase()));
     o.to = new Set((r.last || []).filter((e) => known.has(String(e).toLowerCase())).map((e) => String(e).toLowerCase()));
   }
-  if (ST.view === (kind === "med" ? "med" : "office")) drawOffice(kind);
+  if (ST.view === ({ med: "med", fin: "finoff" }[kind] || "office")) drawOffice(kind);
 }
 function drawOffice(kind) {
   const t = T();
   const o = offState(kind);
   const r = o.data;
   const med = kind === "med";
+  const fin = kind === "fin";
   const std = r.advance_std || 300;
+  const finSel = fin ? r.items.filter((x) => o.sel.has(x.id)).reduce((a, x) => a + Number(x.amount || 0), 0) : 0;
   const free = r.items.filter((x) => !x.ordered_at);
   const n = free.filter((x) => o.sel.has(x.id)).length;
   const canSend = r.configured && n > 0 && o.to.size > 0;
@@ -766,7 +808,9 @@ function drawOffice(kind) {
   };
   const row = (x) => {
     const done = !!x.ordered_at;
-    const line2 = med
+    const line2 = fin
+      ? `${esc(x.facility || "—")} · ${esc(finTypeName(x))} · <strong>${esc(String(x.amount))} zł</strong> · ${esc(dd(x.fine_date))}`
+      : med
       ? `${esc(x.facility)} · BHP ${esc(dd(x.bhp))}${done ? ` · <span class="sent">✉ ${esc(t.med_done(ddhm(x.ordered_at)))}</span>` : ""}`
       : `${esc(x.facility)} · ${esc(t.off_appr(ddhm(x.approved_at), fmtH(x.hours)))}`;
     const name = med ? `${x.last_name} ${x.first_name}`.trim() : x.full_name;
@@ -780,8 +824,8 @@ function drawOffice(kind) {
     return `<button class="chip ${q.from === rng.from && q.to === rng.to ? "on" : ""}" onclick="medQuick('${k}')">${esc(label)}</button>`;
   };
   $("view").innerHTML = `
-    <div class="top"><div class="ttl"><h1>${esc(med ? t.med_title : t.off_title)}</h1>
-      <div class="sub">${esc(med ? t.med_sub : t.off_sub(r.window_days || 31))}</div></div>${langSeg()}</div>
+    <div class="top"><div class="ttl"><h1>${esc(fin ? t.fin_off_title : med ? t.med_title : t.off_title)}</h1>
+      <div class="sub">${esc(fin ? t.fin_off_sub : med ? t.med_sub : t.off_sub(r.window_days || 31))}</div></div>${langSeg()}</div>
     ${r.configured ? "" : `<div class="note-ro">${esc(t.off_nocfg)}${r.mail && r.mail.reason && t.off_why[r.mail.reason] ? `<br>${esc(t.off_why[r.mail.reason])}` : ""}</div>`}
     ${scopeSeg(r.scope, r.scopes)}
     ${med ? `<section class="sec">
@@ -791,10 +835,10 @@ function drawOffice(kind) {
         <label><span>${esc(t.med_to)}</span><input type="date" value="${esc(rng.to)}" onchange="medDates(null, this.value)" /></label>
       </div></section>` : ""}
     <section class="sec">
-      <div class="grp-h"><h2>${esc(med ? t.med_items(r.items.length) : t.off_items(r.items.length))}</h2>
+      <div class="grp-h"><h2>${esc(fin ? t.fin_off_items(r.items.length) : med ? t.med_items(r.items.length) : t.off_items(r.items.length))}</h2>
         ${free.length ? `<button class="mini" onclick="offAll('${kind}', ${n < free.length})">${esc(n < free.length ? t.off_all : t.off_none)}</button>` : ""}</div>
       ${r.items.length ? `<div class="list">${r.items.map(row).join("")}</div>`
-        : `<div class="list"><div class="empty">${esc(med ? t.med_empty : t.off_empty)}</div></div>`}
+        : `<div class="list"><div class="empty">${esc(fin ? t.fin_off_empty : med ? t.med_empty : t.off_empty)}</div></div>`}
     </section>
     <section class="sec">
       <h2>${esc(med ? t.med_to_h : t.off_to)}</h2>
@@ -807,7 +851,7 @@ function drawOffice(kind) {
       <div class="sub">${esc(r.my_email ? t.off_cc(r.my_email) : t.off_nocc)}${r.from ? `<br>${esc(t.off_from(r.from))}` : ""}${med ? `<br>${esc(t.med_date_note)}` : ""}</div>
     </section>
     <div class="sendbar">
-      <div class="sum">${esc(med ? t.med_sum(n) : t.off_sum(n, n * std))}</div>
+      <div class="sum">${esc(fin ? t.fin_off_sum(n, Math.round(finSel * 100) / 100) : med ? t.med_sum(n) : t.off_sum(n, n * std))}</div>
       <button id="offSend" class="btn primary wide" ${canSend ? "" : "disabled"} onclick="sendOffice('${kind}')">${esc(med ? t.med_send : t.off_send)}</button>
     </div>
     ${r.history && r.history.length ? `<section class="sec"><h2>${esc(t.off_hist)}</h2><div class="list">${r.history.map((h) => `<div class="row"><div class="nm">
@@ -858,12 +902,125 @@ async function sendOffice(kind) {
   const r = await api("/api/tg/office/send", { method: "POST", body: { kind, ids, to } }).catch(() => null);
   if (kind === "adv") ST.req.adv = null;
   if (r && r.ok) {
-    toast(kind === "med" ? t.med_ok(r.count) : t.off_ok(r.count));
+    toast(kind === "fin" ? t.fin_off_ok(r.count) : kind === "med" ? t.med_ok(r.count) : t.off_ok(r.count));
     return renderOffice(kind, false);
   }
   const e = r && r.error;
   toast(`${t.off_err[e] || t.e_net}${r && r.detail ? `: ${r.detail}` : ""}`, true);
   return renderOffice(kind, e !== "changed");
+}
+
+// ── Штрафи (bot/fines.js, api/tg.js → /api/tg/fines…) ──────────────────────
+// #fines — список за місяць (зріз — як на головній) + пошук працівника; #fine:w=<id> — форма (з картки в боті);
+// #fine:w=<id>&id=<штраф> — змінити; #finoff — надіслати в офіс (той самий екран, що аванси / медогляд).
+const finAmt = (v) => (Math.round(Number(v || 0) * 100) / 100).toString();
+const finTypeName = (x) => (ST.lang === "ru" ? x.name_ru : x.name_uk) || x.name_pl || x.type_name;
+async function renderFines() {
+  if (!ST.fines) loading();
+  const r = await api("/api/tg/fines");
+  if (!r || !r.ok) { if (!ST.fines) showError("net"); return; }
+  ST.fines = r;
+  if (ST.view !== "fines") return;
+  const t = T();
+  const row = (x) => `<div class="row"><div class="nm"><b>${esc(x.full_name)}</b>
+      <span>${esc(x.facility || "—")} · ${esc(dd(x.fine_date))} · ${esc(finTypeName(x))} · <strong>${esc(finAmt(x.amount))} zł</strong> ·
+        <span class="${x.status === "open" ? "warn" : ""}">${esc(t.fin_st[x.status])}</span></span></div>
+      ${x.can_change ? `<button class="mini" onclick="go('fine:w=${x.worker_id}&id=${x.id}')">${esc(t.fin_edit)}</button>` : ""}</div>`;
+  $("view").innerHTML = `
+    <div class="top"><div class="ttl"><h1>${esc(t.fin_title)}</h1><div class="sub">${esc(t.fin_month)} · ${esc(t.fin_kpi(r.kpi.count, finAmt(r.kpi.sum), r.kpi.open))}</div></div>${langSeg()}</div>
+    ${scopeSeg(r.scope, r.scopes)}
+    ${r.can_issue_any ? `<section class="sec"><h2>${esc(t.fin_new_title)}</h2>
+      <input id="finQ" class="fld-in" type="search" placeholder="${esc(t.fin_search_ph)}" oninput="finSearch(this.value)" autocomplete="off" />
+      <div id="finFound"></div></section>` : ""}
+    ${r.kpi.open ? `<button class="btn primary wide" onclick="go('finoff')">${esc(t.fin_office(r.kpi.open))}</button>` : ""}
+    <section class="sec"><div class="list">${r.rows.length ? r.rows.map(row).join("") : `<div class="empty">${esc(t.fin_empty)}</div>`}</div></section>`;
+}
+let finSeq = 0, finTimer = null;
+function finSearch(q) {
+  clearTimeout(finTimer);
+  finTimer = setTimeout(async () => {
+    const box = $("finFound");
+    if (!box) return;
+    if (String(q).trim().length < 2) { box.innerHTML = ""; return; }
+    const my = ++finSeq;
+    const r = await api("/api/tg/fines/search?q=" + encodeURIComponent(q));
+    if (my !== finSeq || !$("finFound")) return;
+    const t = T();
+    box.innerHTML = r && r.ok && r.rows.length
+      ? `<div class="list">${r.rows.map((x) => `<button class="row link" onclick="go('fine:w=${x.id}')"><div class="nm"><b>${esc(x.full_name)}</b>
+          <span>${esc(x.login || "")} · ${esc(x.facility || "—")} · ${esc(t.st[x.status] || x.status || "")}</span></div>${CHEV}</button>`).join("")}</div>`
+      : `<div class="list"><div class="empty">${esc(t.fin_nobody)}</div></div>`;
+  }, 250);
+}
+async function renderFine(arg) {
+  const p = new URLSearchParams(String(arg || "").replace(/&amp;/g, "&"));
+  const wid = parseInt(p.get("w"), 10), fid = p.get("id");
+  loading();
+  const r = await api(`/api/tg/fines/worker/${wid || 0}`);
+  const t = T();
+  if (!r || !r.ok) { $("view").innerHTML = `<div class="top"><div class="ttl"><h1>${esc(t.fin_new_title)}</h1></div>${langSeg()}</div>
+    <div class="list"><div class="empty">${esc((r && t.fin_err[r.error]) || t.e_net)}</div></div>`; return; }
+  const ed = fid ? r.fines.find((x) => String(x.id) === String(fid) && x.can_change) : null;
+  const w = r.worker;
+  ST.fine = { w: w.id, edit: ed ? ed.id : null, type: ed ? ed.type_id : null, types: r.types };
+  const types = r.types.slice();
+  if (ed && ed.type_id && !types.some((x) => x.id === ed.type_id)) types.push({ id: ed.type_id, name_pl: ed.type_name, name_uk: ed.name_uk, name_ru: ed.name_ru, amount: null });
+  ST.fine.types = types;
+  const hist = (x) => `<div class="row"><div class="nm"><b>${esc(dd(x.fine_date))} · ${esc(finTypeName(x))} · ${esc(finAmt(x.amount))} zł</b>
+      <span class="${x.status === "open" ? "warn" : ""}">${esc(t.fin_st[x.status])}${x.note ? ` · ${esc(x.note)}` : ""}</span></div>
+      ${x.can_change ? `<button class="mini" onclick="go('fine:w=${w.id}&id=${x.id}')">${esc(t.fin_edit)}</button>
+        <button class="mini" onclick="finCancel(${x.id})">${esc(t.fin_cancel)}</button>` : ""}</div>`;
+  $("view").innerHTML = `
+    <div class="top"><div class="ttl"><h1>${esc(ed ? t.fin_edit_title : t.fin_new_title)}</h1><div class="sub">${esc(w.full_name)}</div></div>${langSeg()}</div>
+    <section class="rq"><div class="rq-b fin-kv">
+      <div class="kv"><span>${esc(t.fin_pass)}</span><b>${esc(w.login || "—")}</b></div>
+      <div class="kv"><span>${esc(t.fin_fac)}</span><b>${esc(w.facility)}</b></div>
+      <div class="kv"><span>${esc(t.fin_hm)}</span><b>${esc(finAmt(w.hours_month))} h</b></div>
+      <div class="kv"><span>${esc(t.fin_hp)}</span><b>${esc(finAmt(w.hours_prev))} h</b></div>
+    </div></section>
+    ${r.can_issue ? `
+    <section class="sec"><h2>${esc(t.fin_type)}</h2>
+      <div class="list" id="finTypes">${types.map((x) => `<button class="row link fin-ty ${ST.fine.type === x.id ? "on" : ""}" data-id="${x.id}" onclick="finPick(${x.id})">
+        <div class="nm"><b>${esc(finTypeName(x))}</b></div><span class="fin-am">${x.amount == null ? esc(t.fin_manual) : esc(finAmt(x.amount)) + " zł"}</span></button>`).join("")}</div></section>
+    <section class="sec">
+      <label class="fin-f"><span>${esc(t.fin_amount)}</span><input id="finAmount" class="fld-in" type="number" inputmode="decimal" min="1" step="1" value="${ed ? esc(finAmt(ed.amount)) : ""}" /></label>
+      <label class="fin-f"><span>${esc(t.fin_date)}</span><input id="finDate" class="fld-in" type="date" min="${esc(r.min_date)}" max="${esc(r.today)}" value="${esc(ed ? ed.fine_date : r.today)}" /></label>
+      <label class="fin-f"><span>${esc(t.fin_note)}</span><input id="finNote" class="fld-in" type="text" maxlength="300" placeholder="${esc(t.fin_note_ph)}" value="${esc(ed && ed.note ? ed.note : "")}" /></label>
+    </section>
+    <div class="sendbar"><button id="finSave" class="btn primary wide" onclick="finSave()">${esc(ed ? t.fin_update : t.fin_save)}</button></div>`
+    : `<div class="note-ro">${esc(t.fin_no_rights)}</div>`}
+    ${r.fines.length ? `<section class="sec"><h2>${esc(t.fin_hist)}</h2><div class="list">${r.fines.map(hist).join("")}</div></section>` : ""}`;
+}
+function finPick(id) {
+  ST.fine.type = id;
+  document.querySelectorAll("#finTypes .fin-ty").forEach((b) => b.classList.toggle("on", Number(b.dataset.id) === id));
+  const x = ST.fine.types.find((y) => y.id === id);
+  const a = $("finAmount");
+  a.value = x && x.amount != null ? finAmt(x.amount) : "";
+  if (!a.value) a.focus();
+}
+async function finSave() {
+  const t = T();
+  const f = ST.fine;
+  if (!f.type) return toast(t.fin_err.bad_type, true);
+  const amount = Number($("finAmount").value);
+  if (!(amount > 0)) { $("finAmount").focus(); return toast(t.fin_err.bad_amount, true); }
+  const body = { worker_id: f.w, type_id: f.type, amount, fine_date: $("finDate").value, note: $("finNote").value };
+  $("finSave").disabled = true;
+  const r = await api(f.edit ? `/api/tg/fines/${f.edit}/update` : "/api/tg/fines", { method: "POST", body }).catch(() => null);
+  if (!r || !r.ok) { $("finSave").disabled = false; return toast((r && t.fin_err[r.error]) || (r && r.error) || t.e_net, true); }
+  ST.fines = null;
+  toast(f.edit ? t.fin_ok_upd : t.fin_ok(finAmt(amount)));
+  go("fine:w=" + f.w);
+}
+async function finCancel(id) {
+  const t = T();
+  if (!(await ask(t.fin_cancel_q))) return;
+  const r = await api(`/api/tg/fines/${id}/cancel`, { method: "POST", body: {} }).catch(() => null);
+  if (!r || !r.ok) return toast((r && t.fin_err[r.error]) || t.e_net, true);
+  ST.fines = null;
+  toast(t.fin_cancelled);
+  route();
 }
 
 // ── Заявки (розділи заповнимо пізніше) ─────────────────────────────────
@@ -877,7 +1034,7 @@ function renderReq() {
   $("view").innerHTML = `
     <div class="top"><div class="ttl"><h1>${esc(t.req_title)}</h1><div class="sub">${esc(t.req_sub)}</div></div>${langSeg()}</div>
     ${ST.home && ST.home.med_access === false ? "" : `<section id="reqMed">${card(t.req_med, t.req_med_d, `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/><rect x="3" y="3" width="18" height="18" rx="4"/></svg>`, "med")}</section>`}
-    <section id="reqFine">${card(t.req_fine, t.req_fine_d, `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>`)}</section>`;
+    <section id="reqFine">${card(t.req_fine, t.req_fine_d, `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>`, "fines")}</section>`;
 }
 
 boot();

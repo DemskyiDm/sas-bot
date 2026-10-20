@@ -995,8 +995,7 @@ async function search(c, qRaw) {
        LEFT JOIN facilities f ON f.id = vw.facility_id
       WHERE (w.full_name ILIKE ANY($1::text[]) OR w.login ILIKE $2)
         AND ($3::int[] IS NULL OR vw.facility_id = ANY($3))
-        AND w.login NOT LIKE 'TEST_%'
-      ORDER BY (vw.status::text = 'pracuje') DESC, w.full_name
+      ORDER BY (vw.status::text = 'pracuje') DESC, (w.login LIKE 'TEST_%'), w.full_name   -- TEST_ — для перевірок, у кінці
       LIMIT 8`,
     [vars, `${q.replace(/\s/g, "")}%`, f.all],
   );

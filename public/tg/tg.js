@@ -795,7 +795,6 @@ function drawOffice(kind) {
   const med = kind === "med";
   const fin = kind === "fin";
   const std = r.advance_std || 300;
-  const finSel = fin ? r.items.filter((x) => o.sel.has(x.id)).reduce((a, x) => a + Number(x.amount || 0), 0) : 0;
   const free = r.items.filter((x) => !x.ordered_at);
   const n = free.filter((x) => o.sel.has(x.id)).length;
   const canSend = r.configured && n > 0 && o.to.size > 0;
@@ -836,7 +835,7 @@ function drawOffice(kind) {
       </div></section>` : ""}
     <section class="sec">
       <div class="grp-h"><h2>${esc(fin ? t.fin_off_items(r.items.length) : med ? t.med_items(r.items.length) : t.off_items(r.items.length))}</h2>
-        ${free.length ? `<button class="mini" onclick="offAll('${kind}', ${n < free.length})">${esc(n < free.length ? t.off_all : t.off_none)}</button>` : ""}</div>
+        ${free.length ? `<button class="mini" id="offAllBtn" onclick="offAll('${kind}', ${n < free.length})">${esc(n < free.length ? t.off_all : t.off_none)}</button>` : ""}</div>
       ${r.items.length ? `<div class="list">${r.items.map(row).join("")}</div>`
         : `<div class="list"><div class="empty">${esc(fin ? t.fin_off_empty : med ? t.med_empty : t.off_empty)}</div></div>`}
     </section>
@@ -851,15 +850,50 @@ function drawOffice(kind) {
       <div class="sub">${esc(r.my_email ? t.off_cc(r.my_email) : t.off_nocc)}${r.from ? `<br>${esc(t.off_from(r.from))}` : ""}${med ? `<br>${esc(t.med_date_note)}` : ""}</div>
     </section>
     <div class="sendbar">
-      <div class="sum">${esc(fin ? t.fin_off_sum(n, Math.round(finSel * 100) / 100) : med ? t.med_sum(n) : t.off_sum(n, n * std))}</div>
+      <div class="sum" id="offSum">${esc(offSumText(kind))}</div>
       <button id="offSend" class="btn primary wide" ${canSend ? "" : "disabled"} onclick="sendOffice('${kind}')">${esc(med ? t.med_send : t.off_send)}</button>
     </div>
     ${r.history && r.history.length ? `<section class="sec"><h2>${esc(t.off_hist)}</h2><div class="list">${r.history.map((h) => `<div class="row"><div class="nm">
         <b>${esc(ddhm(h.sent_at))} · ${esc(ppl(h.items))}${h.total ? ` · ${esc(String(h.total))} zł` : ""}</b>
         <span class="${h.status === "sent" ? "" : "warn"}">${esc((h.mail_to || []).join(", "))}${h.status === "sent" ? "" : ` · ${esc(t.off_st_err)}: ${esc(h.error || "")}`}</span></div></div>`).join("")}</div></section>` : ""}`;
 }
-const redraw = (kind) => drawOffice(kind);
-function offPick(kind, id, on) { const o = offState(kind); if (on) o.sel.add(id); else o.sel.delete(id); redraw(kind); }
+// Підсумок під списком: скільки вибрано і на яку суму
+function offSumText(kind) {
+  const t = T();
+  const o = offState(kind);
+  const r = o.data;
+  const sel = r.items.filter((x) => !x.ordered_at && o.sel.has(x.id));
+  if (kind === "fin") return t.fin_off_sum(sel.length, Math.round(sel.reduce((a, x) => a + Number(x.amount || 0), 0) * 100) / 100);
+  if (kind === "med") return t.med_sum(sel.length);
+  return t.off_sum(sel.length, sel.length * (r.advance_std || 300));
+}
+// Галочка біля людини — лише підсумок і кнопки, список не перебудовуємо:
+// у Telegram на iPhone (Safari) повне перемальовування скидало прокрутку нагору
+function offUpdate(kind) {
+  const t = T();
+  const o = offState(kind);
+  const r = o.data;
+  const free = r.items.filter((x) => !x.ordered_at);
+  const n = free.filter((x) => o.sel.has(x.id)).length;
+  const sum = $("offSum"), send = $("offSend"), all = $("offAllBtn");
+  if (sum) sum.textContent = offSumText(kind);
+  if (send) send.disabled = !(r.configured && n > 0 && o.to.size > 0);
+  if (all) {
+    all.textContent = n < free.length ? t.off_all : t.off_none;
+    all.setAttribute("onclick", `offAll('${kind}', ${n < free.length})`);
+  }
+}
+// Перемальовування після галочки / адресата — без стрибка нагору: екран будується заново (innerHTML),
+// висота на мить зникає і прокрутка скидається — зберігаємо її і повертаємо
+const redraw = (kind) => {
+  const se = document.scrollingElement || document.documentElement;
+  const v = $("view");
+  const y = se.scrollTop, vy = v ? v.scrollTop : 0;
+  drawOffice(kind);
+  se.scrollTop = y;
+  if (v) v.scrollTop = vy;
+};
+function offPick(kind, id, on) { const o = offState(kind); if (on) o.sel.add(id); else o.sel.delete(id); offUpdate(kind); }
 function offAll(kind, on) { const o = offState(kind); o.sel = new Set(on ? o.data.items.filter((x) => !x.ordered_at).map((x) => x.id) : []); redraw(kind); }
 function toggleTo(kind, email) { const o = offState(kind); if (o.to.has(email)) o.to.delete(email); else o.to.add(email); redraw(kind); }
 function medQuick(k) { ST.medRange = medRangeQuick(k); renderOffice("med", false); }

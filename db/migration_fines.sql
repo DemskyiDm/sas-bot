@@ -9,6 +9,9 @@
 --
 --  Запуск: psql -U postgres -d sasdb -f db\migration_fines.sql   (можна повторно)
 -- ══════════════════════════════════════════════════════════════════════
+-- Файл у UTF-8 (назви типів українською / російською), а psql у Windows читає як WIN1250 — інакше помилка 0x83
+SET client_encoding = 'UTF8';
+
 BEGIN;
 
 CREATE SCHEMA IF NOT EXISTS fin;

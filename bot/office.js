@@ -1,9 +1,11 @@
 // bot/office.js — листи в офіс одним листом (таблиця в листі + Excel у вкладенні) вибраним адресатам:
 //   adv — «Відправити в офіс»: схвалені аванси за 31 день, ще не надіслані;
-//   med — «Замовити медогляд»: хто починає роботу (BHP) у вибраний день / діапазон, ще не замовлені.
+//   med — «Замовити медогляд»: хто починає роботу (BHP) у вибраний день / діапазон, ще не замовлені;
+//   fin — штрафи (bot/fines.js): виписані, не скасовані, ще не надіслані.
 // Адресати запамʼятовуються окремо для кожного виду: спільні (додає адмін — бачать усі координатори) і свої.
 // Лист іде з MAIL_FROM / GMAIL_USER (api/mail.js); координатор — у копії, «Відповісти» — йому.
-// Надіслане позначається (tgc.office_items: adv — id авансу, med — id періоду worker_facility_history) і вдруге не пропонується.
+// Надіслане позначається (tgc.office_items: adv — id авансу, med — id періоду worker_facility_history, fin — id штрафу)
+// і вдруге не пропонується.
 // Використовують мініпанель (public/tg/) і веб-панель (public/js/office.js) — через api/tg.js.
 "use strict";
 
@@ -14,7 +16,9 @@ const coord = () => require("./coord");
 const WINDOW_DAYS = 31;                 // аванси, схвалені за останні 31 день (старіші — не пропонуємо)
 const MED_MAX_DAYS = 31;                // медогляд: діапазон BHP — до 31 дня
 const MAX_TO = 10;
-const KINDS = ["adv", "med"];
+const KINDS = ["adv", "med", "fin"];
+const LAST_COL = { adv: "mail_last", med: "mail_last_med", fin: "mail_last_fin" };   // tgc.prefs: кому надсилав минулого разу
+const fines = () => require("./fines");
 const EMAIL_RE = /^[^\s@<>(),;:"\\[\]]+@[^\s@<>(),;:"\\[\]]+\.[a-z]{2,}$/i;
 const normEmail = (s) => String(s || "").trim().toLowerCase();
 const isEmail = (s) => EMAIL_RE.test(String(s || "").trim()) && String(s).length <= 200;
@@ -210,9 +214,10 @@ async function recipients(c, kind) {
     `SELECT id, email, name, coordinator_id IS NULL AS shared FROM tgc.mail_recipients
       WHERE kind = $2 AND (coordinator_id IS NULL OR coordinator_id = $1)
       ORDER BY (coordinator_id IS NULL) DESC, lower(email)`, [c.id, kind]);
-  const p = await db.query(`SELECT mail_last, mail_last_med FROM tgc.prefs WHERE coordinator_id = $1`, [c.id]);
-  const row = p.rows[0] || {};
-  return { list: r.rows, last: (kind === "med" ? row.mail_last_med : row.mail_last) || [] };
+  // to_jsonb — без падіння, поки міграції штрафів (mail_last_fin) ще немає
+  const p = await db.query(`SELECT to_jsonb(p) AS p FROM tgc.prefs p WHERE coordinator_id = $1`, [c.id]);
+  const row = (p.rows[0] && p.rows[0].p) || {};
+  return { list: r.rows, last: row[LAST_COL[kind]] || [] };
 }
 async function addRecipient(c, email, name, shared, kind) {
   kind = kindOf(kind);
@@ -244,11 +249,16 @@ async function history(c, kind) {
 const HEAD = {
   adv: ["Lp", "Nazwisko i imię", "Paszport", "Obiekt", "Data BHP", "Data wniosku", "Kwota (zł)", "Godziny (m-c wniosku)", "Zatwierdził"],
   med: ["Lp", "Nazwisko", "Imię", "Paszport", "Przedsiębiorstwo", "Stanowisko", "Data BHP", "Data badania", "Typ badania", "Koordynator", "Adres"],
+  fin: ["Lp", "Nazwisko", "Imię", "Paszport", "Przedsiębiorstwo", "Data", "Rodzaj kary", "Kwota (zł)", "Uwagi", "Wystawił"],
 };
-const WIDTHS = { adv: [5, 30, 14, 26, 12, 13, 11, 12, 24], med: [5, 20, 18, 14, 26, 22, 12, 13, 18, 24, 30] };
-const RIGHT = { adv: [0, 6, 7], med: [0] };
+const WIDTHS = { adv: [5, 30, 14, 26, 12, 13, 11, 12, 24], med: [5, 20, 18, 14, 26, 22, 12, 13, 18, 24, 30], fin: [5, 20, 18, 14, 26, 12, 32, 11, 30, 22] };
+const RIGHT = { adv: [0, 6, 7], med: [0], fin: [0, 7] };
 
 function rowsOf(kind, items, std, sentIso, c) {
+  if (kind === "fin") {
+    return items.map((x, i) => [i + 1, x.last_name, x.first_name, x.login || "", x.facility || "", dmyIso(x.fine_date), x.type_name,
+      x.amount, x.note || "", x.created_by_name || ""]);
+  }
   if (kind === "med") {
     return items.map((x, i) => [i + 1, x.last_name, x.first_name, x.login || "", x.facility, x.stanowisko || "",
       dmyIso(x.bhp), dmyIso(medDate(x.bhp, sentIso)), MED_KINDS[x.med_kind] || MED_KINDS.badanie,
@@ -293,6 +303,7 @@ async function send(kind, c, ids, to, f0) {
     const f = f0 || (await coord().facsOf(c));
     let items;
     if (kind === "adv") items = (await pendingAdvances(c, f)).filter((x) => want.has(x.id));
+    else if (kind === "fin") items = (await fines().forSend(c, [...want])).map((x) => ({ ...x, id: Number(x.id) }));
     else items = (await medList(c, f, { ids: [...want] })).filter((x) => !x.ordered_at);
     if (items.length !== want.size) return { ok: false, error: "changed" };   // хтось уже надіслав / змінилось
     const std = coord().CFG.advanceStd;
@@ -310,6 +321,17 @@ async function send(kind, c, ids, to, f0) {
       file = {
         name: `zaliczki_${fileDate(sentIso)}_${lastWord(c.full_name)}.xlsx`,
         content: await mail.xlsx({ sheet: "Zaliczki", header: HEAD.adv, rows, widths: WIDTHS.adv, footer: ["", "Razem", "", "", "", "", total, "", ""] }),
+      };
+    } else if (kind === "fin") {
+      total = num(items.reduce((a, x) => a + x.amount, 0));
+      subject = `Kary — ${c.full_name} — ${dmyIso(sentIso)} (${items.length} poz., ${total} zł)`;
+      const totalRow = `<tr><td style="border:1px solid #d9dee8;padding:5px 8px"></td><td colspan="6" style="border:1px solid #d9dee8;padding:5px 8px;font-weight:bold">Razem</td>
+<td style="border:1px solid #d9dee8;padding:5px 8px;text-align:right;font-weight:bold">${total}</td><td style="border:1px solid #d9dee8"></td><td style="border:1px solid #d9dee8"></td></tr>`;
+      html = wrapHtml(c, `przesyłam listę kar do potrącenia: <b>${items.length} poz.</b>, łącznie <b>${total} zł</b>. Ta sama lista jest w załączniku (Excel).`,
+        tableHtml("fin", rows, totalRow));
+      file = {
+        name: `kary_${fileDate(sentIso)}_${lastWord(c.full_name)}.xlsx`,
+        content: await mail.xlsx({ sheet: "Kary", header: HEAD.fin, rows, widths: WIDTHS.fin, footer: ["", "Razem", "", "", "", "", "", total, "", ""] }),
       };
     } else {
       const bhps = items.map((x) => x.bhp).sort();
@@ -347,7 +369,7 @@ async function send(kind, c, ids, to, f0) {
         await client.query(`INSERT INTO tgc.office_items (mail_id, kind, ref_id) VALUES ($1, $2, $3)`, [mailId, kind, x.id]);
       }
       if (!error) {
-        const col = kind === "med" ? "mail_last_med" : "mail_last";
+        const col = LAST_COL[kind];
         await client.query(
           `INSERT INTO tgc.prefs (coordinator_id, lang, ${col}) VALUES ($1, $2, $3)
            ON CONFLICT (coordinator_id) DO UPDATE SET ${col} = EXCLUDED.${col}, updated_at = now()`,

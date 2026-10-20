@@ -124,7 +124,7 @@ const TX = {
     st: { pracuje: "працює", zwolniony: "звільнений", rezygnacja: "відмовився", przeniesiony: "переведений", unknown: "без статусу", urlop: "відпустка", l4: "L4" },
     since: (d) => `з ${d}`, c_pos: "Посада", c_hours: "Годин за місяць", c_last: "Останні години", c_adv: "Аванси цього місяця",
     c_bot: (b) => (b ? "Бот: підключений" : "Бот: не підключений"), c_hist: "Заклади",
-    b_hours: "Години за місяць", b_hist: "Історія", b_open: "Відкрити в панелі",
+    b_hours: "Години за місяць", b_hist: "Історія", b_open: "Відкрити в панелі", b_fine: "⚠️ Штраф",
     h_title: (n, m) => `<b>${n}</b> · години за ${m}`, h_none: "Цього місяця записів немає.", total: "Разом",
     hist_t: (n) => `<b>${n}</b> · історія закладів`, now: "досі",
   },
@@ -174,7 +174,7 @@ const TX = {
     st: { pracuje: "работает", zwolniony: "уволен", rezygnacja: "отказался", przeniesiony: "переведён", unknown: "без статуса", urlop: "отпуск", l4: "L4" },
     since: (d) => `с ${d}`, c_pos: "Должность", c_hours: "Часов за месяц", c_last: "Последние часы", c_adv: "Авансы в этом месяце",
     c_bot: (b) => (b ? "Бот: подключён" : "Бот: не подключён"), c_hist: "Объекты",
-    b_hours: "Часы за месяц", b_hist: "История", b_open: "Открыть в панели",
+    b_hours: "Часы за месяц", b_hist: "История", b_open: "Открыть в панели", b_fine: "⚠️ Штраф",
     h_title: (n, m) => `<b>${n}</b> · часы за ${m}`, h_none: "В этом месяце записей нет.", total: "Итого",
     hist_t: (n) => `<b>${n}</b> · история объектов`, now: "по сей день",
   },
@@ -1045,9 +1045,15 @@ async function card(c, workerId) {
     t.c_bot(x.in_bot),
   ];
   if (hist.rows.length) L.push(`${t.c_hist}: ${esc([...new Set(hist.rows.map((h) => h.name))].join(", "))}`);
+  // «Штраф» — мініпанель з формою (bot/fines.js); лише там, де координатор може виписувати
+  let fineBtn = null;
+  try {
+    const ff = await require("./fines").issueFacs(c);
+    if (ff === null || ff.includes(Number(x.facility_id))) fineBtn = webAppBtn(t.b_fine, `#fine:w=${x.id}`);
+  } catch (e) { /* без міграції штрафів — без кнопки */ }
   return send(c.telegram_chat_id, L.join("\n"), [
     [{ text: t.b_hours, callback_data: `KC:hm:${x.id}` }, { text: t.b_hist, callback_data: `KC:hi:${x.id}` }],
-    [webAppBtn(t.b_open, `#hours:fac=${x.facility_id || ""}`)].filter(Boolean),
+    [webAppBtn(t.b_open, `#hours:fac=${x.facility_id || ""}`), fineBtn].filter(Boolean),
   ]);
 }
 async function cardHours(c, workerId) {

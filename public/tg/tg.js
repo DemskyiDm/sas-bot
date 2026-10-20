@@ -924,7 +924,7 @@ async function renderFines() {
   const t = T();
   const row = (x) => `<div class="row"><div class="nm"><b>${esc(x.full_name)}</b>
       <span>${esc(x.facility || "—")} · ${esc(dd(x.fine_date))} · ${esc(finTypeName(x))} · <strong>${esc(finAmt(x.amount))} zł</strong> ·
-        <span class="${x.status === "open" ? "warn" : ""}">${esc(t.fin_st[x.status])}</span></span></div>
+        <span class="${x.status === "open" && !x.is_test ? "warn" : ""}">${x.is_test ? "TEST" : esc(t.fin_st[x.status])}</span></span></div>
       ${x.can_change ? `<button class="mini" onclick="go('fine:w=${x.worker_id}&id=${x.id}')">${esc(t.fin_edit)}</button>` : ""}</div>`;
   $("view").innerHTML = `
     <div class="top"><div class="ttl"><h1>${esc(t.fin_title)}</h1><div class="sub">${esc(t.fin_month)} · ${esc(t.fin_kpi(r.kpi.count, finAmt(r.kpi.sum), r.kpi.open))}</div></div>${langSeg()}</div>

@@ -33,7 +33,7 @@ async function loadFinesPage() {
   if (!r || !r.ok) { box.innerHTML = `<div class="ofc-bad">${ofcEsc(finErr(r))}</div>`; return; }
   FIN.data = r;
   FIN.off = off && off.ok ? off : null;
-  const openIds = new Set(r.rows.filter((x) => x.status === "open" && x.can_change).map((x) => Number(x.id)));
+  const openIds = new Set(r.rows.filter((x) => x.status === "open" && x.can_change && !x.is_test).map((x) => Number(x.id)));
   FIN.sel = new Set([...FIN.sel].filter((id) => openIds.has(id)));
   if (FIN.off && !FIN.to.size) {
     const known = new Set(FIN.off.recipients.map((x) => x.email.toLowerCase()));
@@ -49,9 +49,9 @@ function drawFines() {
   const f = FIN.f;
   const rows = r.rows.filter((x) => (!f.facility || String(x.facility_id) === f.facility) && (!f.type || String(x.type_id) === f.type)
     && (!f.status || x.status === f.status));
-  const live = rows.filter((x) => x.status !== "cancelled");
+  const live = rows.filter((x) => x.status !== "cancelled" && !x.is_test);   // TEST_ — nie liczą się
   const open = live.filter((x) => x.status === "open");
-  const pickable = rows.filter((x) => x.status === "open" && x.can_change);
+  const pickable = rows.filter((x) => x.status === "open" && x.can_change && !x.is_test);
   const selRows = pickable.filter((x) => FIN.sel.has(Number(x.id)));
   const selSum = selRows.reduce((a, x) => a + Number(x.amount), 0);
   const scope = r.scopes && r.scopes.length > 1 ? `<span class="adv-scope">${r.scopes.map((s) =>
@@ -61,7 +61,7 @@ function drawFines() {
   const kpi = (l, v, s, cls) => `<div class="fin-kpi"><div class="l">${l}</div><div class="v ${cls || ""}">${v}</div>${s ? `<div class="s">${s}</div>` : ""}</div>`;
   const row = (x) => {
     const [st, cls] = FIN_ST[x.status];
-    const can = x.status === "open" && x.can_change;
+    const can = x.status === "open" && x.can_change && !x.is_test;
     return `<tr class="${x.status === "cancelled" ? "done" : ""}">
       <td>${can ? `<input type="checkbox" ${FIN.sel.has(Number(x.id)) ? "checked" : ""} onchange="finPick(${Number(x.id)}, this.checked)" aria-label="Zaznacz">` : ""}</td>
       <td class="ofc-mono">${ofcDmy(x.fine_date)}</td>
@@ -71,7 +71,7 @@ function drawFines() {
       <td class="ofc-mono" style="text-align:right;white-space:nowrap">${finZl(x.amount)}</td>
       <td class="ofc-dim" style="max-width:220px">${ofcEsc(x.note || "")}${x.cancel_reason ? `<div>anulowana: ${ofcEsc(x.cancel_reason)}</div>` : ""}</td>
       <td class="ofc-dim">${ofcEsc(x.created_by_name || "")}</td>
-      <td><span class="fin-st ${cls}">${st}</span></td>
+      <td>${x.is_test ? `<span class="fin-st dim" title="Pracownik testowy — nie liczy się i nie idzie do biura">TEST</span>` : `<span class="fin-st ${cls}">${st}</span>`}</td>
       <td style="white-space:nowrap">${x.can_change ? `<button class="btn btn-ghost btn-sm" onclick="finOpen(${x.worker_id}, ${Number(x.id)})" title="Zmień">✏️</button>
         <button class="btn btn-ghost btn-sm" onclick="finCancel(${Number(x.id)})" title="Anuluj">✕</button>` : ""}</td></tr>`;
   };
@@ -95,7 +95,7 @@ function drawFines() {
     </div>
     <div id="finTypesBox" style="display:${FIN.types ? "" : "none"}"></div>
     <div class="fin-kpis">
-      ${kpi("Kar w miesiącu", live.length, "bez anulowanych")}
+      ${kpi("Kar w miesiącu", live.length, "bez anulowanych i testowych")}
       ${kpi("Suma", finZl(live.reduce((a, x) => a + Number(x.amount), 0)))}
       ${kpi("Do wysłania", open.length, finZl(open.reduce((a, x) => a + Number(x.amount), 0)), open.length ? "warn" : "")}
     </div>
@@ -118,7 +118,7 @@ function drawFines() {
 }
 function finPick(id, on) { if (on) FIN.sel.add(id); else FIN.sel.delete(id); drawFines(); }
 function finAll(on) {
-  FIN.data.rows.filter((x) => x.status === "open" && x.can_change).forEach((x) => (on ? FIN.sel.add(Number(x.id)) : FIN.sel.delete(Number(x.id))));
+  FIN.data.rows.filter((x) => x.status === "open" && x.can_change && !x.is_test).forEach((x) => (on ? FIN.sel.add(Number(x.id)) : FIN.sel.delete(Number(x.id))));
   drawFines();
 }
 function finTo(email) { if (FIN.to.has(email)) FIN.to.delete(email); else FIN.to.add(email); drawFines(); }

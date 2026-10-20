@@ -5,7 +5,8 @@
 //   • змінити / скасувати: поки не надіслано в офіс — той, хто може виписати на цьому обʼєкті; після — лише адмін;
 //   • список: свої обʼєкти / регіон / уся фірма (bot/coord.js → facsOf), як аванси;
 //   • в офіс — листом з Excel через bot/office.js (kind 'fin'), як аванси й медогляд;
-//   • типи й суми за замовчуванням змінює адмін / head (fin.types).
+//   • типи й суми за замовчуванням змінює адмін / head (fin.types);
+//   • тестові працівники (login TEST_…): штраф виписати можна, але він не входить у підсумки й не йде в офіс.
 // API — api/tg.js (спільне для мініпанелі й веб-панелі).
 "use strict";
 
@@ -123,8 +124,7 @@ async function search(c, qRaw) {
        LEFT JOIN facilities fa ON fa.id = vw.facility_id
       WHERE (w.full_name ILIKE $1 OR w.login ILIKE $1)
         AND ($2::int[] IS NULL OR vw.facility_id = ANY($2::int[]))
-        AND COALESCE(w.login, '') NOT LIKE 'TEST_%'
-      ORDER BY (vw.status::text = 'pracuje') DESC, w.full_name LIMIT 15`, [like, f.all]);
+      ORDER BY (vw.status::text = 'pracuje') DESC, (w.login LIKE 'TEST_%'), w.full_name LIMIT 15`, [like, f.all]);
   return r.rows;
 }
 
@@ -158,7 +158,8 @@ async function list(c, o) {
   let rows = r.rows.map((x) => {
     const n = office().splitName(x);
     const st = x.cancelled_at ? "cancelled" : x.sent_at ? "sent" : "open";
-    return { ...x, last_name: n.last, first_name: n.first, amount: num(x.amount), status: st, can_change: canChange(c, facs, x) };
+    return { ...x, last_name: n.last, first_name: n.first, amount: num(x.amount), status: st, can_change: canChange(c, facs, x),
+      is_test: /^TEST_/i.test(x.login || "") };
   });
   if (o.status) rows = rows.filter((x) => x.status === o.status);
   return { rows };
@@ -171,7 +172,7 @@ async function page(c, q) {
   const all = await list(c, { facIds: f.all, month, facs });
   const rows = all.rows.filter((x) => (!q.facility || String(x.facility_id) === String(q.facility))
     && (!q.type || String(x.type_id) === String(q.type)) && (!q.status || x.status === q.status));
-  const live = rows.filter((x) => x.status !== "cancelled");
+  const live = rows.filter((x) => x.status !== "cancelled" && !x.is_test);   // тестові — не в підсумках
   const facilities = [...new Map(all.rows.filter((x) => x.facility_id).map((x) => [x.facility_id, x.facility])).entries()]
     .map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, "pl"));
   return {
@@ -185,12 +186,12 @@ async function page(c, q) {
 async function forSend(c, ids) {
   const facs = await issueFacs(c);
   const r = await list(c, { ids, facIds: facs, facs });
-  return r.rows.filter((x) => x.status === "open");
+  return r.rows.filter((x) => x.status === "open" && !x.is_test);   // тестові в офіс не йдуть
 }
 async function unsent(c, f) {
   const facs = await issueFacs(c);
   const ids = f && f.all ? (facs === null ? f.all : facs.filter((id) => f.all.includes(id))) : facs;
-  return (await list(c, { facIds: ids, facs })).rows.filter((x) => x.status === "open");
+  return (await list(c, { facIds: ids, facs })).rows.filter((x) => x.status === "open" && !x.is_test);
 }
 
 // ── Виписати / змінити / скасувати ────────────────────────────────────

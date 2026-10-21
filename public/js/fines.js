@@ -146,7 +146,12 @@ async function finSend() {
   if (!confirm(`Wysłać ${ids.length} kar do biura (${to.join(", ")})?`)) return;
   document.getElementById("finSend").disabled = true;
   const r = await finPost("/api/tg/office/send", { kind: "fin", ids, to });
-  if (r && r.ok) { ofcToast(`Wysłano do biura: ${r.count} kar, ${finZl(r.total)}`); FIN.sel.clear(); }
+  if (r && r.ok) {
+    const sh = r.sheet || {};
+    ofcToast(`Wysłano do biura: ${r.count} kar, ${finZl(r.total)}` +
+      (sh.state === "done" ? " · zapisano w tabeli Google" : sh.state === "error" ? " · tabela Google: błąd, ponowię za 10 min" : ""), sh.state === "error");
+    FIN.sel.clear();
+  }
   else ofcToast(finErr(r) + (r && r.detail ? `: ${r.detail}` : ""), true);
   loadFinesPage();
 }

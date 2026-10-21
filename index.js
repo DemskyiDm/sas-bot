@@ -407,5 +407,6 @@ referral.schedule(bot);
 medcheck.schedule(bot);
 broadcast.schedule(bot);
 require("./bot/fines").schedule(bot);   // штрафи: повідомлення працівнику
+require("./bot/fines_sheet").schedule();  // штрафи → Google-таблиця: повтор незаписаних
 
 //new

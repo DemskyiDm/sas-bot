@@ -387,7 +387,12 @@ async function send(kind, c, ids, to, f0) {
       return { ok: false, error: "send_failed", detail: error, mail_id: mailId };
     }
     console.log(`[office] ${kind} coordinator ${c.id} → ${toList.join(", ")}: ${items.length}`);
-    return { ok: true, mail_id: mailId, count: items.length, total, cc: me };
+    // штрафи — ще й рядками в Google-таблицю (bot/fines_sheet.js); помилка таблиці лист не скасовує
+    let sheet = null;
+    if (kind === "fin") {
+      try { sheet = await require("./fines_sheet").afterSend(items.map((x) => x.id)); } catch (e) { sheet = { state: "error", error: e.message }; }
+    }
+    return { ok: true, mail_id: mailId, count: items.length, total, cc: me, sheet };
   } finally {
     BUSY.delete(lockKey);
   }

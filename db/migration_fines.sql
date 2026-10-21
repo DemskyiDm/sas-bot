@@ -67,4 +67,12 @@ CREATE INDEX IF NOT EXISTS fin_fines_facility_idx ON fin.fines(facility_id);
 -- кому надсилав штрафи минулого разу (як mail_last / mail_last_med)
 ALTER TABLE tgc.prefs ADD COLUMN IF NOT EXISTS mail_last_fin TEXT[];
 
+-- Google-таблиця штрафів (bot/fines_sheet.js): після листа в офіс рядок дописується в таблицю.
+-- sheet_state: NULL — ще не надсилався (або надісланий до появи таблиці), pending — чекає запису,
+-- done — записано (sheet_at), error — не вдалося (sheet_error), повтор кожні 10 хвилин.
+ALTER TABLE fin.fines ADD COLUMN IF NOT EXISTS sheet_state TEXT CHECK (sheet_state IN ('pending', 'done', 'error'));
+ALTER TABLE fin.fines ADD COLUMN IF NOT EXISTS sheet_at    TIMESTAMPTZ;
+ALTER TABLE fin.fines ADD COLUMN IF NOT EXISTS sheet_error TEXT;
+CREATE INDEX IF NOT EXISTS fin_fines_sheet_idx ON fin.fines(sheet_state) WHERE sheet_state IN ('pending', 'error');
+
 COMMIT;

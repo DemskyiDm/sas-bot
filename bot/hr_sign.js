@@ -5,6 +5,7 @@
 //   • щодня о 6:00 (Варшава) — працівники з BHP від HR_SIGN_FROM (15.10.2026), які ще не підписали все;
 //     рахуються документи, надіслані ±10 днів від BHP (старі періоди — ні), повторний пакет — лише останній;
 //   • о 7:00 — звіт «хто не підписав» листом з Excel на HR_SIGN_REPORT_TO (.env, через кому);
+//   • о 10:00 — нагадування працівнику в боті «перевірте посилання в e-mail» (раз на пакет, наступного дня);
 //   • з панелі — «Sprawdź podpisy» для вибраних / обʼєкта (не частіше ніж раз на хвилину на людину).
 // Доступ до HRappka — ті самі змінні .env, що й у sync_hrrappka_diff.js. Таблиці: db/migration_hr_sign.sql.
 "use strict";
@@ -359,8 +360,72 @@ ${table}
   return { ok: true, count: rows.length, to };
 }
 
+// ── Нагадування працівнику (о 10:00): документи надіслано вчора або раніше, а ще не підписано ─────
+// Раз на пакет: якщо після нагадування прийшов новий пакет (пізніша дата надсилання) — нагадаємо ще раз.
+// hrs.checks.reminded_at — db/migration_hr_remind.sql (без колонки нагадування просто не йдуть).
+const REMIND_TX = {
+  uk: {
+    hi: "👋 Доброго дня!",
+    body: "Вам на e-mail надіслано документи для підпису від SAS (HRappka), і ще не все підписано / заповнено.",
+    ask: "Будь ласка, перевірте пошту (також папку «Спам») і перейдіть за посиланнями в листах.",
+    list: "Ще не підписано:", survey: "анкета", none: "Якщо листів немає — напишіть своєму координатору.",
+  },
+  ru: {
+    hi: "👋 Добрый день!",
+    body: "Вам на e-mail отправлены документы для подписи от SAS (HRappka), и ещё не всё подписано / заполнено.",
+    ask: "Пожалуйста, проверьте почту (также папку «Спам») и перейдите по ссылкам в письмах.",
+    list: "Ещё не подписано:", survey: "анкета", none: "Если писем нет — напишите своему координатору.",
+  },
+  pl: {
+    hi: "👋 Dzień dobry!",
+    body: "Na Twój e-mail wysłaliśmy dokumenty do podpisu od SAS (HRappka) — nie wszystko jest jeszcze podpisane / wypełnione.",
+    ask: "Sprawdź pocztę (także folder „Spam”) i otwórz linki z wiadomości.",
+    list: "Jeszcze niepodpisane:", survey: "ankieta", none: "Jeśli nie ma wiadomości — napisz do swojego koordynatora.",
+  },
+};
+let BOT = null;
+async function reminders() {
+  const ids = await inScopeIds();
+  const s = await summary(ids);
+  const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Warsaw" }).format(new Date());
+  const cand = ids.filter((id) => s[id] && s[id].found && !s[id].error && !fullySigned(s[id]));
+  if (!cand.length) return [];
+  const w = await db.query(
+    `SELECT w.id, w.telegram_chat_id AS chat, w.lang, to_char(k.reminded_at AT TIME ZONE 'Europe/Warsaw', 'YYYY-MM-DD') AS reminded
+       FROM workers w LEFT JOIN hrs.checks k ON k.worker_id = w.id WHERE w.id = ANY($1::int[])`, [cand]);
+  return w.rows.map((x) => {
+    const open = s[x.id].docs.filter((d) => d.status !== "SIGN");
+    const latest = open.map((d) => d.created || "").sort().pop() || "";
+    return { ...x, open, latest };
+  }).filter((x) => x.chat && x.latest && x.latest < today && (!x.reminded || x.reminded < x.latest));
+}
+async function remind() {
+  if (!BOT) return { sent: 0, error: "no_bot" };
+  let list;
+  try { list = await reminders(); } catch (e) { console.error("[hr sign] нагадування:", e.message); return { sent: 0, error: e.message }; }
+  let sent = 0, failed = 0;
+  for (const x of list) {
+    const t = REMIND_TX[x.lang] || REMIND_TX.uk;
+    const items = x.open.slice().sort((a, b) => (a.kind !== "survey") - (b.kind !== "survey"))
+      .map((d) => `• ${d.kind === "survey" ? `${t.survey}: ` : ""}${d.label}`);
+    const text = [t.hi, t.body, t.ask, "", t.list, ...items.slice(0, 8), ...(items.length > 8 ? ["…"] : []), "", t.none].join("\n");
+    try {
+      await BOT.telegram.sendMessage(String(x.chat), text);
+      await db.query(`UPDATE hrs.checks SET reminded_at = now() WHERE worker_id = $1`, [x.id]);
+      sent++;
+    } catch (e) {
+      failed++;
+      console.error(`[hr sign] нагадування ${x.id}:`, (e.response && e.response.description) || e.message);
+    }
+    await new Promise((r) => setTimeout(r, 60));
+  }
+  console.log(`[hr sign] нагадування: надіслано ${sent}${failed ? `, помилок ${failed}` : ""}`);
+  return { sent, failed };
+}
+
 let RUNNING = false;
-function schedule() {
+function schedule(bot) {
+  BOT = bot || null;
   const cron = require("node-cron");
   cron.schedule("0 7 * * *", async () => {
     try { await report(); } catch (e) { console.error("[hr sign] звіт:", e.message); }
@@ -370,6 +435,10 @@ function schedule() {
     RUNNING = true;
     try { await daily(); } catch (e) { console.error("[hr sign] щоденна:", e.message); } finally { RUNNING = false; }
   }, { timezone: "Europe/Warsaw" });
+  cron.schedule("0 10 * * *", async () => {
+    try { await remind(); } catch (e) { console.error("[hr sign] нагадування:", e.message); }
+  }, { timezone: "Europe/Warsaw" });
 }
 
-module.exports = { check, daily, manual, summary, report, reportRows, schedule, docLabel, FROM, COOLDOWN_S, WINDOW_DAYS };
+module.exports = { check, daily, manual, summary, report, reportRows, reminders, remind, schedule, docLabel, FROM, COOLDOWN_S, WINDOW_DAYS,
+  _test: { setBot: (b) => { BOT = b; } } };

@@ -216,13 +216,59 @@ const httpsOptions = {
   cert: fs.readFileSync(path.join(__dirname, "certs", "public.pem")),
 };
 
-https.createServer(httpsOptions, app).listen(HTTPS_PORT, "0.0.0.0", () => {
-  console.log(`HTTPS (webhook) on ${HTTPS_PORT}`);
-});
-
-http.createServer(app).listen(HTTP_PORT, "0.0.0.0", () => {
-  console.log(`HTTP (dashboard) on ${HTTP_PORT}`);
-});
+// ── Старт серверів: самовідновлення після «осиротілого» процесу ──────
+// pm2 на Windows іноді не добиває старий index при restart (зайнятий імпортом): той лишається з портами й розкладом
+// (розсилки йшли б двічі), а кожен новий екземпляр падає з EADDRINUSE по колу. Тому:
+//   • після старту пишемо свій PID у .index.pid;
+//   • на старті: якщо порт тримає саме процес з .index.pid (перевірка netstat) — завершуємо його і займаємо порти;
+//     чужі процеси не чіпаємо ніколи;
+//   • порт зайнятий кимось іншим — зрозуміле повідомлення в лог і пауза 5 с перед виходом (не шалений цикл pm2).
+const PID_FILE = path.join(__dirname, ".index.pid");
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+function portOwners(ports) {
+  const owners = new Map();   // port → PID
+  try {
+    const out = require("child_process").execSync("netstat -ano -p tcp", { encoding: "utf8", windowsHide: true });
+    for (const line of out.split(/\r?\n/)) {
+      const m = /^\s*TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)/i.exec(line);
+      if (m && ports.includes(Number(m[1]))) owners.set(Number(m[1]), Number(m[2]));
+    }
+  } catch (e) { /* немає netstat — пропускаємо */ }
+  return owners;
+}
+async function freePortsFromOldInstance(ports) {
+  let old = 0;
+  try { old = Number(fs.readFileSync(PID_FILE, "utf8").trim()); } catch (e) { return; }
+  if (!old || old === process.pid) return;
+  const holds = () => [...portOwners(ports).values()].includes(old);
+  if (!holds()) return;
+  console.warn(`[start] порти ${ports.join(", ")} тримає попередній екземпляр index (PID ${old}) — завершую його`);
+  try { process.kill(old); } catch (e) { /* уже завершився */ }
+  for (let i = 0; i < 20 && holds(); i++) await sleepMs(500);
+}
+function listen(server, port, label) {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "0.0.0.0", () => { console.log(`${label} on ${port}`); resolve(); });
+  });
+}
+(async () => {
+  const ports = [Number(HTTPS_PORT), Number(HTTP_PORT)];
+  await freePortsFromOldInstance(ports);
+  try {
+    await listen(https.createServer(httpsOptions, app), HTTPS_PORT, "HTTPS (webhook)");
+    await listen(http.createServer(app), HTTP_PORT, "HTTP (dashboard)");
+    fs.writeFileSync(PID_FILE, String(process.pid));
+  } catch (e) {
+    if (e.code === "EADDRINUSE") {
+      const owner = portOwners(ports).get(Number(e.port));
+      console.error(`[start] порт ${e.port} зайнятий іншим процесом${owner ? ` (PID ${owner})` : ""} — не наш index; вихід через 5 с. ` +
+        `Перевірте: netstat -ano | findstr :${e.port}`);
+    } else console.error("[start]", e);
+    await sleepMs(5000);
+    process.exit(1);
+  }
+})();
 
 // ── Daily reminder via setInterval (18:30 Warsaw time) ───────
 function scheduleReminder() {

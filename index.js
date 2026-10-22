@@ -433,6 +433,6 @@ medcheck.schedule(bot);
 broadcast.schedule(bot);
 require("./bot/fines").schedule(bot);   // штрафи: повідомлення працівнику
 require("./bot/fines_sheet").schedule();  // штрафи → Google-таблиця: повтор незаписаних
-require("./bot/hr_sign").schedule();       // підписи HRappka: щодня о 6:00
+require("./bot/hr_sign").schedule(bot);    // підписи HRappka: 6:00 перевірка, 7:00 звіт, 10:00 нагадування працівникам
 
 //new

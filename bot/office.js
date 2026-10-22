@@ -113,7 +113,8 @@ async function medList(c, f0, opts) {
 
 // ── Медогляд: налаштування (db/migration_med_settings.sql) ─────────────
 // Тип медогляду (колонка «Typ badania») і адреса закладу (колонка «Adres») — однакові для всіх працівників закладу.
-// Панель «Badania lekarskie»: адмін / head і регіональні — завжди; координатори — якщо увімкнено в налаштуваннях.
+// Панель «Badania lekarskie»: адмін / head і регіональні — завжди; координатори — увімкнена, поки її не вимкнули в налаштуваннях
+// (новий координатор, якого ще немає в tgc.med_coords, бачить панель одразу).
 const MED_KINDS = { badanie: "badanie", badanie_sanepid: "badanie + sanepid", sanepid: "sanepid" };
 const ADDRESS_MAX = 300;
 // Хто керує налаштуваннями: адмін / head — усе ({ regionIds: null }); регіональний — свої регіони; інші — null
@@ -128,7 +129,7 @@ async function medAccess(c) {
   if (await medManager(c)) return true;
   try {
     const r = await db.query(`SELECT enabled FROM tgc.med_coords WHERE coordinator_id = $1`, [c.id]);
-    return !!(r.rows[0] && r.rows[0].enabled);
+    return r.rows[0] ? !!r.rows[0].enabled : true;   // немає запису — увімкнено за замовчуванням
   } catch (e) {
     return true;   // міграції ще немає — як було: панель бачать усі
   }
@@ -149,13 +150,14 @@ const MED_SITES_SQL = `
     LEFT JOIN reg.regions rg         ON rg.id = so.region_id
     LEFT JOIN public.coordinators co ON co.id = so.coordinator_id
    WHERE ($1::int[] IS NULL OR so.region_id = ANY($1::int[]))
+     AND COALESCE(f.is_active, true)   -- вимкнені заклади (напр. «… (stary)») не показуємо
      AND NOT EXISTS (SELECT 1 FROM reg.site_archive a WHERE a.site_key = reg.site_key(f.group_name, f.name))`;
 async function medSettings(c) {
   const m = await medManager(c);
   if (!m) return null;
   const r = await db.query(
     `WITH s AS (${MED_SITES_SQL})
-     SELECT s.*, COALESCE(mc.enabled, false) AS enabled, COALESCE(mf.kind, 'badanie') AS kind, mf.address,
+     SELECT s.*, COALESCE(mc.enabled, true) AS enabled, COALESCE(mf.kind, 'badanie') AS kind, mf.address,
             (co.role = 'head'
               OR EXISTS (SELECT 1 FROM coordinator_auth ca WHERE ca.coordinator_id = s.coordinator_id AND ca.is_admin)
               OR EXISTS (SELECT 1 FROM reg.region_leads rl WHERE rl.coordinator_id = s.coordinator_id)) AS always

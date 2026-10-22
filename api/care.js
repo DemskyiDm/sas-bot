@@ -754,6 +754,32 @@ router.get("/control", async (req, res) => {
   } catch (e) { fail(res, e); }
 });
 
+// Відповіді працівників на контрольне питання «чи говорив з вами координатор» — поіменно.
+// Лише адмін і регіональні; регіональний не бачить відповідей про себе (як у підсумку вище).
+router.get("/control/answers", async (req, res) => {
+  try {
+    const sc = req.scope;
+    if (!sc.isManager) return res.status(403).json({ ok: false, error: "Brak dostępu" });
+    const days = Math.min(parseInt(req.query.days, 10) || 28, 180);
+    const params = [days];
+    let where = scopeWhere(sc, req.query, "t", params);
+    if (!sc.isAdmin) { params.push(sc.me); where += ` AND t.coordinator_id IS DISTINCT FROM $${params.length}`; }
+    const r = await db.query(
+      `SELECT sc.id, to_char(t.done_at, 'YYYY-MM-DD') AS talk_date, t.outcome, w.full_name, w.login,
+              c.full_name AS coord_name, f.name AS facility, sc.status, sc.answer,
+              sc.answered_at, sc.asked_at, sc.ask_after
+         FROM care.spot_checks sc
+         JOIN care.tasks t   ON t.id = sc.task_id
+         JOIN workers w      ON w.id = sc.worker_id
+         LEFT JOIN coordinators c ON c.id = sc.coordinator_id
+         LEFT JOIN facilities f   ON f.id = t.facility_id
+        WHERE COALESCE(t.done_at, sc.ask_after) > now() - make_interval(days => $1::int)
+          AND ${where}
+        ORDER BY t.done_at DESC NULLS LAST, sc.id DESC`, params);
+    res.json({ ok: true, data: r.rows, days });
+  } catch (e) { fail(res, e); }
+});
+
 // ── Для панелі об'єкта в Region ──────────────────────────────────────
 router.get("/site", async (req, res) => {
   try {

@@ -763,12 +763,48 @@ async function loadControl() {
                <td class="num">${x.cy_yes != null ? pct(x.cy_yes, x.cy_n) : "—"}</td>` : ""}
         <td class="num">${x.ef_t_n ? pct(x.ef_t_ok, x.ef_t_n) : "—"} / ${x.ef_n_n ? pct(x.ef_n_ok, x.ef_n_n) : "—"}</td></tr>`;
     }).join("")}</tbody></table>` : `<div class="empty">Brak zadań w tym okresie</div>`;
+  loadControlAnswers(m);
   document.getElementById("controlLegend").innerHTML = `
     <b>W terminie</b> — zamknięte, zanim poszła informacja do regionalnego. <b>Pomin.</b> — nie zamknięte w 4 dni robocze.
     ${m ? `<b>Kontrola „nie”</b> — bot zapytał pracownika po zamkniętej rozmowie, a on odpowiedział, że rozmowy nie było (liczba „nie” / wszystkie odpowiedzi). Swoich wyników koordynator nie widzi.` : ""}
     <b>Oceny nowych</b> — ile ocen 👍😐👎 wystawiono. <b>Ankiety</b> — ile osób odpowiedziało na obiektach koordynatora.
     ${m ? `<b>Ocena koord. / Dostępny</b> — z ankiet, zbiorczo, od ${r.min_answers} odpowiedzi.` : ""}
     <b>80 dni</b> — ludzie z sygnałem ryzyka przed 80. dniem: ilu dożyło do 80 dni, jeśli była rozmowa / jeśli nie było. Dane zbierają się od startu sekcji.`;
+}
+
+// Odpowiedzi na pytanie kontrolne — imiennie (tylko admin i regionalni)
+async function loadControlAnswers(isManager) {
+  const sec = document.getElementById("controlAnswersBox");
+  sec.style.display = isManager ? "" : "none";
+  if (!isManager) return;
+  const box = document.getElementById("controlAnswers");
+  box.innerHTML = `<div class="loading">Ładowanie…</div>`;
+  const r = await api("/control/answers" + qs({ days: days() }));
+  if (!r) return;
+  if (!r.ok) { box.innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
+  const rows = r.data;
+  const ans = rows.filter((x) => x.status === "answered");
+  const no = ans.filter((x) => x.answer === "no").length;
+  document.getElementById("controlAnswersCnt").textContent = rows.length ? `${rows.length} · odpowiedzi ${ans.length}${no ? ` · „nie” ${no}` : ""}` : "";
+  const dmy = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}` : "");
+  const dt = (ts) => (ts ? new Date(ts).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "");
+  const answer = (x) => {
+    if (x.status === "answered") return x.answer === "yes" ? `<b class="green">✅ Tak</b>` : `<b class="red">❌ Nie</b>`;
+    if (x.status === "asked") return `<span class="amber">bez odpowiedzi</span>`;
+    if (x.status === "planned") return `<span style="color:var(--text3)">zapytamy ${dt(x.ask_after)}</span>`;
+    return `<span style="color:var(--text3)">nie wysłano (brak Telegrama)</span>`;
+  };
+  box.innerHTML = rows.length ? `<table class="rg"><thead><tr><th>Data rozmowy</th><th>Pracownik</th><th>Koordynator</th><th>Obiekt</th>
+      <th>Wynik rozmowy</th><th>Odpowiedź pracownika</th><th>Kiedy</th></tr></thead><tbody>
+    ${rows.map((x) => `<tr${x.answer === "no" ? ` style="background:rgba(239,68,68,.06)"` : ""}>
+      <td class="nw">${dmy(x.talk_date)}</td>
+      <td class="nw"><b>${esc(x.full_name)}</b> <span style="font-family:var(--mono);font-size:10px;color:var(--text3)">${esc(x.login || "")}</span></td>
+      <td class="nw">${esc(x.coord_name || "—")}</td>
+      <td>${esc(x.facility || "—")}</td>
+      <td class="nw ${(OUT[x.outcome] || {}).c || ""}">${esc((OUT[x.outcome] || {}).l || x.outcome || "—")}</td>
+      <td class="nw">${answer(x)}</td>
+      <td class="nw" style="color:var(--text3)">${dt(x.answered_at || x.asked_at)}</td></tr>`).join("")}
+    </tbody></table>` : `<div class="empty">Brak pytań kontrolnych w tym okresie</div>`;
 }
 
 // ══════════════════════════════════════════════════════════════════════

@@ -14,7 +14,9 @@ const SHEET_ID = (process.env.FINES_SHEET_ID || "15PalqM2g6Q0IhXmyTUSK8gE76VwppF
 const SHEET_TAB = (process.env.FINES_SHEET_TAB || "штрафы").trim();
 const RETRY_MS = 10 * 60 * 1000;
 // Агентство — з назви закладу (як у колонці «Фирма» таблиці)
-const AGENCY = [[/\bSAS\b/i, "SAS LOGISTIC"], [/\bAPT\b/i, "APT EAST STAFF"], [/\bWELL\b/i, "WELL DONE"], [/\bDIPICO\b/i, "DIPICO"]];
+// Порядок важливий: перше збігання; «Hydro Trzcianka Well» → WELL DONE, а сам «Hydro Trzcianka» (без агентства в назві) — SAS
+const AGENCY = [[/\bSAS\b/i, "SAS LOGISTIC"], [/\bAPT\b/i, "APT EAST STAFF"], [/\bWELL\b/i, "WELL DONE"], [/\bDIPICO\b/i, "DIPICO"],
+  [/\bOLDAR\b/i, "WORK PLACES"], [/\bTRZCIANKA\b/i, "SAS LOGISTIC"]];
 const agencyOf = (facility) => (AGENCY.find(([re]) => re.test(String(facility || ""))) || [null, ""])[1];
 // «Прогул» → «прогул», як у таблиці; латиниця (RCP, Bonifikata…) — без змін
 const reasonOf = (x) => {

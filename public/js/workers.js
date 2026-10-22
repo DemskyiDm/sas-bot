@@ -10,9 +10,56 @@ function escStan(s) {
   return s ? String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])) : "—";
 }
 
+// ── Podpisy dokumentów w HRappka (api/hr_sign.js) ─────────────────
+// HRS.rows: { worker_id: { total, signed, found, checked_at, error, docs: [{ label, status, created }] } }
+const HRS = { rows: {}, from: "2026-10-15" };
+async function loadSignatures() {
+  try {
+    const r = await apiFetch("/api/hrsign/status");
+    if (r && r.ok) { HRS.rows = r.rows || {}; HRS.from = r.from || HRS.from; }
+  } catch (e) { /* bez migracji — kolumna pusta */ }
+}
+const hrsInScope = (w) => w.bhp_date && localDate(w.bhp_date) >= HRS.from;
+// unsigned | signed | missing | none (nie sprawdzano / poza zakresem)
+function hrsState(w) {
+  const s = HRS.rows[w.id];
+  if (!s) return "none";
+  if (!s.found || !s.total) return "missing";
+  return s.signed >= s.total ? "signed" : "unsigned";
+}
+function hrsCell(w) {
+  const s = HRS.rows[w.id];
+  if (!s) return hrsInScope(w) ? `<span style="color:var(--text3);font-size:11px" title="Jeszcze nie sprawdzano">…</span>` : `<span style="color:var(--text3)">—</span>`;
+  const when = s.checked_at ? new Date(s.checked_at).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+  if (s.error) return `<span class="badge badge-orange" title="Błąd HRappka: ${escStan(s.error)}">błąd</span>`;
+  if (!s.found || !s.total) return `<span class="badge badge-blue" title="Brak dokumentów do podpisu w HRappka · sprawdzono ${when}">brak w HRappka</span>`;
+  const list = s.docs.map((d) => `${d.status === "SIGN" ? "✓" : "✗"} ${d.label}`).join("\n");
+  const cls = s.signed >= s.total ? "badge-green" : s.signed === 0 ? "badge-red" : "badge-orange";
+  return `<span class="badge ${cls}" style="cursor:help" title="${escStan(list + "\n\nsprawdzono " + when)}">${s.signed >= s.total ? "✓" : "✗"} ${s.signed}/${s.total}</span>`;
+}
+async function refreshSignatures() {
+  const btn = document.getElementById("workersDocsBtn");
+  const ids = (window._workersFiltered || []).filter(hrsInScope).map((w) => w.id).slice(0, 500);
+  if (!ids.length) { alert("Na liście nie ma pracowników z BHP od " + HRS.from.split("-").reverse().join(".") + "."); return; }
+  btn.disabled = true;
+  btn.textContent = `⏳ Sprawdzam ${ids.length}…`;
+  try {
+    const r = await apiFetch("/api/hrsign/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) });
+    if (!r || !r.ok) alert("HRappka: " + ((r && r.error) || "błąd"));
+    else {
+      Object.assign(HRS.rows, r.rows || {});
+      if (r.skipped && !r.checked) alert("Ci pracownicy byli sprawdzani przed chwilą — spróbuj za minutę.");
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🔄 Sprawdź podpisy";
+    filterWorkers(false);
+  }
+}
+
 async function loadWorkersPage() {
   try {
-    const res = await apiFetch("/api/workers/all");
+    const [res] = await Promise.all([apiFetch("/api/workers/all"), loadSignatures()]);
     if (!res) return;
     allWorkersData = res.data;
     buildWorkersGroupFacDropdowns();
@@ -166,8 +213,11 @@ function filterWorkers(reset = true) {
     if (bhpTo && (!w.bhp_date || localDate(w.bhp_date) > bhpTo)) return false;
     if (lastFrom && (!w.last_work_date || localDate(w.last_work_date) < lastFrom)) return false;
     if (lastTo && (!w.last_work_date || localDate(w.last_work_date) > lastTo)) return false;
+    const docs = document.getElementById("workersDocs") ? document.getElementById("workersDocs").value : "";
+    if (docs && !(hrsInScope(w) && hrsState(w) === docs)) return false;
     return true;
   });
+  window._workersFiltered = filtered;
 
   const { slice, pages } = paginate(filtered, pageWorkers, pageSizeWorkers);
   document.getElementById("workersCount").textContent = filtered.length;
@@ -186,12 +236,13 @@ function filterWorkers(reset = true) {
       <td style="font-family:var(--mono);font-size:11px;color:var(--text3)">${w.telegram_chat_id ? "✅" : "—"}</td>
       <td style="font-size:11px;color:var(--text3)">${w.bhp_date ? new Date(w.bhp_date).toLocaleDateString("pl") : "—"}</td>
       <td style="font-size:11px;color:var(--text3)">${w.last_work_date ? new Date(w.last_work_date).toLocaleDateString("pl") : "—"}</td>
+      <td>${hrsCell(w)}</td>
       <td style="display:flex;gap:4px">
         <button class="btn btn-ghost btn-sm" onclick='openWorkerModal(${JSON.stringify(w)})'>Edytuj</button>
         <button class="btn btn-ghost btn-sm" onclick="openHistoryModal(${w.id},'${w.full_name.replace(/'/g, "\\'").replace(/"/g, "&quot;")}')">Historia</button>
       </td>
     </tr>`).join("") ||
-    `<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
+    `<tr><td colspan="10" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
 
   renderPagination("paginationWorkers", pageWorkers, pages, "goPageWorkers");
 }

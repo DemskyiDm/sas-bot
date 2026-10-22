@@ -449,6 +449,14 @@
                 ">
               <input type="text" id="workersSearch" placeholder="Szukaj pracownika..." style="width: 180px"
                 oninput="filterWorkers()" />
+              <!-- podpisy dokumentów w HRappka (workers.js → HRS, api/hr_sign.js) -->
+              <select id="workersDocs" onchange="filterWorkers()" title="Podpisy dokumentów w HRappka (BHP od 15.10.2026)">
+                <option value="">Dokumenty: wszyscy</option>
+                <option value="unsigned">Nie podpisali</option>
+                <option value="signed">Wszystko podpisane</option>
+                <option value="missing">Brak w HRappka</option>
+              </select>
+              <button class="btn btn-ghost btn-sm" id="workersDocsBtn" onclick="refreshSignatures()" title="Sprawdź teraz w HRappka (widoczni na liście, BHP od 15.10)">🔄 Sprawdź podpisy</button>
               <div style="display:flex;gap:6px;align-items:center;">
                 <div style="position:relative;" id="workersGroupDropWrap">
                   <button onclick="toggleWorkersGroupDrop()"
@@ -599,6 +607,7 @@
                   <th>Telegram</th>
                   <th>BHP</th>
                   <th>Ostatni dzień</th>
+                  <th title="Podpisy dokumentów w HRappka">Dokumenty</th>
                   <th>Akcje</th>
                 </tr>
               </thead>

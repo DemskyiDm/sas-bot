@@ -117,7 +117,34 @@ window.addEventListener("DOMContentLoaded", async () => {
   initMonthSelect();
   loadFacilities();
   loadAll();
+  // #page=advances / #page=dayoff … — z mini-panelu w Telegramie
+  const hp = (/^#page=(\w+)$/.exec(location.hash) || [])[1];
+  if (hp && hp !== "hours" && document.getElementById("page" + hp.charAt(0).toUpperCase() + hp.slice(1))) showPage(hp);
+  tgStatus();
 });
+
+// ── Telegram: połączenie konta (bot → przycisk «Panel», logowanie bez hasła) ──
+let TG_LINKED = false;
+async function tgStatus() {
+  const b = document.getElementById("tgBtn");
+  if (!b) return;
+  try {
+    const r = await apiFetch("/api/tg/status");
+    if (!r || !r.ok) { b.style.display = "none"; return; }
+    TG_LINKED = !!r.linked;
+    b.textContent = TG_LINKED ? "✈️ Telegram połączony ✓" : "✈️ Połącz Telegram";
+    b.style.color = TG_LINKED ? "var(--green)" : "var(--blue)";
+  } catch (e) { b.style.display = "none"; }
+}
+async function connectTelegram() {
+  if (TG_LINKED && !confirm("Telegram jest już połączony.\nWygenerować nowy link (np. nowy telefon)? Stare połączenie zostanie zastąpione.")) return;
+  const r = await apiFetch("/api/tg/link-code", { method: "POST" });
+  if (!r || !r.ok) { alert((r && r.error) || "Nie udało się utworzyć linku"); return; }
+  const w = window.open(r.link, "_blank");
+  if (!w) prompt(`Otwórz ten link w Telegramie (ważny ${r.ttl_min} min):`, r.link);
+  else alert(`W Telegramie otworzy się bot — naciśnij «Start» i potwierdź «Tak».\nLink ważny ${r.ttl_min} min.\nPotem panel otwiera się przyciskiem «Panel» w czacie z botem.`);
+  setTimeout(tgStatus, 15000);
+}
 
 function doLogout() {
   fetch("/admin/logout", {
@@ -153,6 +180,9 @@ function showPage(page) {
     "advances",
     "workers",
     "dayoff",
+    "medical",
+    "medset",
+    "fines",
     "tabele",
     "history",
     "settings",
@@ -162,19 +192,9 @@ function showPage(page) {
     );
     if (el) el.style.display = p === page ? "" : "none";
   });
-  document.querySelectorAll(".nav-item").forEach((el, i) => {
-    el.classList.toggle(
-      "active",
-      [
-        "hours",
-        "advances",
-        "workers",
-        "dayoff",
-        "tabele",
-        "history",
-        "settings",
-      ][i] === page,
-    );
+  // активний пункт — за data-page (меню згруповане, порядок пунктів не важливий)
+  document.querySelectorAll(".sidebar .nav-item").forEach((el) => {
+    el.classList.toggle("active", el.dataset.page === page);
   });
   const titles = {
     hours: "Przeglad godzin",
@@ -206,6 +226,9 @@ async function loadPage(page) {
     loadWorkerStats();
   }
   if (page === "dayoff") loadDayoffPage();
+  if (page === "medical" && typeof loadMedicalPage === "function") loadMedicalPage();   // public/js/office.js
+  if (page === "medset" && typeof loadMedSettingsPage === "function") loadMedSettingsPage();
+  if (page === "fines" && typeof loadFinesPage === "function") loadFinesPage();   // public/js/fines.js
   if (page === "tabele") loadTabelePage();
   if (page === "history") loadHistoryPage();
   if (page === "settings") loadSettingsTable();
@@ -238,10 +261,8 @@ async function loadStats() {
       data.hours,
     );
     document.getElementById("statMissingCount").textContent = data.missing;
-    document.getElementById("statAllWorkers").textContent = data.workers;
-    document.getElementById("statNewWorkers").textContent = "—";
-    document.getElementById("statLeavingWeek").textContent = "—";
-    document.getElementById("statLeavingMonth").textContent = "—";
+    // плитки вкладки «Pracownicy» (Wszyscy, Przyjęcia, Odejścia) заповнює тільки loadWorkerStats (workers.js):
+    // інакше, якщо ця відповідь приходила пізніше, там лишались «—» і число за вибраним обʼєктом
   } catch (e) {
     console.error(e);
   }
@@ -266,14 +287,16 @@ async function loadStatsByFacility(facilityId) {
 
 // ── REMINDERS ─────────────────────────────────────────────────
 async function pingWorker(workerId) {
-  await apiFetch(`/api/remind/${workerId}`, { method: "POST" });
+  const r = await apiFetch(`/api/remind/${workerId}`, { method: "POST" });
+  if (r && r.ok === false) { alert(r.error || "Nie wysłano"); return; }
   alert("Przypomnienie wyslane!");
 }
 
 async function sendReminders() {
   if (!confirm("Wyslac przypomnienia do pracownikow z brakami (Twoje obiekty)?"))
     return;
-  await apiFetch("/api/remind-missing", { method: "POST" });
+  const r = await apiFetch("/api/remind-missing", { method: "POST" });
+  if (r && r.ok === false) { alert(r.error || "Nie wysłano"); return; }
   alert("Przypomnienia wyslane!");
 }
 

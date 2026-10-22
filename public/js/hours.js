@@ -7,6 +7,25 @@ function isTestWorker(w) {
   return /^TEST_/i.test(w?.login || "");
 }
 
+// Порядок обʼєктів: регіон → координатор → обʼєкт, усе за алфавітом (без регіону / координатора — у кінці).
+// x: { name, region, coord }. regionHeads: перед кожним регіоном рядок head(назва) — коли регіонів більше одного.
+function siteOrderCmp(a, b) {
+  const pl = (x, y) => (x == null) - (y == null) || String(x || "").localeCompare(String(y || ""), "pl");
+  return pl(a.region, b.region) || pl(a.coord, b.coord) || pl(a.name, b.name);
+}
+function regionHeads(list, metaOf, head) {
+  const sorted = list.slice().sort((a, b) => siteOrderCmp(metaOf(a), metaOf(b)));
+  if (new Set(sorted.map((x) => metaOf(x).region || null)).size < 2) return sorted.map((x) => ({ item: x }));
+  const out = [];
+  let cur;
+  sorted.forEach((x) => {
+    const r = metaOf(x).region || null;
+    if (r !== cur) { out.push({ head: head(r || "Bez regionu") }); cur = r; }
+    out.push({ item: x });
+  });
+  return out;
+}
+
 async function loadWorkers() {
   const month = document.getElementById("monthSelect").value;
   const url = `/api/workers?month=${month}`;
@@ -35,7 +54,7 @@ function renderTabs(workers) {
     const fname = w.facility_name;
     const gname = w.group_name || fname;
     if (!facs[fid]) facs[fid] = { name: fname, count: 0, group: gname };
-    if (!groups[gname]) groups[gname] = { count: 0, facilities: [] };
+    if (!groups[gname]) groups[gname] = { count: 0, facilities: [], region: w.region_name, coord: w.coordinator_name };
     // TEST видимі, але не входять у лічильники людей
     if (!isTestWorker(w)) {
       facs[fid].count++;
@@ -51,7 +70,8 @@ function renderTabs(workers) {
   window._allFacs = facs;
 
   const tabs = document.getElementById("facilityTabs");
-  const groupList = Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]));
+  const groupRows = regionHeads(Object.entries(groups), ([n, g]) => ({ name: n, region: g.region, coord: g.coord }),
+    (r) => `<div style="padding:8px 14px 4px;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">📍 ${r}</div>`);
 
   // Визначаємо поточну групу і об'єкт
   const currentGroup = window._currentGroup || '';
@@ -84,11 +104,11 @@ function renderTabs(workers) {
               <span>Wszystkie grupy</span>
               <span style="font-family:var(--mono);font-size:10px;color:var(--text3)">${totalNonTest}</span>
             </div>
-            ${groupList.map(([gname, g]) => `
+            ${groupRows.map((x) => x.head || (([gname, g]) => `
               <div onclick="selectGroup('${gname.replace(/'/g, "\\'")}');toggleGroupDrop()" data-gsearch="${gname.toLowerCase()}" style="padding:7px 14px;font-size:12px;cursor:pointer;display:flex;justify-content:space-between;color:${currentGroup === gname ? 'var(--accent)' : 'var(--text2)'};background:${currentGroup === gname ? 'rgba(59,130,246,.08)' : 'transparent'}">
                 <span>📁 ${gname}</span>
                 <span style="font-family:var(--mono);font-size:10px;color:var(--text3);background:var(--surface);padding:1px 6px;border-radius:10px">${g.count}</span>
-              </div>`).join('')}
+              </div>`)(x.item)).join('')}
           </div>
         </div>
       </div>
@@ -295,7 +315,7 @@ function renderGroupsTable(workers) {
   const groupMap = {};
   workers.forEach((w) => {
     const gname = w.group_name || w.facility_name || "—";
-    if (!groupMap[gname]) groupMap[gname] = { name: gname, days: {}, total: 0, workers: new Set() };
+    if (!groupMap[gname]) groupMap[gname] = { name: gname, days: {}, total: 0, workers: new Set(), region: w.region_name, coord: w.coordinator_name };
     // TEST не входять ні в кількість людей, ні в суми годин
     if (isTestWorker(w)) return;
     groupMap[gname].workers.add(w.id);
@@ -322,7 +342,9 @@ function renderGroupsTable(workers) {
     return `<th style="font-family:var(--mono);font-size:9px;padding:8px 3px;text-align:center;min-width:26px;color:${isFuture ? "var(--text3)" : "var(--text2)"};background:var(--surface2);border-bottom:1px solid var(--border)">${String(d).padStart(2, "0")}</th>`;
   }).join("");
 
-  const rows = groupList.map(([gname, g]) => {
+  const rows = regionHeads(groupList, ([, g]) => g, (r) => r).map((x) => {
+    if (x.head) return `<tr><td colspan="${daysInMonth + 2}" style="padding:12px 14px 6px;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text3);background:var(--surface2)">📍 ${x.head}</td></tr>`;
+    const [gname, g] = x.item;
     const cells = Array.from({ length: daysInMonth }, (_, i) => {
       const d = i + 1;
       const isFuture = d > todayDay;
@@ -544,7 +566,8 @@ async function saveHours() {
     absence_type: hours ? null : editState.absence || null,
   };
   try {
-    await apiFetch("/api/hours", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const r = await apiFetch("/api/hours", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (r && r.ok === false) { alert(r.error || "Nie zapisano"); return; }
     closeModal();
     await loadWorkers();
     if (currentFacility) filterFacility(currentFacility);

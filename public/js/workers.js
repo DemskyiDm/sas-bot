@@ -5,9 +5,148 @@ let pageWorkers = 1;
 let workersCurrentGroup = '';
 let workersCurrentFac = '';
 
+// Посада (Stanowisko) — з імпорту таблиць; ще не імпортована — «—»
+function escStan(s) {
+  return s ? String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])) : "—";
+}
+
+// ── Podpisy dokumentów w HRappka (api/hr_sign.js) ─────────────────
+// HRS.rows: { worker_id: { total, signed, found, checked_at, error, docs: [{ label, status, created }] } }
+const HRS = { rows: {}, from: "2026-10-15" };
+async function loadSignatures() {
+  try {
+    const r = await apiFetch("/api/hrsign/status");
+    if (r && r.ok) { HRS.rows = r.rows || {}; HRS.from = r.from || HRS.from; }
+  } catch (e) { /* bez migracji — kolumna pusta */ }
+}
+const hrsInScope = (w) => w.bhp_date && localDate(w.bhp_date) >= HRS.from;
+// unsigned | signed | missing | none (nie sprawdzano / poza zakresem)
+function hrsState(w) {
+  const s = HRS.rows[w.id];
+  if (!s) return "none";
+  if (!s.found || !s.total) return "missing";
+  return s.signed >= s.total ? "signed" : "unsigned";
+}
+function hrsCell(w) {
+  const s = HRS.rows[w.id];
+  if (!s) return hrsInScope(w) ? `<span style="color:var(--text3);font-size:11px" title="Jeszcze nie sprawdzano">…</span>` : `<span style="color:var(--text3)">—</span>`;
+  const when = s.checked_at ? new Date(s.checked_at).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+  if (s.error) return `<span class="badge badge-orange" title="Błąd HRappka: ${escStan(s.error)}">błąd</span>`;
+  if (!s.found || !s.total) return `<span class="badge badge-blue" title="Brak dokumentów do podpisu w HRappka · sprawdzono ${when}">brak w HRappka</span>`;
+  const cls = s.signed >= s.total ? "badge-green" : s.signed === 0 ? "badge-red" : "badge-orange";
+  return `<span class="badge ${cls}" style="cursor:pointer" onclick="hrsShow(${w.id})"
+    onmouseenter="hrsHover(this, ${w.id})" onmouseleave="hrsHoverOut()">${s.signed >= s.total ? "✓" : "✗"} ${s.signed}/${s.total}</span>`;
+}
+// Lista dokumentów: niepodpisane — na czerwono, na górze (±10 dni od BHP, przy powtórnej wysyłce — ostatnia)
+function hrsListHtml(w, s) {
+  const when = s.checked_at ? new Date(s.checked_at).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
+  // najpierw ankiety, potem (pod kreską) dokumenty; w każdej grupie niepodpisane / niewypełnione na górze
+  const byState = (a, b) => (a.status === "SIGN") - (b.status === "SIGN");
+  const surveys = s.docs.filter((d) => d.kind === "survey").sort(byState);
+  const docs = s.docs.filter((d) => d.kind !== "survey").sort(byState);
+  const row = (d) => `<div style="display:flex;gap:8px;align-items:baseline;font-size:13px;color:${d.status === "SIGN" ? "var(--green)" : "var(--red)"};${d.status === "SIGN" ? "" : "font-weight:600"}">
+        <span>${d.status === "SIGN" ? "✓" : "✗"}</span><span style="flex:1">${d.kind === "survey" ? "📝 " : ""}${escStan(d.label)}</span>
+        <span style="font-size:11px;color:var(--text3);font-weight:400">${d.created ? d.created.split("-").reverse().join(".") : ""}</span></div>`;
+  const head = (t) => `<div style="font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);margin-top:2px">${t}</div>`;
+  return `
+    <div style="font-size:13px;font-weight:600;margin-bottom:2px">📄 ${escStan(w.full_name)} · gotowe ${s.signed} z ${s.total}</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">BHP ${w.bhp_date ? new Date(w.bhp_date).toLocaleDateString("pl") : "—"} · sprawdzono ${when} · wysłane ±10 dni od BHP</div>
+    <div style="display:flex;flex-direction:column;gap:4px;max-height:50vh;overflow-y:auto">
+      ${surveys.length ? head(`Ankiety · wypełniono ${surveys.filter((d) => d.status === "SIGN").length} z ${surveys.length}`) + surveys.map(row).join("") : ""}
+      ${surveys.length && docs.length ? `<div style="border-top:1px solid var(--border);margin:6px 0 2px"></div>` : ""}
+      ${docs.length ? head(`Dokumenty · podpisano ${docs.filter((d) => d.status === "SIGN").length} z ${docs.length}`) + docs.map(row).join("") : ""}
+    </div>`;
+}
+// Po najechaniu kursorem (z opóźnieniem) — dymek; kursor można przenieść na dymek (przewijanie długiej listy)
+const HRS_HOVER_MS = 350;
+let hrsTimer = null, hrsHideTimer = null;
+function hrsPop() {
+  let p = document.getElementById("hrsPop");
+  if (!p) {
+    p = document.createElement("div");
+    p.id = "hrsPop";
+    p.style.cssText = "position:fixed;z-index:120;display:none;width:440px;max-width:90vw;background:var(--surface);border:1px solid var(--border);"
+      + "border-radius:10px;padding:12px 14px;box-shadow:0 10px 28px rgba(0,0,0,.45)";
+    p.addEventListener("mouseenter", () => clearTimeout(hrsHideTimer));
+    p.addEventListener("mouseleave", hrsHoverOut);
+    document.body.appendChild(p);
+  }
+  return p;
+}
+function hrsHover(el, id) {
+  clearTimeout(hrsTimer); clearTimeout(hrsHideTimer);
+  hrsTimer = setTimeout(() => {
+    const w = (allWorkersData || []).find((x) => x.id === id);
+    const s = HRS.rows[id];
+    if (!w || !s || !el.isConnected) return;
+    const p = hrsPop();
+    p.innerHTML = hrsListHtml(w, s);
+    p.style.display = "block";
+    // pod plakietką; brak miejsca — nad nią; nie wychodzi poza ekran z prawej
+    const r = el.getBoundingClientRect(), ph = p.offsetHeight, pw = p.offsetWidth;
+    const top = r.bottom + 6 + ph > window.innerHeight ? Math.max(8, r.top - 6 - ph) : r.bottom + 6;
+    p.style.top = top + "px";
+    p.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pw - 8)) + "px";
+  }, HRS_HOVER_MS);
+}
+function hrsHoverOut() {
+  clearTimeout(hrsTimer);
+  clearTimeout(hrsHideTimer);
+  hrsHideTimer = setTimeout(() => { const p = document.getElementById("hrsPop"); if (p) p.style.display = "none"; }, 200);
+}
+// Kliknięcie — to samo w oknie (telefon / gdy trzeba dłużej popatrzeć)
+function hrsShow(id) {
+  const w = (allWorkersData || []).find((x) => x.id === id);
+  const s = HRS.rows[id];
+  if (!w || !s) return;
+  clearTimeout(hrsTimer);
+  const pop = document.getElementById("hrsPop");
+  if (pop) pop.style.display = "none";
+  let ov = document.getElementById("hrsOverlay");
+  if (!ov) {
+    ov = document.createElement("div");
+    ov.id = "hrsOverlay";
+    ov.className = "modal-overlay";
+    ov.innerHTML = `<div class="modal" style="width:520px" role="dialog" aria-label="Dokumenty HRappka"><div id="hrsBody"></div></div>`;
+    ov.addEventListener("click", (e) => { if (e.target === ov) ov.classList.remove("open"); });
+    document.body.appendChild(ov);
+  }
+  document.getElementById("hrsBody").innerHTML = hrsListHtml(w, s) + `
+    <div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn btn-ghost btn-sm" onclick="document.getElementById('hrsOverlay').classList.remove('open')">Zamknij</button></div>`;
+  ov.classList.add("open");
+}
+// Esc — zamyka okno i dymek
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const ov = document.getElementById("hrsOverlay");
+  if (ov) ov.classList.remove("open");
+  const p = document.getElementById("hrsPop");
+  if (p) p.style.display = "none";
+  clearTimeout(hrsTimer);
+});
+async function refreshSignatures() {
+  const btn = document.getElementById("workersDocsBtn");
+  const ids = (window._workersFiltered || []).filter(hrsInScope).map((w) => w.id).slice(0, 500);
+  if (!ids.length) { alert("Na liście nie ma pracowników z BHP od " + HRS.from.split("-").reverse().join(".") + "."); return; }
+  btn.disabled = true;
+  btn.textContent = `⏳ Sprawdzam ${ids.length}…`;
+  try {
+    const r = await apiFetch("/api/hrsign/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) });
+    if (!r || !r.ok) alert("HRappka: " + ((r && r.error) || "błąd"));
+    else {
+      Object.assign(HRS.rows, r.rows || {});
+      if (r.skipped && !r.checked) alert("Ci pracownicy byli sprawdzani przed chwilą — spróbuj za minutę.");
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🔄 Sprawdź podpisy";
+    filterWorkers(false);
+  }
+}
+
 async function loadWorkersPage() {
   try {
-    const res = await apiFetch("/api/workers/all");
+    const [res] = await Promise.all([apiFetch("/api/workers/all"), loadSignatures()]);
     if (!res) return;
     allWorkersData = res.data;
     buildWorkersGroupFacDropdowns();
@@ -117,6 +256,15 @@ async function loadWorkerStats() {
     if (!res || !res.data) return;
     const { data } = res;
     document.getElementById("statAllWorkers").textContent = data.total;
+    // координатор / регіональний: перший рядок — свої обʼєкти (регіон), нижче — уся фірма; адмін — як було
+    const allSub = document.getElementById("statAllSub");
+    const allCo = document.getElementById("statAllCompany");
+    if (allSub && allCo) {
+      const two = data.company_total != null;
+      allSub.textContent = !two ? "aktywnych" : data.scope === "region" ? "aktywnych w regionie" : "aktywnych na Twoich obiektach";
+      allCo.innerHTML = two ? `Cała firma: <b style="color:var(--text)">${Number(data.company_total)}</b>` : "";
+      allCo.hidden = !two;
+    }
     document.getElementById("statNewWorkers").textContent = data.new_this_week;
     document.getElementById("statStartedWorkers").textContent = data.started_this_week ?? "—";
     document.getElementById("statLeavingWeek").textContent = data.leaving_this_week;
@@ -152,8 +300,11 @@ function filterWorkers(reset = true) {
     if (bhpTo && (!w.bhp_date || localDate(w.bhp_date) > bhpTo)) return false;
     if (lastFrom && (!w.last_work_date || localDate(w.last_work_date) < lastFrom)) return false;
     if (lastTo && (!w.last_work_date || localDate(w.last_work_date) > lastTo)) return false;
+    const docs = document.getElementById("workersDocs") ? document.getElementById("workersDocs").value : "";
+    if (docs && !(hrsInScope(w) && hrsState(w) === docs)) return false;
     return true;
   });
+  window._workersFiltered = filtered;
 
   const { slice, pages } = paginate(filtered, pageWorkers, pageSizeWorkers);
   document.getElementById("workersCount").textContent = filtered.length;
@@ -162,6 +313,7 @@ function filterWorkers(reset = true) {
       <td><span style="font-family:var(--mono);font-size:11px">${w.login}</span></td>
       <td class="worker-name">${w.full_name}</td>
       <td style="color:var(--text2);font-size:12px">${w.facility_name || "—"}</td>
+      <td style="color:var(--text2);font-size:12px">${escStan(w.stanowisko)}</td>
       <td><span class="badge ${w.status === "pracuje" ? "badge-green"
       : w.status === "urlop" || w.status === "l4" ? "badge-purple"
         : w.status === "przeniesiony" ? "badge-orange"
@@ -171,12 +323,13 @@ function filterWorkers(reset = true) {
       <td style="font-family:var(--mono);font-size:11px;color:var(--text3)">${w.telegram_chat_id ? "✅" : "—"}</td>
       <td style="font-size:11px;color:var(--text3)">${w.bhp_date ? new Date(w.bhp_date).toLocaleDateString("pl") : "—"}</td>
       <td style="font-size:11px;color:var(--text3)">${w.last_work_date ? new Date(w.last_work_date).toLocaleDateString("pl") : "—"}</td>
+      <td>${hrsCell(w)}</td>
       <td style="display:flex;gap:4px">
         <button class="btn btn-ghost btn-sm" onclick='openWorkerModal(${JSON.stringify(w)})'>Edytuj</button>
         <button class="btn btn-ghost btn-sm" onclick="openHistoryModal(${w.id},'${w.full_name.replace(/'/g, "\\'").replace(/"/g, "&quot;")}')">Historia</button>
       </td>
     </tr>`).join("") ||
-    `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
+    `<tr><td colspan="10" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
 
   renderPagination("paginationWorkers", pageWorkers, pages, "goPageWorkers");
 }
@@ -249,7 +402,7 @@ async function saveWorker() {
 
   if (!res || !res.ok) { document.getElementById("wm_err").textContent = res?.error || "Blad zapisu"; return; }
   closeWorkerModal();
-  loadWorkersPage(); loadWorkers(); loadStats();
+  loadWorkersPage(); loadWorkers(); loadStats(); loadWorkerStats();
 }
 
 // ── HISTORY MODAL ─────────────────────────────────────────────
@@ -297,6 +450,9 @@ async function startImport() {
       btn.textContent = "✅ Gotowe";
       setTimeout(() => { btn.textContent = "⬇ Import"; btn.disabled = false; }, 5000);
       loadWorkersPage(); loadWorkerStats(); loadStats();
-    } else { btn.textContent = "❌ Blad"; setTimeout(() => { btn.textContent = "⬇ Import"; btn.disabled = false; }, 3000); }
+    } else {
+      btn.textContent = "❌ Blad"; setTimeout(() => { btn.textContent = "⬇ Import"; btn.disabled = false; }, 3000);
+      if (res && res.error) alert(res.error);
+    }
   } catch (e) { btn.textContent = "❌ Blad"; setTimeout(() => { btn.textContent = "⬇ Import"; btn.disabled = false; }, 3000); }
 }

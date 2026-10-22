@@ -1,5 +1,6 @@
 require("dotenv").config();
 const { requireAuth } = require("./api/admin");
+const crypto = require("crypto");
 const express = require("express");
 const path = require("path");
 const db = require("./db");
@@ -11,10 +12,17 @@ const {
   sendCoordinatorReports,
 } = require("./bot/handlers");
 const gaps = require("./bot/gaps");
+const medcheck = require("./bot/medcheck");
 const { requireAdmin } = require("./api/admin");
 const apiRoutes = require("./api/routes");
 const { router: adminRoutes } = require("./api/admin");
 const regional = require("./api/regional");
+const care = require("./api/care");
+const board = require("./api/board");
+const hoursReport = require("./bot/hours_report");
+const flow = require("./api/flow");
+const broadcast = require("./api/broadcast");   // Rekrutacja → Wysyłka wiadomości
+const referral = require("./bot/referral");
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const app = express();
@@ -53,7 +61,16 @@ app.use(async (req, res, next) => {
 
 
 // ── API routes ────────────────────────────────────────────────
+app.use("/api", apiRoutes);
+app.use("/api/tg", require("./api/tg").router);
 app.use("/api/regional", regional.router);
+app.use("/api/care", care.router);
+app.use("/api/board", board.router);
+app.use("/api/flow", flow.router);
+app.use("/api/hours-report", hoursReport.router);
+app.use("/api/ref", require("./api/ref").router);
+app.use("/api/broadcast", broadcast.router);
+app.use("/api/hrsign", require("./api/hr_sign").router);   // підписи документів HRappka (Pracownicy → Dokumenty)
 app.use("/api", apiRoutes);
 app.use("/api", require("./api/reports"));
 app.use("/admin", adminRoutes);
@@ -62,6 +79,10 @@ app.use("/admin", adminRoutes);
 app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
   try {
+    // групи Telegram: запам'ятати чат для зведень «Wyjazdy / przyjazdy», боту працівників там робити нічого
+    if (await flow.onUpdate(req.body)) return;
+    if (await referral.onUpdate(bot, req.body)) return;
+    if (await require("./bot/coord").onUpdate(bot, req.body)) return;
     await handleUpdate(bot, req.body);
   } catch (err) {
     console.error("Webhook error:", err.message);
@@ -77,16 +98,31 @@ app.get("/", (req, res) => {
 });
 
 //Bot settings
-app.get("/api/facility-settings/:id", async (req, res) => {
-  const r = await db.query(
-    "SELECT * FROM facility_settings WHERE facility_id = $1",
-    [req.params.id],
-  );
-  res.json(r.rows[0]);
+// тільки з логіном; id — число (сканери смикають адреси з JS буквально: «/api/facility-settings/${facilityId}»)
+app.get("/api/facility-settings/:id", requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ ok: false, error: "Bad id" });
+  try {
+    const r = await db.query("SELECT * FROM facility_settings WHERE facility_id = $1", [id]);
+    res.json(r.rows[0] || null);
+  } catch (err) {
+    console.error("facility-settings error:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
+// Ручний запуск розсилок: сесія адміна (?session=…, як /trigger/med-check) або заголовок x-trigger-token = TRIGGER_TOKEN з .env
+// (для зовнішнього планувальника). Без цього будь-хто з інтернету міг запустити розсилку всім.
+// Виняток «з localhost» не робимо: Caddy проксує всі запити з інтернету саме з localhost.
+function triggerAuth(req, res, next) {
+  const tok = String(process.env.TRIGGER_TOKEN || "");
+  const given = String(req.headers["x-trigger-token"] || "");
+  if (tok.length >= 16 && given.length === tok.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(tok))) return next();
+  requireAuth(req, res, () => requireAdmin(req, res, next));
+}
+
 // ── Reminder trigger ──────────────────────────────────────────
-app.post("/trigger/reminders", async (req, res) => {
+app.post("/trigger/reminders", triggerAuth, async (req, res) => {
   res.json({ status: "started" });
   try {
     await sendMissingReminders(bot);
@@ -95,7 +131,7 @@ app.post("/trigger/reminders", async (req, res) => {
   }
 });
 // ── Coordinator report trigger (тест) ─────────────────────────
-app.post("/trigger/coord-report", async (req, res) => {
+app.post("/trigger/coord-report", triggerAuth, async (req, res) => {
   res.json({ status: "started" });
   try {
     await sendCoordinatorReports(bot);
@@ -142,11 +178,35 @@ app.post("/trigger/gap-spam", requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+// ── Медосмотры: BHP из базы ↔ таблица badania lekarskie ──────
+// Просмотр без отправки и без записи: GET /api/med-check/preview?session=<токен админа>[&date=2026-10-13]
+app.get("/api/med-check/preview", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || "")) ? req.query.date : undefined;
+    const r = await medcheck.runCheck({ date, dryRun: true });
+    res.json({ date: r.date, window: r.window, sheet: r.sheet, counts: r.counts, text: r.text });
+  } catch (e) {
+    console.error("[MedCheck] preview error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+// Отправить сводку сейчас: POST /trigger/med-check?session=<токен админа>  (&dry=1 — не сохранять состояние)
+app.post("/trigger/med-check", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    res.json(await medcheck.sendReport(bot, { dryRun: req.query.dry === "1" }));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Start ─────────────────────────────────────────────────────
 // ── Start (HTTP + HTTPS) ──────────────────────────────────────
 const fs = require("fs");
 const http = require("http");
 const https = require("https");
+
+// Нові міграції db/migration_*.sql — автоматично при старті (db/migrate.js); помилка не зупиняє сервер
+require("./db/migrate").run().catch((e) => console.error("[migrate]", e.message));
 
 const HTTP_PORT = process.env.PORT || 12080;        // дашборд / локалка
 const HTTPS_PORT = process.env.HTTPS_PORT || 8443;  // вебхук Telegram
@@ -207,14 +267,7 @@ function scheduleReminder() {
           await sendTabeleReminders(bot);
         }
       }
-      if (current === "17:00") {
-        const key = `coord_report_${current}`;
-        if (!sentThisMinute.has(key)) {
-          await sendCoordinatorReports(bot);
-          sentThisMinute.add(key);
-          setTimeout(() => sentThisMinute.delete(key), 2 * 60 * 1000);
-        }
-      }
+      
     } catch (e) {
       console.error("[Reminder] Error:", e.message);
     }
@@ -258,6 +311,27 @@ function scheduleImport() {
   );
 }
 
+const cron = require('node-cron');
+const { main: runHrappkaAudit } = require('./sync_hrrappka_diff');
+
+// Щотижневий аудит HRappka: щопонеділка о 08:00 за Варшавою ('0 8 * * 1'; четвер — '0 8 * * 4').
+// Помилку (HRappka не відповіла, пошта) лише пишемо в лог — інакше необроблена помилка могла б зупинити процес.
+let hrappkaAuditRunning = false;
+cron.schedule('0 8 * * 1', async () => {
+  if (hrappkaAuditRunning) return;
+  hrappkaAuditRunning = true;
+  console.log('--- Запуск щотижневого аудиту HRappka ---');
+  try {
+    await runHrappkaAudit();
+  } catch (err) {
+    console.error('[HRappka audit] Error:', err.message);
+  } finally {
+    hrappkaAuditRunning = false;
+  }
+}, {
+  timezone: "Europe/Warsaw"
+});
+
 app.get("/api/facility-settings-all", requireAuth, async (req, res) => {
   try {
     const user = req.coordinator;
@@ -296,8 +370,18 @@ app.get("/api/facility-settings-all", requireAuth, async (req, res) => {
   }
 });
 
-app.patch("/api/facility-settings/:id", async (req, res) => {
+app.patch("/api/facility-settings/:id", requireAuth, async (req, res) => {
   const { field, value } = req.body;
+
+  // Admin — każdy zakład; koordynator — tylko z prawem edycji (główny / pomocniczy z edycją,
+  // Region → Przypisania). Pomocniczy „tylko podgląd” i regionalny widzą ustawienia, ale ich nie zmieniają.
+  if (!req.coordinator.is_admin) {
+    const can = await db.query(
+      `SELECT 1 FROM coordinator_facilities WHERE coordinator_id = $1 AND facility_id = $2 AND is_primary`,
+      [req.coordinator.coordinator_id, parseInt(req.params.id, 10) || 0],
+    );
+    if (!can.rows.length) return res.status(403).json({ error: "Tylko podgląd — brak prawa edycji na tym zakładzie" });
+  }
 
   const allowed = [
     "enable_advances",
@@ -340,3 +424,15 @@ app.patch("/api/facility-settings/:id", async (req, res) => {
 scheduleReminder();
 scheduleImport();
 regional.schedule(bot);
+require("./bot/care").schedule(bot);
+flow.schedule(bot);
+require("./bot/coord").schedule(bot);
+hoursReport.schedule(bot);
+referral.schedule(bot);
+medcheck.schedule(bot);
+broadcast.schedule(bot);
+require("./bot/fines").schedule(bot);   // штрафи: повідомлення працівнику
+require("./bot/fines_sheet").schedule();  // штрафи → Google-таблиця: повтор незаписаних
+require("./bot/hr_sign").schedule();       // підписи HRappka: щодня о 6:00
+
+//new

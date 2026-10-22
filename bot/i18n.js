@@ -23,6 +23,7 @@ const I18N = {
     btn_wz: "Вихідний за графіком (DW)",
     btn_dwz: "Вихідний від фірми (DWZ)",
     btn_un: "Виправдана відсутність (UN)",
+        wolne_auto_rejected: (days, n) => `❌ Відхилено: ${days}.\nВихідний на найближчі ${n} дні замовити не можна — лише заздалегідь.`,
     btn_url: "Відпустка (URL)",
     btn_l4: "Лікарняний (L4)",
     btn_nn: "Без причини (NN)",
@@ -86,6 +87,7 @@ const I18N = {
     enter_hours_manual: "Wpisz godziny GG:MM lub dziesietnie (np. 7.5):",
     bad_hours_format: "Zly format. Przyklad: 07:30 lub 7.5",
     month_sum_btn: "Suma za miesiac",
+        wolne_auto_rejected: (days, n) => `❌ Odrzucono: ${days}.\nWolnego na najblizsze ${n} dni nie mozna zamowic - tylko z wyprzedzeniem.`,
     btn_wz: "Dzień wolny (DW)",
     btn_dwz: "Dzień wolny zakładowy (DWZ)",
     btn_un: "Usprawiedliwiona nieobecność (UN)",
@@ -196,6 +198,7 @@ const I18N = {
     akc_confirm: (choice) => `Your choice: ${choice}\n\nDo you confirm your choice?`,
     akc_btn_confirm: "✅ Yes, I confirm",
     akc_thanks: "Thank you for your answer!",
+        wolne_auto_rejected: (days, n) => `❌ Rejected: ${days}.\nA day off within the next ${n} days can't be requested - only in advance.`,
     akc_already: "You have already answered this question.",
   },
   ru: {
@@ -233,6 +236,7 @@ const I18N = {
     wolne_cancel_btn: "Отменить",
     wolne_confirmed: "Заявка принята.",
     wolne_no_days: "Не выбран ни один день.",
+        wolne_auto_rejected: (days, n) => `❌ Отклонено: ${days}.\nВыходной на ближайшие ${n} дня заказать нельзя — только заранее.`,
     logout_btn: "Выход (0000)",
     missing_days_msg: (name, mm, days) =>
       `${name}, внеси часы за пропущенные дни (${mm}): ${days}.`,

@@ -25,17 +25,51 @@ async function getFacilityFilter(coordinator) {
   return result.rows.map((r) => r.facility_id);
 }
 
-// true, если работник в зоне ответственности координатора (админ — всегда)
-async function workerInScope(coordinator, workerId) {
-  if (coordinator.is_admin) return true;
-  const r = await db.query(
-    `SELECT 1
-     FROM v_worker_current w
-     JOIN coordinator_facilities cf ON cf.facility_id = w.facility_id
-     WHERE w.id = $1 AND cf.coordinator_id = $2
-     LIMIT 1`,
-    [workerId, coordinator.coordinator_id],
+// Obiekty z prawem edycji: główny albo pomocniczy z edycją (coordinator_facilities.is_primary).
+// Pomocniczy „tylko podgląd” i regionalny (podgląd regionu) widzą dane, ale nie zmieniają ich.
+// Przypisania: Region → 👥 Przypisania (db/migration_przypisania.sql). null = admin (wszystko).
+const VIEW_ONLY = "Tylko podgląd — na tym obiekcie nie masz prawa edycji (Region → Przypisania)";
+async function getEditFacilityFilter(coordinator) {
+  if (coordinator.is_admin) return null;
+  const result = await db.query(
+    `SELECT facility_id FROM coordinator_facilities WHERE coordinator_id = $1 AND is_primary`,
+    [coordinator.coordinator_id],
   );
+  return result.rows.map((r) => r.facility_id);
+}
+// Працівник на обʼєкті координатора: його поточний обʼєкт (v_worker_current) АБО — для правки годин
+// за конкретну дату — запис історії на обʼєкті координатора (крім rezygnacja), що покриває цю дату.
+// Друге потрібне, коли «поточним» рахується інший заклад: напр. працівник повернувся з відрядження,
+// а там BHP пізніший (запис rezygnacja / закінчений) — у списку годин він у свого координатора, а правка давала 403.
+const isoDate = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(String(d || "")) ? String(d) : null);
+const scopeSql = (edit) => `
+  SELECT 1
+    FROM coordinator_facilities cf
+   WHERE cf.coordinator_id = $2${edit ? " AND cf.is_primary" : ""}
+     AND (EXISTS (SELECT 1 FROM v_worker_current w WHERE w.id = $1 AND w.facility_id = cf.facility_id)
+          OR ($3::date IS NOT NULL AND EXISTS (
+                SELECT 1 FROM worker_facility_history h
+                 WHERE h.worker_id = $1 AND h.facility_id = cf.facility_id
+                   AND h.status::text <> 'rezygnacja'
+                   AND h.bhp_date <= $3::date
+                   AND (h.last_work_date IS NULL OR h.last_work_date >= $3::date))))
+   LIMIT 1`;
+async function workerInEditScope(coordinator, workerId, workDate) {
+  if (coordinator.is_admin) return true;
+  const r = await db.query(scopeSql(true), [workerId, coordinator.coordinator_id, isoDate(workDate)]);
+  return r.rows.length > 0;
+}
+// null — można zmieniać; inaczej tekst błędu (widzi, ale tylko podgląd / w ogóle nie jego)
+async function editDenied(coordinator, workerId, workDate) {
+  if (await workerInEditScope(coordinator, workerId, workDate)) return null;
+  return (await workerInScope(coordinator, workerId, workDate)) ? VIEW_ONLY : "Forbidden";
+}
+
+// true, если работник в зоне ответственности координатора (админ — всегда);
+// workDate — для правки годин: также если на эту дату он был на объекте координатора (см. scopeSql)
+async function workerInScope(coordinator, workerId, workDate) {
+  if (coordinator.is_admin) return true;
+  const r = await db.query(scopeSql(false), [workerId, coordinator.coordinator_id, isoDate(workDate)]);
   return r.rows.length > 0;
 }
 
@@ -182,8 +216,8 @@ router.get("/stats", requireAuth, async (req, res) => {
 router.post("/hours", requireAuth, async (req, res) => {
   try {
     const { worker_id, work_date, hours, absence_type } = req.body;
-    if (!(await workerInScope(req.coordinator, worker_id)))
-      return res.status(403).json({ ok: false, error: "Forbidden" });
+    const denied = await editDenied(req.coordinator, worker_id, work_date);
+    if (denied) return res.status(403).json({ ok: false, error: denied });
 
     const h =
       hours === "" || hours === null || hours === undefined ? null : Number(hours);
@@ -229,8 +263,8 @@ router.post("/hours", requireAuth, async (req, res) => {
 router.post("/remind/:worker_id", requireAuth, async (req, res) => {
   try {
     const { worker_id } = req.params;
-    if (!(await workerInScope(req.coordinator, worker_id)))
-      return res.status(403).json({ ok: false, error: "Forbidden" });
+    const denied = await editDenied(req.coordinator, worker_id);
+    if (denied) return res.status(403).json({ ok: false, error: denied });
     const w = await db.query(`SELECT * FROM workers WHERE id = $1`, [
       worker_id,
     ]);
@@ -244,9 +278,20 @@ router.post("/remind/:worker_id", requireAuth, async (req, res) => {
 });
 
 // ── Advances list ─────────────────────────────────────────────
+// scope (як у мініпанелі Telegram): own — свої обʼєкти, region — разом з регіоном, all — уся фірма.
+// Без scope — збережений вибір координатора (tgc.prefs.scope). У відповіді — scope і scopes для перемикача.
 router.get("/advances", requireAuth, async (req, res) => {
   try {
-    const allowedFacilities = await getFacilityFilter(req.coordinator);
+    const coord = require("../bot/coord");   // ліниво: bot/coord.js сам підключає цей файл
+    const c = await coord.coordById(req.coordinator.coordinator_id);
+    let allowedFacilities = await getFacilityFilter(req.coordinator), scope = null, scopes = [];
+    if (c) {
+      c.is_admin = !!req.coordinator.is_admin;
+      const want = ["own", "region", "all"].includes(req.query.scope) ? req.query.scope : undefined;
+      const f = await coord.facsOf(c, want);
+      scope = f.scope; scopes = f.avail;
+      allowedFacilities = f.all;   // null — уся фірма
+    }
     let query = `
       SELECT a.*, w.full_name, w.login, w.bhp_date, f.name AS facility_name,
         COALESCE((
@@ -263,17 +308,90 @@ router.get("/advances", requireAuth, async (req, res) => {
     const params = [];
     if (allowedFacilities !== null) {
       if (allowedFacilities.length === 0)
-        return res.json({ ok: true, data: [] });
+        return res.json({ ok: true, data: [], scope, scopes });
       params.push(allowedFacilities);
       query += ` AND w.facility_id = ANY($${params.length})`;
     }
     query += ` ORDER BY a.requested_at DESC LIMIT 500`;
     const result = await db.query(query, params);
-    res.json({ ok: true, data: result.rows });
+    res.json({ ok: true, data: result.rows, scope, scopes });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
+// Причини відмови з бота координатора (bot/coord.js): працівник отримує їх своєю мовою.
+// У базу (note) пишеться польський текст — як бачить панель. З панелі причина працівнику не надсилається, як і раніше.
+const REASON_TXT = {
+  hours:   { pl: "Za mało przepracowanych godzin", uk: "Замало відпрацьованих годин", ru: "Мало отработанных часов", en: "Not enough hours worked" },
+  had:     { pl: "Zaliczka w tym miesiącu już była", uk: "Аванс цього місяця вже був", ru: "Аванс в этом месяце уже был", en: "You already had an advance this month" },
+  leaving: { pl: "Kończy pracę", uk: "Ви завершуєте роботу", ru: "Вы заканчиваете работу", en: "You are finishing work" },
+  staff:   { pl: "Za mało ludzi na zmianie", uk: "Замало людей на зміні в ці дні", ru: "Мало людей на смене в эти дни", en: "Not enough people on shift these days" },
+  late:    { pl: "Za późno zgłoszone", uk: "Заявку подано запізно", ru: "Заявка подана слишком поздно", en: "Request submitted too late" },
+};
+const reasonFor = (code, lang) => (REASON_TXT[code] ? REASON_TXT[code][lang] || REASON_TXT[code].uk : "");
+
+// Рішення по заявці на аванс — спільне для панелі (PATCH нижче) і бота координатора (bot/coord.js).
+// coordinator = сесія ({ coordinator_id, is_admin }). Повертає { ok } або { ok:false, notFound:true }.
+// reasonCode (тільки з бота) — причина відмови: у базу — польською, працівнику — його мовою.
+async function decideAdvance(coordinator, id, status, note, reasonCode) {
+  if (reasonCode && REASON_TXT[reasonCode]) note = REASON_TXT[reasonCode].pl;
+  if (!["approved", "rejected"].includes(status)) return { ok: false, error: "Invalid status" };
+  const result = await db.query(
+    `UPDATE advances a
+     SET status = $1, note = $2, approved_by = $3, approved_at = now()
+     WHERE a.id = $4
+       AND (
+         $5::boolean
+         OR EXISTS (
+           SELECT 1 FROM v_worker_current vw
+           JOIN coordinator_facilities cf ON cf.facility_id = vw.facility_id
+           WHERE vw.id = a.worker_id AND cf.coordinator_id = $3 AND cf.is_primary
+         )
+       )
+     RETURNING worker_id`,
+    [status, note || null, coordinator.coordinator_id, id, !!coordinator.is_admin],
+  );
+  if (!result.rows.length) return { ok: false, notFound: true };
+
+  const { worker_id } = result.rows[0];
+  const workerRes = await db.query(
+    `SELECT full_name, telegram_chat_id, lang FROM workers WHERE id = $1`,
+    [worker_id],
+  );
+  const worker = workerRes.rows[0];
+
+  if (worker?.telegram_chat_id) {
+    try {
+      const session = { lang: worker.lang || "uk" };
+      const { T } = require("../bot/i18n");
+      const emoji = status === "approved" ? "✅" : "❌";
+      const statusText =
+        status === "approved"
+          ? T(session, "advances_approved")
+          : T(session, "advances_rejected");
+      const why = reasonCode ? `\n${reasonFor(reasonCode, session.lang)}` : "";
+
+      await fetch(
+        `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: worker.telegram_chat_id,
+            text: `${emoji} ${statusText}${why}`,
+            parse_mode: "Markdown",
+          }),
+        },
+      );
+    } catch (tgErr) {
+      console.error("Telegram notify failed (advances):", tgErr.message);
+    }
+  }
+  // повідомлення в Telegram координаторів — показати рішення замість кнопок
+  require("../bot/coord").afterDecision("adv", id).catch(() => {});
+  return { ok: true, worker_id };
+}
 
 router.patch("/advances/:id", requireAuth, async (req, res) => {
   try {
@@ -281,62 +399,9 @@ router.patch("/advances/:id", requireAuth, async (req, res) => {
     if (!["approved", "rejected"].includes(status)) {
       return res.status(400).json({ ok: false, error: "Invalid status" });
     }
-
-    const result = await db.query(
-      `UPDATE advances a
-       SET status = $1, note = $2, approved_by = $3, approved_at = now()
-       WHERE a.id = $4
-         AND (
-           $5::boolean
-           OR EXISTS (
-             SELECT 1 FROM v_worker_current vw
-             JOIN coordinator_facilities cf ON cf.facility_id = vw.facility_id
-             WHERE vw.id = a.worker_id AND cf.coordinator_id = $3
-           )
-         )
-       RETURNING worker_id`,
-      [status, note || null, req.coordinator.coordinator_id,
-        req.params.id, !!req.coordinator.is_admin],
-    );
-
-    if (!result.rows.length)
-      return res.status(404).json({ ok: false, error: "Not found or forbidden" });
-
-    const { worker_id } = result.rows[0];
-
-    const workerRes = await db.query(
-      `SELECT full_name, telegram_chat_id, lang FROM workers WHERE id = $1`,
-      [worker_id],
-    );
-    const worker = workerRes.rows[0];
-
-    if (worker?.telegram_chat_id) {
-      try {
-        const session = { lang: worker.lang || "uk" };
-        const { T } = require("../bot/i18n");
-        const emoji = status === "approved" ? "✅" : "❌";
-        const statusText =
-          status === "approved"
-            ? T(session, "advances_approved")
-            : T(session, "advances_rejected");
-
-        await fetch(
-          `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: worker.telegram_chat_id,
-              text: `${emoji} ${statusText}`,
-              parse_mode: "Markdown",
-            }),
-          },
-        );
-      } catch (tgErr) {
-        console.error("Telegram notify failed (advances):", tgErr.message);
-      }
-    }
-
+    const r = await decideAdvance(req.coordinator, req.params.id, status, note);
+    if (!r.ok)
+      return res.status(404).json({ ok: false, error: "Nie znaleziono albo brak prawa edycji (tylko podgląd)" });
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -404,11 +469,25 @@ router.get("/history", requireAuth, async (req, res) => {
 });
 
 // ── Workers stats ─────────────────────────────────────────────
+// Плитка «Wszyscy»: адмін — уся фірма; координатор / регіональний — свої обʼєкти (регіон),
+// а під ними — уся фірма (company_total; scope: own | region — є обʼєкти як регіональний).
+async function companyHeadcount(coordinator) {
+  const [all, lead] = await Promise.all([
+    db.query(`SELECT COUNT(*)::int AS n FROM v_worker_current w WHERE w.status = 'pracuje' AND w.${NOT_TEST}`),
+    db.query(
+      `SELECT EXISTS (SELECT 1 FROM reg.v_access v WHERE v.coordinator_id = $1 AND 'lead' = ANY(v.kinds)) AS lead`,
+      [coordinator.coordinator_id],
+    ).catch(() => ({ rows: [{ lead: false }] })),   // без модуля регіонів
+  ]);
+  return { company_total: all.rows[0].n, scope: lead.rows[0].lead ? "region" : "own" };
+}
+
 router.get("/workers/stats", requireAuth, async (req, res) => {
   try {
     const allowedFacilities = await getFacilityFilter(req.coordinator);
     let facFilter = "";
     const params = [];
+    const company = allowedFacilities !== null ? await companyHeadcount(req.coordinator) : {};
 
     if (allowedFacilities !== null) {
       if (allowedFacilities.length === 0) {
@@ -419,6 +498,8 @@ router.get("/workers/stats", requireAuth, async (req, res) => {
             new_this_week: 0,
             leaving_this_week: 0,
             leaving_this_month: 0,
+            started_this_week: 0,
+            ...company,
           },
         });
       }
@@ -477,6 +558,7 @@ router.get("/workers/stats", requireAuth, async (req, res) => {
         leaving_this_week: parseInt(leavingWeek.rows[0].count),
         leaving_this_month: parseInt(leavingMonth.rows[0].count),
         started_this_week: parseInt(startedWeek.rows[0].count),
+        ...company,
       },
     });
   } catch (err) {
@@ -490,9 +572,13 @@ router.get("/workers/all", requireAuth, async (req, res) => {
     const allowedFacilities = await getFacilityFilter(req.coordinator);
     let query = `
      SELECT w.id, w.login, w.full_name, w.status, w.bhp_date, w.last_work_date, w.telegram_chat_id,
-       f.name AS facility_name, f.id AS facility_id, f.group_name AS group_name
+       f.name AS facility_name, f.id AS facility_id, f.group_name AS group_name, st.stanowisko
 FROM v_worker_current w
 LEFT JOIN facilities f ON f.id = w.facility_id
+-- посада поточного періоду (колонка з імпорту; немає колонки — порожньо)
+LEFT JOIN LATERAL (SELECT to_jsonb(h)->>'stanowisko' AS stanowisko FROM worker_facility_history h
+                    WHERE h.worker_id = w.id AND h.facility_id = w.facility_id AND h.bhp_date IS NOT DISTINCT FROM w.bhp_date
+                    ORDER BY h.imported_at DESC LIMIT 1) st ON true
 WHERE 1=1
     `;
     const params = [];
@@ -573,6 +659,15 @@ router.get("/workers", requireAuth, async (req, res) => {
     `;
 
     const workers = await db.query(query, params);
+    // регіон і головний координатор обʼєкта (Region → Przypisania) — для порядку регіон → координатор → обʼєкт
+    const siteMeta = await db.query(
+      `SELECT f.id AS facility_id, rg.name AS region_name, c.full_name AS coordinator_name
+         FROM facilities f
+         JOIN reg.site_owner so ON so.site_key = reg.site_key(f.group_name, f.name) AND so.valid_to IS NULL
+         LEFT JOIN reg.regions rg ON rg.id = so.region_id
+         LEFT JOIN coordinators c ON c.id = so.coordinator_id`,
+    ).catch(() => ({ rows: [] }));   // без модуля регіонів
+    const metaByFac = Object.fromEntries(siteMeta.rows.map((x) => [x.facility_id, x]));
 
     const hoursRes = await db.query(
       `SELECT worker_id, work_date, hours, absence_type
@@ -602,7 +697,8 @@ router.get("/workers", requireAuth, async (req, res) => {
         return true;
       });
 
-      return { ...w, hours: filteredHours };
+      const m = metaByFac[w.facility_id] || {};
+      return { ...w, region_name: m.region_name || null, coordinator_name: m.coordinator_name || null, hours: filteredHours };
     });
 
     result.sort((a, b) =>
@@ -620,7 +716,10 @@ router.get("/workers", requireAuth, async (req, res) => {
 // ── Import ────────────────────────────────────────────────────
 router.post("/import", requireAuth, async (req, res) => {
   try {
-    const allowedFacilities = await getFacilityFilter(req.coordinator);
+    // tylko obiekty z prawem edycji; pusta lista NIE może oznaczać „wszystko” (runImport([]) = pełny import)
+    const allowedFacilities = await getEditFacilityFilter(req.coordinator);
+    if (allowedFacilities !== null && !allowedFacilities.length)
+      return res.status(403).json({ ok: false, error: VIEW_ONLY });
     const { runImport } = require("../import_sheets");
     await runImport(allowedFacilities);
     res.json({ ok: true, message: "Import finished" });
@@ -722,82 +821,90 @@ router.get("/day-off", requireAuth, async (req, res) => {
 });
 
 // ── Day off approve/reject ────────────────────────────────────
+// Рішення по заявці на вихідні — спільне для панелі (PATCH нижче) і бота координатора (bot/coord.js).
+// Повертає { ok, hours } або { ok:false, notFound:true }. reasonCode — як у decideAdvance.
+async function decideDayOff(coordinator, id, status, note, reasonCode) {
+  if (reasonCode && REASON_TXT[reasonCode]) note = REASON_TXT[reasonCode].pl;
+  if (!["approved", "rejected"].includes(status)) return { ok: false, error: "Invalid status" };
+  const result = await db.query(
+    `UPDATE day_off_requests d
+     SET status=$1, note=$2, reviewed_at=now(), reviewed_by=$3
+     WHERE d.id=$4
+       AND (
+         $5::boolean
+         OR EXISTS (
+           SELECT 1 FROM v_worker_current vw
+           JOIN coordinator_facilities cf ON cf.facility_id = vw.facility_id
+           WHERE vw.id = d.worker_id AND cf.coordinator_id = $3 AND cf.is_primary
+         )
+       )
+     RETURNING worker_id, days`,
+    [status, note || null, coordinator.coordinator_id, id, !!coordinator.is_admin],
+  );
+  if (!result.rows.length) return { ok: false, notFound: true };
+
+  const { worker_id, days } = result.rows[0];
+
+  // авто-URL у табелі
+  let hoursInfo = { applied: [], occupied: [], out_of_period: [] };
+  if (status === "approved") {
+    try {
+      hoursInfo = await applyDayOffToHours(worker_id, days);
+    } catch (e) {
+      console.error("applyDayOffToHours failed:", e.message);
+    }
+  }
+
+  const workerRes = await db.query(
+    `SELECT full_name, telegram_chat_id, lang FROM workers WHERE id = $1`,
+    [worker_id],
+  );
+  const worker = workerRes.rows[0];
+
+  if (worker?.telegram_chat_id) {
+    try {
+      const daysFormatted = (days || [])
+        .map((d) => {
+          const dt = new Date(d);
+          return `${String(dt.getDate()).padStart(2, "0")}.${String(dt.getMonth() + 1).padStart(2, "0")}`;
+        })
+        .join(", ");
+
+      const emoji = status === "approved" ? "✅" : "❌";
+      const statusText = status === "approved" ? "підтверджено" : "відхилено";
+      const why = reasonCode ? `\n${reasonFor(reasonCode, worker.lang || "uk")}` : "";
+      const message = `${emoji} Ваш запит на вихідний *${statusText}*!\n\n📅 Дні: *${daysFormatted}*${why}`;
+
+      await fetch(
+        `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: worker.telegram_chat_id,
+            text: message,
+            parse_mode: "Markdown",
+          }),
+        },
+      );
+    } catch (tgErr) {
+      console.error("Telegram notify failed (day-off):", tgErr.message);
+    }
+  }
+  require("../bot/coord").afterDecision("dof", id).catch(() => {});
+  return { ok: true, worker_id, hours: hoursInfo };
+}
+
 router.patch("/day-off/:id", requireAuth, async (req, res) => {
   try {
     const { status, note } = req.body;
     if (!["approved", "rejected"].includes(status)) {
       return res.status(400).json({ ok: false, error: "Invalid status" });
     }
-
-    const result = await db.query(
-      `UPDATE day_off_requests d
-       SET status=$1, note=$2, reviewed_at=now(), reviewed_by=$3
-       WHERE d.id=$4
-         AND (
-           $5::boolean
-           OR EXISTS (
-             SELECT 1 FROM v_worker_current vw
-             JOIN coordinator_facilities cf ON cf.facility_id = vw.facility_id
-             WHERE vw.id = d.worker_id AND cf.coordinator_id = $3
-           )
-         )
-       RETURNING worker_id, days`,
-      [status, note || null, req.coordinator.coordinator_id,
-        req.params.id, !!req.coordinator.is_admin],
-    );
-
-    if (!result.rows.length)
-      return res.status(404).json({ ok: false, error: "Not found or forbidden" });
-
-    const { worker_id, days } = result.rows[0];
-
-    // авто-URL у табелі
-    let hoursInfo = { applied: [], occupied: [], out_of_period: [] };
-    if (status === "approved") {
-      try {
-        hoursInfo = await applyDayOffToHours(worker_id, days);
-      } catch (e) {
-        console.error("applyDayOffToHours failed:", e.message);
-      }
-    }
-
-    const workerRes = await db.query(
-      `SELECT full_name, telegram_chat_id FROM workers WHERE id = $1`,
-      [worker_id],
-    );
-    const worker = workerRes.rows[0];
-
-    if (worker?.telegram_chat_id) {
-      try {
-        const daysFormatted = (days || [])
-          .map((d) => {
-            const dt = new Date(d);
-            return `${String(dt.getDate()).padStart(2, "0")}.${String(dt.getMonth() + 1).padStart(2, "0")}`;
-          })
-          .join(", ");
-
-        const emoji = status === "approved" ? "✅" : "❌";
-        const statusText = status === "approved" ? "підтверджено" : "відхилено";
-        const message = `${emoji} Ваш запит на вихідний *${statusText}*!\n\n📅 Дні: *${daysFormatted}*`;
-
-        await fetch(
-          `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: worker.telegram_chat_id,
-              text: message,
-              parse_mode: "Markdown",
-            }),
-          },
-        );
-      } catch (tgErr) {
-        console.error("Telegram notify failed (day-off):", tgErr.message);
-      }
-    }
-
-    res.json({ ok: true, hours: hoursInfo });
+    const r = await decideDayOff(req.coordinator, req.params.id, status, note);
+    if (!r.ok)
+      return res.status(404).json({ ok: false, error: "Nie znaleziono albo brak prawa edycji (tylko podgląd)" });
+    res.json({ ok: true, hours: r.hours });
   } catch (err) {
     console.error(err);
     res.status(500).json({ ok: false, error: err.message });
@@ -1206,7 +1313,9 @@ router.get("/analytics/drill", requireAuth, async (req, res) => {
 // ── Trigger reminders (тільки об'єкти координатора) ───────────
 router.post("/remind-missing", requireAuth, async (req, res) => {
   try {
-    const allowedFacilities = await getFacilityFilter(req.coordinator);
+    const allowedFacilities = await getEditFacilityFilter(req.coordinator);
+    if (allowedFacilities !== null && !allowedFacilities.length)
+      return res.status(403).json({ ok: false, error: VIEW_ONLY });
     res.json({ ok: true, status: "started" });
 
     // null = адмін (усі об'єкти), масив = тільки об'єкти координатора
@@ -1221,7 +1330,7 @@ router.post("/remind-missing", requireAuth, async (req, res) => {
 router.get("/tabele/download-all", requireAuth, async (req, res) => {
   try {
     const fs = require("fs");
-    const { month } = req.query;
+    const { month, facility } = req.query;
     const m = month || new Date().toISOString().substring(0, 7);
 
     const allowedFacilities = await getFacilityFilter(req.coordinator);
@@ -1229,20 +1338,31 @@ router.get("/tabele/download-all", requireAuth, async (req, res) => {
     // Збираємо табелі за місяць у зоні координатора
     const params = [m];
     let facFilter = "";
+    let selectedFacilityFilter = "";
     if (allowedFacilities !== null) {
       if (allowedFacilities.length === 0)
         return res.status(404).json({ ok: false, error: "Brak obiektów" });
       params.push(allowedFacilities);
       facFilter = `AND t.facility_id = ANY($${params.length})`;
     }
+    if (facility) {
+      params.push(facility);
 
+      selectedFacilityFilter =
+        `AND f.name = $${params.length}`;
+    }
+
+    console.log("facility =", facility);
+    console.log("typeof =", typeof facility);
     const rows = await db.query(
       `SELECT t.file_path, t.file_number, w.full_name, w.login,
               f.name AS facility_name
        FROM timesheets t
        JOIN workers w ON w.id = t.worker_id
        JOIN facilities f ON f.id = t.facility_id
-       WHERE t.month = $1 ${facFilter}
+       WHERE t.month = $1
+       ${facFilter}
+        ${selectedFacilityFilter}
        ORDER BY f.name, w.full_name, t.file_number`,
       params,
     );
@@ -1296,14 +1416,14 @@ router.post("/advances/batch", requireAuth, async (req, res) => {
     if (!Array.isArray(ids) || !ids.length || !["approve", "reject"].includes(action))
       return res.status(400).json({ ok: false, error: "Bad request" });
 
-    const allowedFacilities = await getFacilityFilter(req.coordinator);
+    const allowedFacilities = await getEditFacilityFilter(req.coordinator);
     const newStatus = action === "approve" ? "approved" : "rejected";
 
     const params = [newStatus, req.coordinator.coordinator_id, ids];
     let facFilter = "";
     if (allowedFacilities !== null) {
       if (!allowedFacilities.length)
-        return res.status(403).json({ ok: false, error: "Brak obiektów" });
+        return res.status(403).json({ ok: false, error: VIEW_ONLY });
       params.push(allowedFacilities);
       facFilter = `AND a.worker_id IN (
         SELECT id FROM v_worker_current WHERE facility_id = ANY($4)
@@ -1325,6 +1445,8 @@ router.post("/advances/batch", requireAuth, async (req, res) => {
     // Telegram-сповіщення (не валимо відповідь, якщо щось не так)
     (async () => {
       for (const row of result.rows) {
+        // повідомлення в Telegram координаторів — показати рішення замість кнопок (bot/coord.js)
+        await require("../bot/coord").afterDecision("adv", row.id).catch(() => {});
         try {
           const wq = await db.query(
             `SELECT telegram_chat_id, lang FROM workers WHERE id = $1`,
@@ -1368,14 +1490,14 @@ router.post("/day-off/batch", requireAuth, async (req, res) => {
     if (!Array.isArray(ids) || !ids.length || !["approve", "reject"].includes(action))
       return res.status(400).json({ ok: false, error: "Bad request" });
 
-    const allowedFacilities = await getFacilityFilter(req.coordinator);
+    const allowedFacilities = await getEditFacilityFilter(req.coordinator);
     const newStatus = action === "approve" ? "approved" : "rejected";
 
     const params = [newStatus, req.coordinator.coordinator_id, ids];
     let facFilter = "";
     if (allowedFacilities !== null) {
       if (!allowedFacilities.length)
-        return res.status(403).json({ ok: false, error: "Brak obiektów" });
+        return res.status(403).json({ ok: false, error: VIEW_ONLY });
       params.push(allowedFacilities);
       facFilter = `AND d.worker_id IN (
         SELECT id FROM v_worker_current WHERE facility_id = ANY($4)
@@ -1423,6 +1545,7 @@ router.post("/day-off/batch", requireAuth, async (req, res) => {
 
     (async () => {
       for (const row of result.rows) {
+        await require("../bot/coord").afterDecision("dof", row.id).catch(() => {});
         try {
           const wq = await db.query(
             `SELECT telegram_chat_id, lang FROM workers WHERE id = $1`,
@@ -1454,5 +1577,10 @@ router.post("/day-off/batch", requireAuth, async (req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
+// Спільні функції для бота координатора (bot/coord.js) і мініпанелі (api/tg.js)
+router.decideAdvance = decideAdvance;
+router.decideDayOff = decideDayOff;
+router.workerInEditScope = workerInEditScope;
 
 module.exports = router;

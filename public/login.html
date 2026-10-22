@@ -185,8 +185,9 @@
           });
           const data = await res.json();
           if (!data.ok) {
+            // 403 — konto nieaktywne (Region → Przypisania); inne błędy — zły login / hasło
             document.getElementById("err").textContent =
-              "Nieprawidlowy login lub haslo";
+              res.status === 403 && data.error ? data.error : "Nieprawidlowy login lub haslo";
             return;
           }
           // Сохраняем sas_session всегда

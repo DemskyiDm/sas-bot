@@ -40,7 +40,7 @@ router.post('/login', async (req, res) => {
     if (!username || !password) return res.status(400).json({ ok: false, error: 'Missing fields' });
 
     const result = await db.query(
-      `SELECT ca.*, c.full_name, c.role
+      `SELECT ca.*, c.full_name, c.role, COALESCE(c.is_active, true) AS coordinator_active
        FROM coordinator_auth ca
        JOIN coordinators c ON c.id = ca.coordinator_id
        WHERE ca.username = $1`,
@@ -52,6 +52,10 @@ router.post('/login', async (req, res) => {
     const auth = result.rows[0];
     if (!verifyPassword(password, auth.password_hash)) {
       return res.status(401).json({ ok: false, error: 'Invalid credentials' });
+    }
+    // Nieaktywny koordynator (Region → Przypisania → Koordynatorzy) nie loguje się
+    if (!auth.coordinator_active) {
+      return res.status(403).json({ ok: false, error: 'Konto nieaktywne — skontaktuj się z kierownikiem działu' });
     }
 
     await db.query(`UPDATE coordinator_auth SET last_login = now() WHERE id = $1`, [auth.id]);
@@ -161,10 +165,14 @@ router.patch('/coordinators/:id', requireAuth, requireAdmin, async (req, res) =>
   }
 });
 
-// DELETE /admin/coordinators/:id
+// DELETE /admin/coordinators/:id — dezaktywacja (jak w Region → Przypisania → Koordynatorzy)
 router.delete('/coordinators/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
-    await db.query(`UPDATE coordinators SET is_active=false WHERE id=$1`, [req.params.id]);
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ ok: false, error: 'id' });
+    if (id === req.coordinator.coordinator_id) return res.status(400).json({ ok: false, error: 'Nie możesz dezaktywować samego siebie' });
+    await db.query(`UPDATE coordinators SET is_active=false WHERE id=$1`, [id]);
+    for (const [token, s] of Object.entries(sessions)) if (s && Number(s.coordinator_id) === id) delete sessions[token];
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -249,36 +257,25 @@ router.get('/assignments', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-// POST /admin/assignments
-router.post('/assignments', requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const { coordinator_id, facility_id, is_primary } = req.body;
-    await db.query(
-      `INSERT INTO coordinator_facilities (coordinator_id, facility_id, is_primary)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (coordinator_id, facility_id) DO UPDATE SET is_primary = $3`,
-      [coordinator_id, facility_id, is_primary || false]
-    );
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-// DELETE /admin/assignments/:coordinator_id/:facility_id
-router.delete('/assignments/:coordinator_id/:facility_id', requireAuth, requireAdmin, async (req, res) => {
-  try {
-    await db.query(
-      `DELETE FROM coordinator_facilities WHERE coordinator_id=$1 AND facility_id=$2`,
-      [req.params.coordinator_id, req.params.facility_id]
-    );
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
+// POST / DELETE /admin/assignments — wyłączone: coordinator_facilities wylicza się teraz sama
+// z Region → Przypisania (db/migration_przypisania.sql); ręczny wpis i tak zostałby nadpisany.
+const ASSIGN_MOVED = 'Przypisania są teraz w jednym miejscu: Region → 👥 Przypisania';
+router.post('/assignments', requireAuth, requireAdmin, (req, res) => res.status(410).json({ ok: false, error: ASSIGN_MOVED }));
+router.delete('/assignments/:coordinator_id/:facility_id', requireAuth, requireAdmin, (req, res) =>
+  res.status(410).json({ ok: false, error: ASSIGN_MOVED }));
 
 // ── WORKERS — change login ────────────────────────────────────
+
+const NO_EDIT = 'Brak prawa edycji na tym obiekcie (tylko podgląd)';
+// Prawo edycji (główny albo pomocniczy z edycją — Region → Przypisania). Pracownik bez zakładu:
+// wystarczy prawo edycji na jakimkolwiek zakładzie (koordynator „tylko podgląd” / regionalny — nie).
+async function canEditFacility(coordinatorId, facilityId) {
+  const fid = parseInt(facilityId, 10);
+  const r = fid
+    ? await db.query(`SELECT 1 FROM coordinator_facilities WHERE coordinator_id=$1 AND facility_id=$2 AND is_primary`, [coordinatorId, fid])
+    : await db.query(`SELECT 1 FROM coordinator_facilities WHERE coordinator_id=$1 AND is_primary LIMIT 1`, [coordinatorId]);
+  return r.rows.length > 0;
+}
 
 // GET /admin/workers
 router.get('/workers', requireAuth, requireAdmin, async (req, res) => {
@@ -302,13 +299,9 @@ router.post('/workers', requireAuth, async (req, res) => {
     const { login, full_name, facility_id, status, lang, bhp_date } = req.body;
     if (!login || !full_name) return res.status(400).json({ ok: false, error: 'login and full_name required' });
 
-    // Coordinator can only add to their own facilities
-    if (!req.coordinator.is_admin && facility_id) {
-      const check = await db.query(
-        `SELECT 1 FROM coordinator_facilities WHERE coordinator_id=$1 AND facility_id=$2`,
-        [req.coordinator.coordinator_id, facility_id]
-      );
-      if (!check.rows.length) return res.status(403).json({ ok: false, error: 'No access to this facility' });
+    // Coordinator can only add to their own facilities (prawo edycji: główny albo pomocniczy z edycją — Region → Przypisania)
+    if (!req.coordinator.is_admin && !(await canEditFacility(req.coordinator.coordinator_id, facility_id))) {
+      return res.status(403).json({ ok: false, error: NO_EDIT });
     }
 
     // Check login uniqueness
@@ -332,18 +325,19 @@ router.patch('/workers/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
     const { login, full_name, facility_id, status } = req.body;
 
-    // Check access for non-admin
+    // Check access for non-admin: prawo edycji na obecnym zakładzie pracownika i na zakładzie, na który go przenosi
     if (!req.coordinator.is_admin) {
-      const worker = await db.query(`SELECT facility_id FROM workers WHERE id=$1`, [id]);
+      // obecny zakład — z historii (v_worker_current), jak w panelu; workers.facility_id bywa puste
+      const worker = await db.query(
+        `SELECT COALESCE((SELECT v.facility_id FROM v_worker_current v WHERE v.id = w.id LIMIT 1), w.facility_id) AS facility_id
+           FROM workers w WHERE w.id = $1`,
+        [parseInt(id, 10) || 0]);
       if (!worker.rows.length) return res.status(404).json({ ok: false, error: 'Worker not found' });
-      const fid = worker.rows[0].facility_id;
-      if (fid) {
-        const check = await db.query(
-          `SELECT 1 FROM coordinator_facilities WHERE coordinator_id=$1 AND facility_id=$2`,
-          [req.coordinator.coordinator_id, fid]
-        );
-        if (!check.rows.length) return res.status(403).json({ ok: false, error: 'No access' });
-      }
+      const cid = req.coordinator.coordinator_id;
+      const cur = worker.rows[0].facility_id;
+      if (!(await canEditFacility(cid, cur))) return res.status(403).json({ ok: false, error: NO_EDIT });
+      if (facility_id && Number(facility_id) !== Number(cur) && !(await canEditFacility(cid, facility_id)))
+        return res.status(403).json({ ok: false, error: NO_EDIT });
     }
 
     if (login) {

@@ -29,7 +29,7 @@ async function requireAuth(req, res, next) {
        FROM coordinator_sessions cs
        JOIN coordinators c ON c.id = cs.coordinator_id
        LEFT JOIN coordinator_auth ca ON ca.coordinator_id = cs.coordinator_id
-       WHERE cs.token = $1`,
+       WHERE cs.token = $1 AND COALESCE(c.is_active, true)`, // nieaktywny koordynator — bez dostępu
       [token],
     );
     if (r.rows[0]) {

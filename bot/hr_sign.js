@@ -72,6 +72,99 @@ async function fetchDocs(passportsRaw) {
   return out;
 }
 
+// Працівники HRappka за паспортами (для тих, у кого ще немає документів, — щоб знайти їхні анкети)
+async function fetchEmployees(passportsRaw) {
+  const body = {
+    id: "EMPLOYEE", offset: 0, limit: PAGE,
+    columns: ["id", "idsNumberValuePASSPORT"].map((id) => ({ id, isLocked: false, width: null })),
+    filter: { logicOperator: "AND", subFilters: [], conditions: [
+      { key: { columnId: "idsNumberValuePASSPORT" }, operator: "IN", value: passVariants(passportsRaw) },
+    ] },
+    customFilters: {}, order: {}, additionalParameters: { fullConfig: false },
+  };
+  const r = await axios.post(`${BASE}/api/v1/table`, body, { headers: await headers(), timeout: 60000 });
+  return (r.data.data && r.data.data.data) || [];
+}
+// Анкети одного працівника HRappka (QUESTIONNAIRE_ANSWER віддає лише по одному: entityFkey)
+const SURVEY_COLS = ["state", "creationTime", "fillingDate", "questionnaire_QUESTIONNAIRE_name"].map((id) => ({ id, isLocked: false, width: null }));
+async function fetchSurveys(employeeId) {
+  const body = {
+    id: "QUESTIONNAIRE_ANSWER", offset: 0, limit: 200, columns: SURVEY_COLS,
+    filter: { logicOperator: "AND", conditions: [], subFilters: [] },
+    customFilters: { entityType: "EMPLOYEE", entityFkey: String(employeeId) }, order: {}, additionalParameters: { fullConfig: false },
+  };
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const r = await axios.post(`${BASE}/api/v1/table`, body, { headers: await headers(), timeout: 60000 });
+      return (r.data.data && r.data.data.data) || [];
+    } catch (e) {
+      if (e.response && e.response.status === 401 && attempt === 0) { TOKEN.value = null; continue; }
+      throw e;
+    }
+  }
+}
+// items — по N одночасно (HRappka відповідає ~1,5 с на працівника)
+async function inParallel(items, n, fn) {
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) await fn(items[i++]); }));
+}
+const SURVEY_PARALLEL = 4;
+// Анкети для партії працівників: id у HRappka — з документів, з попередніх перевірок або за паспортом
+async function syncSurveys(partIds, passports, byPass, docRows) {
+  const emp = new Map();   // worker_id → Set(id працівника в HRappka)
+  const add = (wid, eid) => { if (!wid || !eid) return; if (!emp.has(wid)) emp.set(wid, new Set()); emp.get(wid).add(String(eid)); };
+  docRows.forEach((d) => add(byPass.get(normPass(d.user_EMPLOYEE_idsNumberValuePASSPORT)), d.user_EMPLOYEE_id));
+  const known = await db.query(`SELECT worker_id, hr_employee_id FROM hrs.checks WHERE worker_id = ANY($1::int[]) AND hr_employee_id IS NOT NULL`, [partIds]);
+  known.rows.forEach((x) => add(x.worker_id, x.hr_employee_id));
+  const missing = passports.filter((p) => !emp.has(byPass.get(p)));
+  if (missing.length) (await fetchEmployees(missing)).forEach((r) => add(byPass.get(normPass(r.idsNumberValuePASSPORT)), r.id));
+  const jobs = [];
+  emp.forEach((set, wid) => set.forEach((eid) => jobs.push({ wid, eid })));
+  const got = new Map(), failed = new Set();
+  await inParallel(jobs, SURVEY_PARALLEL, async (j) => {
+    try {
+      const rows = await fetchSurveys(j.eid);
+      if (!got.has(j.wid)) got.set(j.wid, []);
+      got.get(j.wid).push(...rows.map((r) => ({ ...r, eid: j.eid })));
+    } catch (e) {
+      failed.add(j.wid);
+      console.error(`[hr sign] анкети працівника HRappka ${j.eid}:`, String((e.response && e.response.status) || e.message));
+    }
+  });
+  let n = 0;
+  const client = await db.pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const [wid, rows] of got) {
+      for (const s of rows) {
+        if (!["SENT", "FILLED"].includes(s.state)) continue;   // інші стани (чернетки тощо) не рахуємо
+        await client.query(
+          `INSERT INTO hrs.surveys (hr_answer_id, worker_id, hr_employee_id, name, state, hr_created_at, filled_at, checked_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+           ON CONFLICT (hr_answer_id) DO UPDATE SET worker_id = EXCLUDED.worker_id, name = EXCLUDED.name, state = EXCLUDED.state,
+             filled_at = EXCLUDED.filled_at, checked_at = now()`,
+          [s.id, wid, s.eid, s.questionnaire_QUESTIONNAIRE_name || "", s.state, s.creationTime || null, s.fillingDate || null]);
+        n++;
+      }
+    }
+    const done = [...emp.keys()].filter((wid) => !failed.has(wid));   // кого прочитали повністю — старі анкети прибираємо
+    await client.query(`DELETE FROM hrs.surveys WHERE worker_id = ANY($1::int[]) AND checked_at < now() - interval '1 second'`, [done]);
+    for (const [wid, set] of emp) {
+      await client.query(
+        `UPDATE hrs.checks SET hr_employee_id = $2,
+                found = found OR EXISTS (SELECT 1 FROM hrs.surveys s WHERE s.worker_id = $1)
+          WHERE worker_id = $1`, [wid, [...set][0]]);
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+  return { surveys: n };
+}
+
 // ── Перевірка ─────────────────────────────────────────────────────────
 // ids — працівники нашої бази. Повертає { checked, docs, signed_now, error? }
 async function check(ids) {
@@ -81,7 +174,7 @@ async function check(ids) {
   const byPass = new Map();
   w.rows.forEach((x) => { const p = normPass(x.login); if (p) byPass.set(p, x.id); });
   const passes = [...byPass.keys()];
-  let docs = 0, signedNow = 0;
+  let docs = 0, surveys = 0, signedNow = 0;
   for (let i = 0; i < passes.length; i += BATCH) {
     const part = passes.slice(i, i + BATCH);
     const partIds = part.map((p) => byPass.get(p));
@@ -128,8 +221,14 @@ async function check(ids) {
     } finally {
       client.release();
     }
+    // анкети тієї ж партії; не вдалося — документи вже збережені, анкети спробуємо наступного разу
+    try {
+      surveys += (await syncSurveys(partIds, part, byPass, rows)).surveys;
+    } catch (e) {
+      console.error("[hr sign] анкети:", e.message);
+    }
   }
-  return { checked: passes.length, docs, signed_now: signedNow };
+  return { checked: passes.length, docs, surveys, signed_now: signedNow };
 }
 
 // Щоденна: BHP від FROM, ще не все підписано (або ще не перевіряли / документів не знайшли)
@@ -173,12 +272,24 @@ async function summary(ids) {
                ORDER BY d.hr_created_at, d.hr_doc_id`, [ids, WINDOW_DAYS]),
     db.query(`SELECT worker_id, checked_at, found, error FROM hrs.checks WHERE worker_id = ANY($1::int[])`, [ids]),
   ]);
+  // анкети — те саме вікно; без таблиці hrs.surveys (міграцію ще не перезапустили) — без анкет
+  const sv = await db.query(
+    `SELECT s.worker_id, s.name, s.state, to_char(s.hr_created_at, 'YYYY-MM-DD') AS created
+       FROM hrs.surveys s JOIN v_worker_current v ON v.id = s.worker_id
+      WHERE s.worker_id = ANY($1::int[]) AND v.bhp_date IS NOT NULL
+        AND s.hr_created_at::date BETWEEN v.bhp_date - $2::int AND v.bhp_date + $2::int
+      ORDER BY s.hr_created_at, s.hr_answer_id`, [ids, WINDOW_DAYS]).catch(() => ({ rows: [] }));
   const out = {};
   k.rows.forEach((x) => { out[x.worker_id] = { total: 0, signed: 0, found: false, checked_at: x.checked_at, error: x.error, docs: [] }; });
-  const latest = {};   // worker → назва документа → останній (рядки впорядковані за датою — пізніший перезаписує)
+  // worker → назва → останній (рядки впорядковані за датою — пізніший перезаписує); kind: survey (анкета) | doc
+  // status: SIGN — підписано / заповнено, SEND — ні (анкети FILLED / SENT зводимо до того самого)
+  const latest = {};
+  const put = (wid, key, item) => { (latest[wid] = latest[wid] || new Map()).set(key, item); };
+  sv.rows.forEach((x) => put(x.worker_id, "s:" + x.name.toLowerCase(),
+    { kind: "survey", label: x.name, status: x.state === "FILLED" ? "SIGN" : "SEND", created: x.created }));
   d.rows.forEach((x) => {
     const label = docLabel(x.display_name, x.full_name);
-    (latest[x.worker_id] = latest[x.worker_id] || new Map()).set(label.toLowerCase(), { label, status: x.status, created: x.created });
+    put(x.worker_id, "d:" + label.toLowerCase(), { kind: "doc", label, status: x.status, created: x.created });
   });
   Object.entries(latest).forEach(([wid, m]) => {
     const s = (out[wid] = out[wid] || { total: 0, signed: 0, found: false, checked_at: null, error: null, docs: [] });
@@ -221,7 +332,9 @@ async function report() {
   if (!mail.configured()) return { ok: false, error: "not_configured" };
   const rows = await reportRows();
   const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Warsaw" }).format(new Date());
-  const unsigned = (x) => x.s.docs.filter((d) => d.status !== "SIGN").map((d) => d.label);
+  // анкети — першими, з позначкою «Ankieta:»
+  const unsigned = (x) => x.s.docs.filter((d) => d.status !== "SIGN").sort((a, b) => (a.kind !== "survey") - (b.kind !== "survey"))
+    .map((d) => (d.kind === "survey" ? `Ankieta: ${d.label}` : d.label));
   const state = (x) => (x.s.error ? "błąd HRappka" : !x.s.found ? "brak dokumentów w HRappka" : `${x.s.signed} z ${x.s.total}`);
   const head = ["Region", "Koordynator", "Obiekt", "Nazwisko i imię", "Paszport", "BHP", "Podpisano", "Niepodpisane dokumenty"];
   const th = (h) => `<th style="border:1px solid #c9d3e3;background:#e7eef8;padding:6px 8px;text-align:left">${escH(h)}</th>`;
@@ -232,8 +345,8 @@ ${rows.map((x) => `<tr>${td(escH(x.region || "—"))}${td(escH(x.coordinator || 
 </table>` : "";
   const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#1f2937">
 <p>Dzień dobry,</p>
-<p>${rows.length ? `pracownicy z BHP od ${dmyIso(FROM)}, którzy <b>nie podpisali dokumentów</b> w HRappka: <b>${rows.length} os.</b>
-Liczą się dokumenty wysłane ±${WINDOW_DAYS} dni od BHP; przy powtórnej wysyłce — ostatnia. Ta sama lista jest w załączniku (Excel).` : `wszyscy pracownicy z BHP od ${dmyIso(FROM)} podpisali dokumenty w HRappka.`}</p>
+<p>${rows.length ? `pracownicy z BHP od ${dmyIso(FROM)}, którzy <b>nie podpisali dokumentów lub nie wypełnili ankiet</b> w HRappka: <b>${rows.length} os.</b>
+Liczą się dokumenty i ankiety wysłane ±${WINDOW_DAYS} dni od BHP; przy powtórnej wysyłce — ostatnia. Ta sama lista jest w załączniku (Excel).` : `wszyscy pracownicy z BHP od ${dmyIso(FROM)} podpisali dokumenty i wypełnili ankiety w HRappka.`}</p>
 ${table}
 <p style="color:#8a94a6;font-size:12px">KoorPanel · stan po sprawdzeniu o 6:00 · ${dmyIso(today)}</p></div>`;
   const att = rows.length ? [{

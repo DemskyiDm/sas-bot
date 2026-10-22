@@ -33,9 +33,35 @@ function hrsCell(w) {
   const when = s.checked_at ? new Date(s.checked_at).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
   if (s.error) return `<span class="badge badge-orange" title="Błąd HRappka: ${escStan(s.error)}">błąd</span>`;
   if (!s.found || !s.total) return `<span class="badge badge-blue" title="Brak dokumentów do podpisu w HRappka · sprawdzono ${when}">brak w HRappka</span>`;
-  const list = s.docs.map((d) => `${d.status === "SIGN" ? "✓" : "✗"} ${d.label}`).join("\n");
   const cls = s.signed >= s.total ? "badge-green" : s.signed === 0 ? "badge-red" : "badge-orange";
-  return `<span class="badge ${cls}" style="cursor:help" title="${escStan(list + "\n\nsprawdzono " + when)}">${s.signed >= s.total ? "✓" : "✗"} ${s.signed}/${s.total}</span>`;
+  return `<span class="badge ${cls}" style="cursor:pointer" title="Pokaż dokumenty" onclick="hrsShow(${w.id})">${s.signed >= s.total ? "✓" : "✗"} ${s.signed}/${s.total}</span>`;
+}
+// Okno z dokumentami: niepodpisane — na czerwono (±10 dni od BHP, przy powtórnej wysyłce — ostatnia)
+function hrsShow(id) {
+  const w = (allWorkersData || []).find((x) => x.id === id);
+  const s = HRS.rows[id];
+  if (!w || !s) return;
+  let ov = document.getElementById("hrsOverlay");
+  if (!ov) {
+    ov = document.createElement("div");
+    ov.id = "hrsOverlay";
+    ov.className = "modal-overlay";
+    ov.innerHTML = `<div class="modal" style="width:520px" role="dialog" aria-label="Dokumenty HRappka"><div id="hrsBody"></div></div>`;
+    ov.addEventListener("click", (e) => { if (e.target === ov) ov.classList.remove("open"); });
+    document.body.appendChild(ov);
+  }
+  const when = s.checked_at ? new Date(s.checked_at).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
+  const docs = s.docs.slice().sort((a, b) => (a.status === "SIGN") - (b.status === "SIGN"));   // niepodpisane na górze
+  document.getElementById("hrsBody").innerHTML = `
+    <div class="modal-title">📄 ${escStan(w.full_name)} · podpisano ${s.signed} z ${s.total}</div>
+    <div style="font-size:11px;color:var(--text3);margin:-8px 0 10px">BHP ${w.bhp_date ? new Date(w.bhp_date).toLocaleDateString("pl") : "—"} · sprawdzono ${when} · dokumenty wysłane ±10 dni od BHP</div>
+    <div style="display:flex;flex-direction:column;gap:4px;max-height:50vh;overflow-y:auto">
+      ${docs.map((d) => `<div style="display:flex;gap:8px;align-items:baseline;font-size:13px;color:${d.status === "SIGN" ? "var(--green)" : "var(--red)"};${d.status === "SIGN" ? "" : "font-weight:600"}">
+        <span>${d.status === "SIGN" ? "✓" : "✗"}</span><span style="flex:1">${escStan(d.label)}</span>
+        <span style="font-size:11px;color:var(--text3);font-weight:400">${d.created ? d.created.split("-").reverse().join(".") : ""}</span></div>`).join("")}
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn btn-ghost btn-sm" onclick="document.getElementById('hrsOverlay').classList.remove('open')">Zamknij</button></div>`;
+  ov.classList.add("open");
 }
 async function refreshSignatures() {
   const btn = document.getElementById("workersDocsBtn");

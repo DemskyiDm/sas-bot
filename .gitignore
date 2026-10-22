@@ -159,3 +159,6 @@ tabele/
 *.old.js
 *-backup.js
 *.lnk
+
+# PID поточного index (самовідновлення портів)
+.index.pid

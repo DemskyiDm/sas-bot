@@ -1053,7 +1053,8 @@ async function card(c, workerId) {
       if (!hs.found || !hs.total) L.push(t.c_docs_none);
       else {
         L.push(t.c_docs(hs.signed, hs.total));
-        const open = hs.docs.filter((d) => d.status !== "SIGN").map((d) => d.label);
+        const open = hs.docs.filter((d) => d.status !== "SIGN").sort((a, b) => (a.kind !== "survey") - (b.kind !== "survey"))
+          .map((d) => (d.kind === "survey" ? `Анкета: ${d.label}` : d.label));
         if (open.length) L.push(`<i>${t.c_docs_wait}: ${esc(open.slice(0, 6).join(", "))}${open.length > 6 ? "…" : ""}</i>`);
       }
     }

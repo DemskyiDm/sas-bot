@@ -40,14 +40,21 @@ function hrsCell(w) {
 // Lista dokumentów: niepodpisane — na czerwono, na górze (±10 dni od BHP, przy powtórnej wysyłce — ostatnia)
 function hrsListHtml(w, s) {
   const when = s.checked_at ? new Date(s.checked_at).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
-  const docs = s.docs.slice().sort((a, b) => (a.status === "SIGN") - (b.status === "SIGN"));
+  // najpierw ankiety, potem (pod kreską) dokumenty; w każdej grupie niepodpisane / niewypełnione na górze
+  const byState = (a, b) => (a.status === "SIGN") - (b.status === "SIGN");
+  const surveys = s.docs.filter((d) => d.kind === "survey").sort(byState);
+  const docs = s.docs.filter((d) => d.kind !== "survey").sort(byState);
+  const row = (d) => `<div style="display:flex;gap:8px;align-items:baseline;font-size:13px;color:${d.status === "SIGN" ? "var(--green)" : "var(--red)"};${d.status === "SIGN" ? "" : "font-weight:600"}">
+        <span>${d.status === "SIGN" ? "✓" : "✗"}</span><span style="flex:1">${d.kind === "survey" ? "📝 " : ""}${escStan(d.label)}</span>
+        <span style="font-size:11px;color:var(--text3);font-weight:400">${d.created ? d.created.split("-").reverse().join(".") : ""}</span></div>`;
+  const head = (t) => `<div style="font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);margin-top:2px">${t}</div>`;
   return `
-    <div style="font-size:13px;font-weight:600;margin-bottom:2px">📄 ${escStan(w.full_name)} · podpisano ${s.signed} z ${s.total}</div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">BHP ${w.bhp_date ? new Date(w.bhp_date).toLocaleDateString("pl") : "—"} · sprawdzono ${when} · dokumenty wysłane ±10 dni od BHP</div>
+    <div style="font-size:13px;font-weight:600;margin-bottom:2px">📄 ${escStan(w.full_name)} · gotowe ${s.signed} z ${s.total}</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">BHP ${w.bhp_date ? new Date(w.bhp_date).toLocaleDateString("pl") : "—"} · sprawdzono ${when} · wysłane ±10 dni od BHP</div>
     <div style="display:flex;flex-direction:column;gap:4px;max-height:50vh;overflow-y:auto">
-      ${docs.map((d) => `<div style="display:flex;gap:8px;align-items:baseline;font-size:13px;color:${d.status === "SIGN" ? "var(--green)" : "var(--red)"};${d.status === "SIGN" ? "" : "font-weight:600"}">
-        <span>${d.status === "SIGN" ? "✓" : "✗"}</span><span style="flex:1">${escStan(d.label)}</span>
-        <span style="font-size:11px;color:var(--text3);font-weight:400">${d.created ? d.created.split("-").reverse().join(".") : ""}</span></div>`).join("")}
+      ${surveys.length ? head(`Ankiety · wypełniono ${surveys.filter((d) => d.status === "SIGN").length} z ${surveys.length}`) + surveys.map(row).join("") : ""}
+      ${surveys.length && docs.length ? `<div style="border-top:1px solid var(--border);margin:6px 0 2px"></div>` : ""}
+      ${docs.length ? head(`Dokumenty · podpisano ${docs.filter((d) => d.status === "SIGN").length} z ${docs.length}`) + docs.map(row).join("") : ""}
     </div>`;
 }
 // Po najechaniu kursorem (z opóźnieniem) — dymek; kursor można przenieść na dymek (przewijanie długiej listy)

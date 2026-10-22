@@ -69,6 +69,7 @@ app.use("/api/flow", flow.router);
 app.use("/api/hours-report", hoursReport.router);
 app.use("/api/ref", require("./api/ref").router);
 app.use("/api/broadcast", broadcast.router);
+app.use("/api/hrsign", require("./api/hr_sign").router);   // підписи документів HRappka (Pracownicy → Dokumenty)
 app.use("/api", apiRoutes);
 app.use("/api", require("./api/reports"));
 app.use("/admin", adminRoutes);
@@ -408,5 +409,6 @@ medcheck.schedule(bot);
 broadcast.schedule(bot);
 require("./bot/fines").schedule(bot);   // штрафи: повідомлення працівнику
 require("./bot/fines_sheet").schedule();  // штрафи → Google-таблиця: повтор незаписаних
+require("./bot/hr_sign").schedule();       // підписи HRappka: щодня о 6:00
 
 //new

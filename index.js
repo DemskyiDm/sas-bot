@@ -1,5 +1,6 @@
 require("dotenv").config();
 const { requireAuth } = require("./api/admin");
+const crypto = require("crypto");
 const express = require("express");
 const path = require("path");
 const db = require("./db");
@@ -110,8 +111,18 @@ app.get("/api/facility-settings/:id", requireAuth, async (req, res) => {
   }
 });
 
+// Ручний запуск розсилок: сесія адміна (?session=…, як /trigger/med-check) або заголовок x-trigger-token = TRIGGER_TOKEN з .env
+// (для зовнішнього планувальника). Без цього будь-хто з інтернету міг запустити розсилку всім.
+// Виняток «з localhost» не робимо: Caddy проксує всі запити з інтернету саме з localhost.
+function triggerAuth(req, res, next) {
+  const tok = String(process.env.TRIGGER_TOKEN || "");
+  const given = String(req.headers["x-trigger-token"] || "");
+  if (tok.length >= 16 && given.length === tok.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(tok))) return next();
+  requireAuth(req, res, () => requireAdmin(req, res, next));
+}
+
 // ── Reminder trigger ──────────────────────────────────────────
-app.post("/trigger/reminders", async (req, res) => {
+app.post("/trigger/reminders", triggerAuth, async (req, res) => {
   res.json({ status: "started" });
   try {
     await sendMissingReminders(bot);
@@ -120,7 +131,7 @@ app.post("/trigger/reminders", async (req, res) => {
   }
 });
 // ── Coordinator report trigger (тест) ─────────────────────────
-app.post("/trigger/coord-report", async (req, res) => {
+app.post("/trigger/coord-report", triggerAuth, async (req, res) => {
   res.json({ status: "started" });
   try {
     await sendCoordinatorReports(bot);
@@ -193,6 +204,9 @@ app.post("/trigger/med-check", requireAuth, requireAdmin, async (req, res) => {
 const fs = require("fs");
 const http = require("http");
 const https = require("https");
+
+// Нові міграції db/migration_*.sql — автоматично при старті (db/migrate.js); помилка не зупиняє сервер
+require("./db/migrate").run().catch((e) => console.error("[migrate]", e.message));
 
 const HTTP_PORT = process.env.PORT || 12080;        // дашборд / локалка
 const HTTPS_PORT = process.env.HTTPS_PORT || 8443;  // вебхук Telegram
@@ -300,10 +314,20 @@ function scheduleImport() {
 const cron = require('node-cron');
 const { main: runHrappkaAudit } = require('./sync_hrrappka_diff');
 
-// Запуск щочетверга (або щопонеділка) о 08:00 ранку за Варшавою
+// Щотижневий аудит HRappka: щопонеділка о 08:00 за Варшавою ('0 8 * * 1'; четвер — '0 8 * * 4').
+// Помилку (HRappka не відповіла, пошта) лише пишемо в лог — інакше необроблена помилка могла б зупинити процес.
+let hrappkaAuditRunning = false;
 cron.schedule('0 8 * * 1', async () => {
+  if (hrappkaAuditRunning) return;
+  hrappkaAuditRunning = true;
   console.log('--- Запуск щотижневого аудиту HRappka ---');
-  await runHrappkaAudit();
+  try {
+    await runHrappkaAudit();
+  } catch (err) {
+    console.error('[HRappka audit] Error:', err.message);
+  } finally {
+    hrappkaAuditRunning = false;
+  }
 }, {
   timezone: "Europe/Warsaw"
 });

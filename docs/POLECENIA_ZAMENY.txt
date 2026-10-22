@@ -1,0 +1,68 @@
+«Poleć znajomego» — правки в существующих файлах
+Каждая правка: НАЙТИ строку → вставить указанное ПОСЛЕ неё (или заменить, где сказано).
+
+══════════════ index.js ══════════════
+
+1) НАЙТИ:
+const flow = require("./api/flow");
+ВСТАВИТЬ ПОСЛЕ:
+const referral = require("./bot/referral");
+
+2) НАЙТИ:
+app.use("/api/flow", flow.router);
+ВСТАВИТЬ ПОСЛЕ:
+app.use("/api/ref", require("./api/ref").router);
+
+3) В обработчике app.post("/webhook" ...) НАЙТИ:
+    if (await flow.onUpdate(req.body)) return;
+ВСТАВИТЬ ПОСЛЕ (до await handleUpdate(bot, req.body);):
+    if (await referral.onUpdate(bot, req.body)) return;
+
+4) В конце файла НАЙТИ:
+flow.schedule(bot);
+ВСТАВИТЬ ПОСЛЕ:
+referral.schedule(bot);
+
+
+══════════════ bot/handlers.js ══════════════
+Два места — оба там, где работник успешно ввёл ID (после linkTelegram и sendDayKeyboard).
+
+1) Выбор языка (callback), примерно строка 263. НАЙТИ:
+          await sendDayKeyboard(bot, chatId, session);
+        }
+      } else {
+        // Нет ID — просим
+ЗАМЕНИТЬ НА:
+          await sendDayKeyboard(bot, chatId, session);
+          // «Poleć znajomego»: історія Telegram-ID і анкета для нових
+          await require("./referral").onLogin(bot, worker, chatId, cq.from);
+        }
+      } else {
+        // Нет ID — просим
+
+2) Ввод ID текстом, примерно строка 949. НАЙТИ:
+    await sendMessage(bot, chatId, T(session, "id_saved", worker.full_name));
+    await sendDayKeyboard(bot, chatId, session, settings);
+    return;
+ЗАМЕНИТЬ НА:
+    await sendMessage(bot, chatId, T(session, "id_saved", worker.full_name));
+    await sendDayKeyboard(bot, chatId, session, settings);
+    // «Poleć znajomego»: історія Telegram-ID і анкета для нових
+    await require("./referral").onLogin(bot, worker, chatId, update.message.from);
+    return;
+
+
+══════════════ public/index.html ══════════════
+
+1) В меню НАЙТИ:
+      <div id="flowLink" class="nav-item" onclick="location.href='wyjazdy.html'" style="display: none">🚌 Wyjazdy / przyjazdy</div>
+ВСТАВИТЬ ПОСЛЕ:
+      <div id="polecLink" class="nav-item" onclick="location.href='polecenia.html'" style="display: none">🤝 Poleć znajomego</div>
+
+2) Внизу, в блоке <script> с fetch('/api/flow/me' ...), НАЙТИ:
+fetch('/api/care/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+ВСТАВИТЬ ПЕРЕД НЕЙ:
+fetch('/api/ref/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (d) { if (d && d.has_access) document.getElementById('polecLink').style.display = ''; })
+  .catch(function () {});

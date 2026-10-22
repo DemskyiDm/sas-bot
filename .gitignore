@@ -152,3 +152,10 @@ tabele/certs/
 *.pem
 google-key.json
 tabele/
+
+# робочі копії / латки / ярлики Windows — не в репозиторій
+*.patch
+* copy.js
+*.old.js
+*-backup.js
+*.lnk

@@ -522,8 +522,8 @@
             👤 Koordynatorzy
           </div>
           <div class="nav-item" onclick="showTab('facilities')">🏭 Obiekty</div>
-          <div class="nav-item" onclick="showTab('assignments')">
-            🔗 Przypisania
+          <div class="nav-item" onclick="window.location = '/region.html#assign'" title="Przypisania są teraz w jednym miejscu: Region → Przypisania">
+            🔗 Przypisania → Region
           </div>
           <div class="nav-item" onclick="showTab('workers')">👷 Pracownicy</div>
           <div class="nav-item" onclick="window.location = '/'">
@@ -566,6 +566,8 @@
             <div class="card">
               <div class="card-header">
                 <span class="card-title">Lista koordynatorow</span>
+                <span style="font-size: 11px; color: var(--text3)">aktywni · przypisania do obiektów i regionów, pomocniczy, aktywacja —
+                  <a href="/region.html#assign" style="color: var(--accent)">Region → Przypisania</a></span>
                 <span
                   class="card-count"
                   id="coordCount"
@@ -1098,7 +1100,7 @@
           const data = await res.json();
           if (!data.ok) {
             document.getElementById("loginErr").textContent =
-              "Nieprawidlowy login lub haslo";
+              res.status === 403 && data.error ? data.error : "Nieprawidlowy login lub haslo";
             return;
           }
 

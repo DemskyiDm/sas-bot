@@ -125,9 +125,43 @@ async function getMonthlySummary(workerId) {
 }
 
 async function writeWolne(workerId, days) {
-  await db.query(
-    `INSERT INTO day_off_requests (worker_id, days) VALUES ($1, $2)`,
+  const r = await db.query(
+    `INSERT INTO day_off_requests (worker_id, days) VALUES ($1, $2) RETURNING id`,
     [workerId, days],
+  );
+  // координаторам обʼєкта — у Telegram з кнопками «Схвалити / Відхилити» (bot/coord.js)
+  if (r.rows[0]) require("./coord").notifyNew("dof", r.rows[0].id).catch((e) => console.error("[coord] notify dof", e.message));
+  return r.rows[0] ? r.rows[0].id : null;
+}
+// ── Автоотказ: выходной на ближайшие WOLNE_MIN_DAYS дней (сегодня 15 → 16, 17, 18) ──
+// .env: WOLNE_AUTO_REJECT=ILS   — начало названия объекта, через запятую (ILS UZ, ILS Błonie SAS)
+//       WOLNE_MIN_DAYS=3
+const WOLNE_AUTO = String(process.env.WOLNE_AUTO_REJECT || "")
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+const WOLNE_MIN_DAYS = parseInt(process.env.WOLNE_MIN_DAYS || "3", 10) || 3;
+
+// dates: ['YYYY-MM-DD', ...] → { near: автоотказ, rest: обычная заявка }
+async function splitNearWolne(workerId, dates) {
+  if (!WOLNE_AUTO.length) return { near: [], rest: dates };
+  const r = await db.query(
+    `SELECT f.name FROM v_worker_current vc JOIN facilities f ON f.id = vc.facility_id WHERE vc.id = $1`,
+    [workerId],
+  );
+  const fac = String(r.rows[0]?.name || "").toLowerCase();
+  if (!WOLNE_AUTO.some((p) => fac.startsWith(p))) return { near: [], rest: dates };
+  const t = new Date();
+  t.setDate(t.getDate() + WOLNE_MIN_DAYS);
+  const limit = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+  return { near: dates.filter((d) => d <= limit), rest: dates.filter((d) => d > limit) };
+}
+
+async function writeWolneRejected(workerId, days) {
+  await db.query(
+    `INSERT INTO day_off_requests (worker_id, days, status, note, reviewed_at)
+     VALUES ($1, $2, 'rejected', $3, now())`,
+    [workerId, days, `Auto-odmowa: wolne na najbliższe ${WOLNE_MIN_DAYS} dni`],
   );
 }
 
@@ -201,6 +235,12 @@ async function handleUpdate(bot, update) {
     const payload = String(cq.data || "");
     if (!chatId) return;
 
+    // Розділ «Rozmowy»: завдання координаторам, анкети, перевірки
+    if (/^(CR_|SV_|SC_)/.test(payload)) {
+      await require("./care").handleCallback(bot, cq);
+      return;
+    }
+
     const session = await getSessionSafe(chatId);
 
     let settings = null;
@@ -252,6 +292,8 @@ async function handleUpdate(bot, update) {
             T(session, "id_saved", worker.full_name),
           );
           await sendDayKeyboard(bot, chatId, session);
+          // «Poleć znajomego»: історія Telegram-ID і анкета для нових
+          await require("./referral").onLogin(bot, worker, chatId, cq.from);
         }
       } else {
         // Нет ID — просим
@@ -358,17 +400,25 @@ async function handleUpdate(bot, update) {
         await sendMessage(bot, chatId, T(session, "wolne_no_days"));
         return;
       }
-      days.sort();
-      // Convert DD.MM to dates
-      const year = new Date().getFullYear();
-      const dates = days.map((d) => {
-        const [dd, mm] = d.split(".");
-        return `${year}-${mm}-${dd}`;
-      });
-      await writeWolne(session.workerId, dates);
+            // DD.MM → YYYY-MM-DD (календарь на 14 дней вперёд: январь, выбранный в декабре, — следующий год)
+      const now = new Date();
+      const dates = days
+        .map((d) => {
+          const [dd, mm] = d.split(".");
+          const y = parseInt(mm, 10) < now.getMonth() + 1 ? now.getFullYear() + 1 : now.getFullYear();
+          return `${y}-${mm}-${dd}`;
+        })
+        .sort();
+      const { near, rest } = await splitNearWolne(session.workerId, dates);
+      if (near.length) await writeWolneRejected(session.workerId, near);
+      if (rest.length) await writeWolne(session.workerId, rest);
       delete session.wolneDays;
       await saveSessionSafe(chatId, session);
-      await sendMessage(bot, chatId, T(session, "wolne_confirmed"));
+      if (near.length) {
+        const fmt = near.map((d) => `${d.substring(8, 10)}.${d.substring(5, 7)}`).join(", ");
+        await sendMessage(bot, chatId, T(session, "wolne_auto_rejected", fmt, WOLNE_MIN_DAYS));
+      }
+      if (rest.length) await sendMessage(bot, chatId, T(session, "wolne_confirmed"));
       await sendDayKeyboard(bot, chatId, session, settings);
       return;
     }
@@ -418,10 +468,12 @@ async function handleUpdate(bot, update) {
       }
 
       // Зберігаємо заявку
-      await db.query(
-        `INSERT INTO advances (worker_id, requested_at, status) VALUES ($1, now(), 'pending')`,
+      const advIns = await db.query(
+        `INSERT INTO advances (worker_id, requested_at, status) VALUES ($1, now(), 'pending') RETURNING id`,
         [session.workerId],
       );
+      // координаторам обʼєкта — у Telegram з кнопками «Схвалити / Відхилити» (bot/coord.js)
+      if (advIns.rows[0]) require("./coord").notifyNew("adv", advIns.rows[0].id).catch((e) => console.error("[coord] notify adv", e.message));
       await sendMessage(bot, chatId, T(session, "advances_requested"));
       await sendDayKeyboard(bot, chatId, session, settings);
       return;
@@ -628,8 +680,8 @@ async function handleUpdate(bot, update) {
       }
 
       const hrs = parseFloat(payload.substring(2).replace(",", "."));
-      if (isNaN(hrs) || hrs <= 0 || hrs > 13) {
-        await answer("0.25-13");
+      if (isNaN(hrs) || hrs <= 0 || hrs > 17) {
+        await answer("0.25-16");
         return;
       }
 
@@ -884,7 +936,7 @@ async function handleUpdate(bot, update) {
       else dec = 24;
     } else {
       const n = parseFloat(s.replace(",", "."));
-      if (!isNaN(n) && n >= 0 && n <= 13) dec = n;
+      if (!isNaN(n) && n >= 0 && n <= 16) dec = n;
     }
 
     if (dec === null || dec <= 0) {
@@ -932,6 +984,8 @@ async function handleUpdate(bot, update) {
     await linkTelegram(worker.id, chatId);
     await sendMessage(bot, chatId, T(session, "id_saved", worker.full_name));
     await sendDayKeyboard(bot, chatId, session, settings);
+    // «Poleć znajomego»: історія Telegram-ID і анкета для нових
+    await require("./referral").onLogin(bot, worker, chatId, update.message.from);
     return;
   }
 
@@ -1067,7 +1121,8 @@ async function sendCoordinatorReports(bot) {
 
       if (coord.role !== "head") {
         const facRes = await db.query(
-          `SELECT facility_id FROM coordinator_facilities WHERE coordinator_id = $1`,
+          // свої = з правом редагування (головний / допоміжний з редагуванням); перегляд регіону — ні
+          `SELECT facility_id FROM coordinator_facilities WHERE coordinator_id = $1 AND is_primary`,
           [coord.id]
         );
         const facIds = facRes.rows.map(r => r.facility_id);

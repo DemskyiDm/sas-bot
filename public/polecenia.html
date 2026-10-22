@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SAS Logistic — Poleć znajomego</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <!-- xlsx-js-style: eksport do Excela z kolorami (jak w raporty.html) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+  <style>
+    /* ── tylko dla sekcji Poleć znajomego ── */
+    .fl-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .fl-toolbar label { font-size: 11px; color: var(--text2); }
+    .fl-view { display: none; }
+    .fl-view.active { display: block; }
+    .nav-badge { margin-left: auto; background: var(--red); color: #fff; font-size: 10px; font-weight: 700;
+      border-radius: 9px; padding: 1px 7px; font-family: var(--mono); }
+    .nav-badge:empty { display: none; }
+    .nav-badge.g { background: var(--green); }
+    /* blok menu: Rozmowy · Poleć znajomego */
+    .nav-sec { padding: 10px 10px 4px; font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+      color: var(--text3); font-family: var(--mono); user-select: none; }
+    #navCare + #navRef { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 2px; }
+    .kpi .s a, .cfg a { color: var(--accent); text-decoration: none; border-bottom: 1px dotted currentColor; }
+    td.nw { white-space: nowrap; }
+    input[type="date"], input[type="time"], input[type="number"], input[type="text"].inp, textarea, select.inp {
+      background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-size: 12px;
+      padding: 5px 8px; border-radius: 5px; outline: none; font-family: inherit; color-scheme: dark; }
+    input[type="number"] { width: 72px; text-align: right; font-family: var(--mono); }
+
+    .period { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    .period .lbl { font-size: 11px; color: var(--text2); }
+    .chip { padding: 4px 10px; font-size: 11px; border-radius: 12px; border: 1px solid var(--border);
+      background: transparent; color: var(--text2); cursor: pointer; white-space: nowrap; }
+    .chip.active { background: var(--surface2); color: var(--text); border-color: var(--accent); }
+
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; cursor: default; }
+    .kpi.click { cursor: pointer; } .kpi.click:hover, .kpi.on { border-color: var(--accent); }
+    .kpi .l { font-size: 11px; color: var(--text2); }
+    .kpi .v { font-size: 24px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .kpi .v small { font-size: 14px; color: var(--text3); font-weight: 400; }
+    .kpi .s { font-size: 11px; color: var(--text3); margin-top: 2px; }
+    .good { color: var(--green); } .warn { color: var(--accent2); } .bad { color: var(--red); } .dim { color: var(--text3); }
+
+    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+    .section-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border);
+      font-size: 13px; font-weight: 600; flex-wrap: wrap; }
+    .section-head .cnt { font-size: 11px; color: var(--text2); font-weight: 400; }
+    .section-head .spacer { margin-left: auto; }
+    .filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 14px; border-bottom: 1px solid var(--border); font-size: 11px; color: var(--text2); }
+    .note { padding: 8px 14px; font-size: 11px; color: var(--text3); border-top: 1px solid var(--border); line-height: 1.5; }
+    .banner { padding: 9px 14px; font-size: 12px; border-radius: 8px; margin-bottom: 14px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--text2); line-height: 1.5; }
+    .banner.warn { border-color: var(--accent2); color: var(--text); }
+
+    .tblwrap { overflow-x: auto; }
+    table.fl { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.fl th { text-align: right; padding: 7px 8px; font-size: 10px; letter-spacing: .6px; color: var(--text3);
+      border-bottom: 1px solid var(--border); font-family: var(--mono); text-transform: uppercase; white-space: nowrap;
+      user-select: none; vertical-align: bottom; }
+    table.fl th[data-k] { cursor: pointer; }
+    table.fl th[data-k]:hover { color: var(--text); }
+    table.fl th.l, table.fl td.l { text-align: left; }
+    table.fl th.sep, table.fl td.sep { border-left: 1px solid var(--border); }
+    table.fl td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap;
+      font-family: var(--mono); font-variant-numeric: tabular-nums; vertical-align: top; }
+    table.fl td.l { font-family: inherit; white-space: normal; }
+    table.fl td .sub { font-size: 10px; color: var(--text3); font-family: inherit; margin-top: 1px; }
+    table.fl tr.tot td { font-weight: 700; background: var(--surface2); border-bottom: none; }
+    table.fl tbody tr:hover td { background: var(--surface2); }
+    table.fl tr.rowlink { cursor: pointer; }
+    table.fl tr.hl td { background: rgba(255, 170, 0, 0.07); }
+    .z { color: var(--text3); }
+    .tag { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--border);
+      color: var(--text2); font-family: inherit; white-space: nowrap; margin: 1px 2px 1px 0; }
+    .tag.ok { border-color: var(--green); color: var(--green); }
+    .tag.warn { border-color: var(--accent2); color: var(--accent2); }
+    .tag.bad { border-color: var(--red); color: var(--red); }
+    .tag.acc { border-color: var(--accent); color: var(--accent); }
+    .tag.fill-ok { background: var(--green); border-color: var(--green); color: #fff; }
+    .typed { font-style: italic; }
+
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .cfg { display: grid; grid-template-columns: 240px 1fr; gap: 8px 14px; padding: 12px 14px; align-items: center; font-size: 12px; }
+    .cfg .k { color: var(--text2); }
+    .cfg .h { grid-column: 2; font-size: 11px; color: var(--text3); margin-top: -4px; line-height: 1.45; }
+    .actions { display: flex; gap: 8px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+    .msg { font-size: 11px; } .msg.err { color: var(--red); } .msg.ok { color: var(--green); }
+
+    .drawer-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 50; display: none; }
+    .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(860px, 100vw); background: var(--bg);
+      border-left: 1px solid var(--border); z-index: 51; overflow-y: auto; transform: translateX(100%); transition: transform .2s; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-bg.open { display: block; }
+    .dw-head { position: sticky; top: 0; background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 14px 18px; display: flex; gap: 12px; align-items: flex-start; z-index: 2; }
+    .dw-head h2 { font-size: 16px; font-weight: 700; }
+    .dw-head .sub { font-size: 12px; color: var(--text2); margin-top: 3px; }
+    .dw-close { margin-left: auto; background: transparent; border: 1px solid var(--border); color: var(--text2);
+      border-radius: 5px; width: 28px; height: 28px; cursor: pointer; font-size: 14px; }
+    .dw-body { padding: 14px 18px; }
+    .kv { display: grid; grid-template-columns: 170px 1fr; gap: 6px 12px; padding: 12px 14px; font-size: 12px; }
+    .kv .k { color: var(--text2); }
+    .kv.kv2 { grid-template-columns: 1fr minmax(120px, auto); }
+    .kv.kv2 > span:nth-child(even) { text-align: right; }
+    .cand { display: flex; gap: 10px; align-items: center; padding: 8px 14px; border-top: 1px solid var(--border); font-size: 12px; }
+    .cand .nm { flex: 1; min-width: 0; }
+    .cand .sc { font-family: var(--mono); font-size: 11px; color: var(--text3); width: 44px; text-align: right; }
+    .cand.cur { background: rgba(60, 200, 120, 0.08); }
+    .row-in { display: flex; gap: 8px; align-items: center; padding: 10px 14px; flex-wrap: wrap; border-top: 1px solid var(--border); }
+    .empty, .loading { padding: 26px; text-align: center; color: var(--text3); font-size: 12px; }
+    .error { padding: 14px; color: var(--red); font-size: 12px; }
+    .noaccess { max-width: 540px; margin: 60px auto; text-align: center; color: var(--text2); font-size: 13px; line-height: 1.6; }
+    .main { min-width: 0; }
+    .sites-pick { max-height: 340px; overflow-y: auto; border-top: 1px solid var(--border); }
+    .sites-pick .rg { padding: 6px 14px 2px; font-size: 10px; letter-spacing: .6px; color: var(--text3); text-transform: uppercase; font-family: var(--mono); }
+    .sites-pick label { display: flex; gap: 8px; align-items: center; padding: 4px 14px; font-size: 12px; cursor: pointer; }
+    .sites-pick label:hover { background: var(--surface2); }
+    .sites-pick label .c { color: var(--text3); font-size: 11px; margin-left: auto; }
+    details.ppl summary { cursor: pointer; font-size: 11px; color: var(--text2); }
+    details.ppl div { font-size: 11px; color: var(--text2); padding: 2px 0 0 10px; }
+    @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } .cfg, .kv { grid-template-columns: 1fr; } .cfg .h { grid-column: 1; } }
+    @media (max-width: 800px) {
+      .topbar { height: auto; flex-wrap: wrap; padding: 10px 16px; gap: 8px; }
+      .topbar-right { display: none; }
+      .content { padding: 12px; }
+      .kpis { grid-template-columns: 1fr 1fr; }
+      .kpi .v { font-size: 20px; }
+    }
+  </style>
+  <link rel="stylesheet" href="/css/mobile.css" />
+</head>
+<body>
+  <div class="sidebar">
+    <button class="sidebar-toggle" onclick="toggleSidebar()" title="Ukryj / Przypnij menu">◀</button>
+    <div class="logo">
+      <div class="logo-tag">SAS LOGISTIC</div>
+      <div class="logo-name">Rozmowy</div>
+    </div>
+    <div class="nav">
+      <div class="nav-item" onclick="location.href='index.html'">⬅️ Panel główny</div>
+      <!-- Rozmowy (rozmowy.html) — pokazuje się, gdy jest dostęp: /api/care/me -->
+      <div id="navCare" style="display:none">
+        <div class="nav-sec">📞 Rozmowy</div>
+        <div class="nav-item" onclick="location.href='rozmowy.html#tasks'">📞 Do rozmowy</div>
+        <div class="nav-item" onclick="location.href='rozmowy.html#risk'">📈 Ryzyko</div>
+        <div class="nav-item" onclick="location.href='rozmowy.html#surveys'">📝 Ankiety</div>
+        <div class="nav-item" onclick="location.href='rozmowy.html#control'">🎯 Kontrola</div>
+        <div class="nav-item adm" onclick="location.href='rozmowy.html#coords'" style="display:none">👥 Koordynatorzy</div>
+        <div class="nav-item adm" onclick="location.href='rozmowy.html#test'" style="display:none">🧪 Test</div>
+        <div class="nav-item adm" onclick="location.href='rozmowy.html#settings'" style="display:none">⚙️ Ustawienia</div>
+      </div>
+      <div id="navRef">
+        <div class="nav-sec">🤝 Poleć znajomego</div>
+        <div class="nav-item active" data-view="list" onclick="showView('list')">📋 Odpowiedzi <span class="nav-badge" id="badgeTodo" title="Do zestawienia"></span></div>
+        <div class="nav-item" data-view="ranking" onclick="showView('ranking')">🏆 Polecający <span class="nav-badge g" id="badgeDue" title="Premia należy się"></span></div>
+        <div class="nav-item" data-view="sources" onclick="showView('sources')">🧭 Źródła</div>
+        <div class="nav-item" data-view="security" id="navSecurity" onclick="showView('security')" style="display:none">🛡️ Bezpieczeństwo</div>
+        <div class="nav-item" data-view="settings" id="navSettings" onclick="showView('settings')" style="display:none">⚙️ Ustawienia</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-title" id="topTitle">Poleć znajomego</div>
+      <div class="fl-toolbar" id="toolbar">
+        <span id="regBox"><label for="selRegion">Region</label> <select id="selRegion" onchange="onFilter()"></select></span>
+        <span id="coordBox"><label for="selCoord">Koordynator</label> <select id="selCoord" onchange="onFilter()"></select></span>
+      </div>
+      <div class="topbar-right"><span id="userName" style="font-size: 12px; color: var(--text2)"></span></div>
+    </div>
+
+    <div class="content" id="content">
+      <div class="period" id="periodBar">
+        <span class="lbl">BHP od</span><input type="date" id="dFrom" onchange="onPeriod()" />
+        <span class="lbl">do</span><input type="date" id="dTo" onchange="onPeriod()" />
+        <span id="periodChips"></span>
+      </div>
+      <div id="topBanner"></div>
+
+      <!-- ODPOWIEDZI -->
+      <div class="fl-view active" id="view-list">
+        <div class="kpis" id="listKpis"></div>
+        <div class="section">
+          <div class="section-head">
+            Nowi pracownicy i ich odpowiedzi <span class="cnt" id="listCnt"></span>
+            <span class="spacer"></span>
+            <button class="btn btn-ghost btn-sm" onclick="exportList()" title="Eksport tabeli z bieżącymi filtrami + arkusz premii">⬇️ Excel</button>
+          </div>
+          <div class="filters">
+            <input type="text" class="inp" id="fQ" placeholder="Szukaj: pracownik, login, polecający, obiekt…" oninput="renderList()" style="width:240px" />
+            <span>Źródło</span>
+            <select class="inp" id="fSource" onchange="renderList()">
+              <option value="">wszystkie</option><option value="friend">znajomy</option><option value="coord">koordynator</option>
+              <option value="recruit">rekrutacja</option>
+              <option value="ads">reklama (wszystkie kanały)</option><option value="facebook">— Facebook</option><option value="instagram">— Instagram</option>
+              <option value="tiktok">— TikTok</option><option value="telegram">— Telegram</option><option value="jobsite">— portale z ofertami</option>
+              <option value="other">inne</option><option value="none">brak odpowiedzi</option>
+            </select>
+            <span>Zestawienie</span>
+            <select class="inp" id="fMatch" onchange="renderList()">
+              <option value="">wszystkie</option><option value="todo">do zestawienia</option>
+              <option value="confirmed">zestawione</option><option value="not_found">nie znaleziono</option>
+            </select>
+            <span>Premia</span>
+            <select class="inp" id="fBonus" onchange="renderList()">
+              <option value="">wszystkie</option><option value="due">należy się</option><option value="pending">w trakcie</option>
+              <option value="paid">wypłacona</option><option value="lost">odszedł przed terminem</option><option value="nomatch">bez zestawienia</option>
+            </select>
+            <span>Na ile</span>
+            <select class="inp" id="fStay" onchange="renderList()">
+              <option value="">wszystkie</option><option value="m1">1 mies.</option><option value="m2">2 mies.</option>
+              <option value="m3">3 mies.</option><option value="m6">6 mies.</option><option value="more">dłużej</option>
+              <option value="none">bez odpowiedzi</option>
+            </select>
+            <label id="fFlagBox" style="display:none"><input type="checkbox" id="fFlag" onchange="renderList()" /> tylko podejrzane</label>
+            <a href="#" onclick="clearFilters();return false" style="font-size:11px;color:var(--text3)">wyczyść</a>
+          </div>
+          <div class="tblwrap" id="listTable"><div class="loading">Ładowanie…</div></div>
+          <div class="note" id="listNote"></div>
+        </div>
+      </div>
+
+      <!-- POLECAJĄCY -->
+      <div class="fl-view" id="view-ranking">
+        <div class="section">
+          <div class="section-head">Kto przyprowadza ludzi <span class="cnt" id="rankCnt"></span>
+            <span class="spacer"></span>
+            <button class="btn btn-ghost btn-sm" onclick="exportRanking()">⬇️ Excel</button>
+          </div>
+          <div class="tblwrap" id="rankTable"><div class="loading">Ładowanie…</div></div>
+          <div class="note">Liczą się tylko odpowiedzi „znajomy”, zestawione z pracownikiem z bazy. Okres — po dacie BHP nowego pracownika.</div>
+        </div>
+      </div>
+
+      <!-- ŹRÓDŁA -->
+      <div class="fl-view" id="view-sources">
+        <div class="section">
+          <div class="section-head">Skąd przychodzą nowi — po obiektach <span class="cnt" id="srcCnt"></span>
+            <span class="spacer"></span>
+            <button class="btn btn-ghost btn-sm" onclick="exportSources()">⬇️ Excel</button>
+          </div>
+          <div class="tblwrap" id="srcTable"><div class="loading">Ładowanie…</div></div>
+          <div class="note" id="srcNote"></div>
+        </div>
+        <div class="section">
+          <div class="section-head">📅 Na ile przyjechali — po obiektach <span class="cnt" id="stayCnt"></span></div>
+          <div class="tblwrap" id="stayTable"></div>
+          <div class="note">Odpowiedź na pytanie „Na ile przyjechałeś do pracy?” (wszyscy nowi, po pytaniu „kto Cię polecił”). Pomaga planować wyjazdy.</div>
+        </div>
+      </div>
+
+      <!-- BEZPIECZEŃSTWO -->
+      <div class="fl-view" id="view-security"><div id="secBody"><div class="loading">Ładowanie…</div></div></div>
+
+      <!-- USTAWIENIA -->
+      <div class="fl-view" id="view-settings"><div id="settingsBody"><div class="loading">Ładowanie…</div></div></div>
+    </div>
+  </div>
+
+  <div class="drawer-bg" id="drawerBg" onclick="closeDrawer()"></div>
+  <div class="drawer" id="drawer" aria-hidden="true"></div>
+
+  <script src="js/polecenia.js"></script>
+  <div class="sidebar-hover-zone"
+     onmouseenter="document.querySelector('.sidebar').classList.add('sidebar-peek')"
+     onmouseleave="document.querySelector('.sidebar').classList.remove('sidebar-peek')"></div>
+  <script>
+  function toggleSidebar() {
+    const hidden = document.body.classList.toggle('sidebar-hidden');
+    const btn = document.querySelector('.sidebar-toggle');
+    btn.textContent = hidden ? '▶' : '◀';
+    btn.title = hidden ? 'Przypnij menu' : 'Ukryj menu';
+    try { localStorage.setItem('sas_sidebar_hidden', hidden ? '1' : '0'); } catch (e) {}
+  }
+  if ((function () { try { return localStorage.getItem('sas_sidebar_hidden') === '1'; } catch (e) { return false; } })() || window.innerWidth < 800) {
+    document.body.classList.add('sidebar-hidden');
+    const btn = document.querySelector('.sidebar-toggle');
+    if (btn) { btn.textContent = '▶'; btn.title = 'Przypnij menu'; }
+  }
+  document.querySelector('.sidebar')?.addEventListener('click', (e) => {
+    if (e.target.closest('.nav-item') && document.body.classList.contains('sidebar-hidden')) {
+      document.querySelector('.sidebar').classList.remove('sidebar-peek');
+    }
+  });
+  </script>
+</body>
+</html>

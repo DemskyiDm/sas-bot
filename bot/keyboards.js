@@ -80,6 +80,9 @@ function hoursKeyboard(session, settings) {
     }
   }
 
+  // подвійна зміна
+  values.push(16);
+
   const rows = [];
   let row = [];
   values.forEach((h) => {

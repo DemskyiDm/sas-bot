@@ -8,11 +8,30 @@ function isTestLogin(login) {
   return /^TEST_/i.test(login || "");
 }
 
+// Zakres jak w mini-panelu Telegram: own — moje obiekty, region — z regionem, all — cała firma.
+// Wybór zapamiętany w przeglądarce; bez niego — ten z Telegrama (serwer).
+const ADV_SCOPE_KEY = "sas_adv_scope";
+const ADV_SCOPE_PL = { own: "Moje obiekty", region: "Region", all: "Cała firma" };
+function advScopeGet() { try { return localStorage.getItem(ADV_SCOPE_KEY) || ""; } catch (e) { return ""; } }
+function setAdvScope(s) {
+  try { localStorage.setItem(ADV_SCOPE_KEY, s); } catch (e) { /* prywatne okno */ }
+  selectedAdvances.clear();
+  loadAdvances();
+}
+function renderAdvScope(scope, scopes) {
+  const box = document.getElementById("advScope");
+  if (!box) return;
+  box.innerHTML = scopes && scopes.length > 1 ? scopes.map((s) =>
+    `<button class="btn btn-ghost btn-sm${s === scope ? " adv-scope-on" : ""}" onclick="setAdvScope('${s}')">${ADV_SCOPE_PL[s] || s}</button>`).join("") : "";
+}
+
 async function loadAdvances() {
   try {
-    const res = await apiFetch("/api/advances");
+    const sc = advScopeGet();
+    const res = await apiFetch("/api/advances" + (sc ? "?scope=" + encodeURIComponent(sc) : ""));
     if (!res) return;
     allAdvancesData = res.data;
+    renderAdvScope(res.scope, res.scopes);
     const facSel = document.getElementById("advancesFacility");
     const facSet = new Set();
     allAdvancesData.forEach((a) => {
@@ -137,7 +156,7 @@ async function batchAdvances(action) {
     selectedAdvances.clear();
     loadAdvances();
   } else {
-    showToast("⚠️ Błąd");
+    showToast("⚠️ " + ((res && res.error) || "Błąd"));
   }
 }
 
@@ -169,7 +188,7 @@ async function updateAdvance(id, status) {
     );
     loadAdvances();
   } else {
-    showToast("⚠️ Błąd");
+    showToast("⚠️ " + ((res && res.error) || "Błąd"));
   }
 }
 
@@ -229,7 +248,7 @@ async function batchDayoff(action) {
     selectedDayoff.clear();
     loadDayoffPage();
   } else {
-    showToast("⚠️ Błąd");
+    showToast("⚠️ " + ((res && res.error) || "Błąd"));
   }
 }
 
@@ -623,11 +642,17 @@ async function loadSettingsTable() {
 }
 
 async function updateField(facilityId, field, value) {
-  await fetch(`/api/facility-settings/${facilityId}`, {
+  const r = await fetch(`/api/facility-settings/${facilityId}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-session": localStorage.getItem("sas_session") || "" },
     body: JSON.stringify({ field, value }),
   });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    alert(d.error || "Nie zapisano");
+    loadSettingsTable();
+    return;
+  }
   showToast("✔ Zapisano");
 }
 
@@ -869,6 +894,7 @@ function exportToExcel(type) {
         ID: w.login,
         "Imię i Nazwisko": w.full_name,
         Obiekt: w.facility_name || "—",
+        Stanowisko: w.stanowisko || "—",
         Status: w.status || "—",
         Telegram: w.telegram_chat_id ? "TAK" : "NIE",
         BHP: w.bhp_date ? new Date(w.bhp_date).toLocaleDateString("pl") : "—",
@@ -1225,7 +1251,7 @@ function clearHistoryFilters() {
   updateStatusUI('history');
   filterHistory();
 }
-
+/*
 function downloadAllTabele() {
   const month = document.getElementById("tabeleMonth").value
     || new Date().toISOString().substring(0, 7);
@@ -1233,4 +1259,29 @@ function downloadAllTabele() {
   // Прямий перехід — браузер сам завантажить ZIP
   const url = `/api/tabele/download-all?month=${encodeURIComponent(month)}&session=${encodeURIComponent(session)}`;
   window.location.href = url;
+}*/
+
+function downloadAllTabele() {
+  const month =
+    document.getElementById("tabeleMonth").value ||
+    new Date().toISOString().substring(0, 7);
+
+  const facility =
+    document.getElementById("tabeleFacility").value || "";
+
+  const status =
+    document.getElementById("tabeleStatus").value || "";
+
+  const session = SESSION || localStorage.getItem("sas_session") || "";
+
+  const params = new URLSearchParams({
+    month,
+    session
+  });
+
+  if (facility) params.append("facility", facility);
+  if (status) params.append("status", status);
+
+  window.location.href =
+    `/api/tabele/download-all?${params.toString()}`;
 }

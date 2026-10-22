@@ -9,6 +9,20 @@
   <!-- xlsx-js-style: те саме API, що й xlsx, але вміє кольори/рамки (як у raporty.html) -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
   <link rel="stylesheet" href="/css/mobile.css" />
+  <link rel="stylesheet" href="/css/office.css" />
+  <style>
+    /* ── меню розділами ── */
+    .nav-group { margin-bottom: 4px; }
+    .nav-gh { display: flex; align-items: center; gap: 6px; padding: 8px 10px 4px; font-size: 10px; letter-spacing: 1px;
+      text-transform: uppercase; color: var(--text3); font-family: var(--mono); cursor: pointer; user-select: none; }
+    .nav-gh:hover { color: var(--text2); }
+    .nav-gh .n { margin-left: auto; font-size: 9px; opacity: 0; }
+    .nav-gh .chev { font-size: 10px; transition: transform .15s; }
+    .nav-group.closed .nav-gh .chev { transform: rotate(-90deg); }
+    .nav-group.closed .nav-gh .n { opacity: 1; }
+    .nav-group.closed .nav-gb { display: none; }
+    .nav-group + .nav-group { border-top: 1px solid var(--border); padding-top: 4px; }
+  </style>
      
 </head>
 
@@ -21,20 +35,50 @@
       <div class="logo-name">Panel Koordynatora</div>
     </div>
     <div class="nav">
-      <div class="nav-item active" onclick="showPage('hours')">
-        📊 Godziny
+      <!-- Меню згруповане: розділ розгортається / згортається, стан запам'ятовується -->
+      <div class="nav-group" data-g="work">
+        <div class="nav-gh" onclick="toggleNavGroup('work')"><span>Codzienna praca</span><span class="n"></span><span class="chev">▾</span></div>
+        <div class="nav-gb">
+          <div class="nav-item active" data-page="hours" onclick="showPage('hours')">📊 Godziny</div>
+          <div class="nav-item" data-page="advances" onclick="showPage('advances')">💰 Zaliczki</div>
+          <div class="nav-item" data-page="workers" onclick="showPage('workers')">👥 Pracownicy</div>
+          <div class="nav-item" data-page="dayoff" onclick="showPage('dayoff')">🏖️ Вихідні</div>
+          <div class="nav-item" data-page="fines" onclick="showPage('fines')">⚠️ Kary</div>
+          <div id="medicalLink" class="nav-item" data-page="medical" onclick="showPage('medical')" style="display: none">🩺 Badania lekarskie</div>
+          <div class="nav-item" data-page="tabele" onclick="showPage('tabele')">🗂️ Табелі</div>
+          <div class="nav-item" data-page="history" onclick="showPage('history')">📋 Historia</div>
+        </div>
       </div>
-      <div class="nav-item" onclick="showPage('advances')">💰 Zaliczki</div>
-      <div class="nav-item" onclick="showPage('workers')">👥 Pracownicy</div>
-      <div class="nav-item" onclick="showPage('dayoff')">🏖️ Вихідні</div>
-      <div class="nav-item" onclick="showPage('tabele')">🗂️ Табелі</div>
-      <div class="nav-item" onclick="showPage('history')">📋 Historia</div>
-      <div class="nav-item" onclick="window.location='/analytics.html'">📈 Analityka</div>
-      <div class="nav-item" onclick="location.href='raporty.html'">📑 Raporty</div>
-      <div id="regionLink" class="nav-item" onclick="location.href='region.html'" style="display: none">🚦 Region</div>
-      <div class="nav-item" onclick="showPage('settings')">⚙️ Ustawienia</div>
-      <div id="adminLink" class="nav-item" onclick="window.location = '/admin.html'" style="display: none">
-        ⚙️ Admin panel
+      <div class="nav-group" data-g="people">
+        <div class="nav-gh" onclick="toggleNavGroup('people')"><span>Ludzie i rekrutacja</span><span class="n"></span><span class="chev">▾</span></div>
+        <div class="nav-gb">
+          <div id="rozmowyLink" class="nav-item" onclick="location.href='rozmowy.html'" style="display: none">📞 Rozmowy</div>
+          <div id="flowLink" class="nav-item" onclick="location.href='wyjazdy.html'" style="display: none">🚌 Wyjazdy / przyjazdy</div>
+        </div>
+      </div>
+      <div class="nav-group" data-g="recruit">
+        <div class="nav-gh" onclick="toggleNavGroup('recruit')"><span>Rekrutacja</span><span class="n"></span><span class="chev">▾</span></div>
+        <div class="nav-gb">
+          <div id="wysylkaLink" class="nav-item" onclick="location.href='wysylka.html'" style="display: none">📣 Wysyłka wiadomości</div>
+        </div>
+      </div>
+      <div class="nav-group" data-g="reports">
+        <div class="nav-gh" onclick="toggleNavGroup('reports')"><span>Analiza i raporty</span><span class="n"></span><span class="chev">▾</span></div>
+        <div class="nav-gb">
+          <div id="boardLink" class="nav-item" onclick="location.href='zarzad.html'" style="display: none">📊 Pulpit kierownika</div>
+          <div id="regionLink" class="nav-item" onclick="location.href='region.html'" style="display: none">🚦 Region</div>
+          <div class="nav-item" onclick="location.href='raporty.html'">📑 Raporty</div>
+          <div class="nav-item" onclick="window.location='/analytics.html'">📈 Analityka</div>
+        </div>
+      </div>
+      <div class="nav-group" data-g="system">
+        <div class="nav-gh" onclick="toggleNavGroup('system')"><span>Ustawienia</span><span class="n"></span><span class="chev">▾</span></div>
+        <div class="nav-gb">
+          <div class="nav-item" data-page="settings" onclick="showPage('settings')">⚙️ Ustawienia</div>
+          <div id="medSetLink" class="nav-item" data-page="medset" onclick="showPage('medset')" style="display: none">🩺 Ustawienia badań</div>
+          <div id="hoursReportLink" class="nav-item" onclick="location.href='raport-godzin.html'" style="display: none">⏰ Raport godzin</div>
+          <div id="adminLink" class="nav-item" onclick="window.location = '/admin.html'" style="display: none">🛠️ Admin panel</div>
+        </div>
       </div>
     </div>
     <div style="
@@ -73,6 +117,20 @@
           </div>
         </div>
       </div>
+      <!-- Telegram: привʼязка (одноразове посилання на бота) → кнопка «Panel» у боті, вхід без пароля -->
+      <button id="tgBtn" onclick="connectTelegram()" title="Panel w Telegramie — bez hasła" style="
+            width: 100%;
+            margin-top: 4px;
+            padding: 7px;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--blue);
+            border-radius: 5px;
+            font-size: 12px;
+            cursor: pointer;
+          ">
+        ✈️ Połącz Telegram
+      </button>
       <button onclick="doLogout()" style="
             width: 100%;
             margin-top: 4px;
@@ -138,7 +196,9 @@
           <div class="stat-label">Wszyscy</div>
           <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
             <div class="stat-value" id="statAllWorkers">—</div>
-            <div class="stat-sub">aktywnych</div>
+            <div class="stat-sub" id="statAllSub">aktywnych</div>
+            <!-- координатор / регіональний: уся фірма під своїми (workers.js → loadWorkerStats) -->
+            <div id="statAllCompany" hidden style="margin-top:8px;padding-top:6px;border-top:1px solid var(--border);font-size:12px;color:var(--text2);text-align:center"></div>
           </div>
         </div>
 
@@ -302,11 +362,15 @@
                   flex-wrap: wrap;
                   align-items: center;
                 ">
+              <!-- zatwierdzone zaliczki jednym mailem do biura (public/js/office.js) -->
+              <button class="btn btn-primary btn-sm" id="advOfficeBtn" onclick="openOfficeModal()">✉ Wyślij do biura</button>
               <label
                 style="display:flex; align-items:center; gap:6px; color:var(--text2); font-size:13px; cursor:pointer;">
                 <input type="checkbox" id="advSelectAll" onchange="toggleAllAdvances(this.checked)">
                 Zaznacz wszystkie
               </label>
+              <!-- Moje obiekty / Region / Cała firma — jak w mini-panelu Telegram (modules.js → loadAdvances) -->
+              <span id="advScope" class="adv-scope"></span>
               <select id="advancesFacility" onchange="filterAdvances()" style="width: 180px">
                 <option value="">Wszystkie obiekty</option>
               </select>
@@ -385,6 +449,14 @@
                 ">
               <input type="text" id="workersSearch" placeholder="Szukaj pracownika..." style="width: 180px"
                 oninput="filterWorkers()" />
+              <!-- podpisy dokumentów w HRappka (workers.js → HRS, api/hr_sign.js) -->
+              <select id="workersDocs" onchange="filterWorkers()" title="Podpisy dokumentów w HRappka (BHP od 15.10.2026)">
+                <option value="">Dokumenty: wszyscy</option>
+                <option value="unsigned">Nie podpisali</option>
+                <option value="signed">Wszystko podpisane</option>
+                <option value="missing">Brak w HRappka</option>
+              </select>
+              <button class="btn btn-ghost btn-sm" id="workersDocsBtn" onclick="refreshSignatures()" title="Sprawdź teraz w HRappka (widoczni na liście, BHP od 15.10)">🔄 Sprawdź podpisy</button>
               <div style="display:flex;gap:6px;align-items:center;">
                 <div style="position:relative;" id="workersGroupDropWrap">
                   <button onclick="toggleWorkersGroupDrop()"
@@ -530,10 +602,12 @@
                   <th>ID</th>
                   <th>Imie i Nazwisko</th>
                   <th>Obiekt</th>
+                  <th>Stanowisko</th>
                   <th>Status</th>
                   <th>Telegram</th>
                   <th>BHP</th>
                   <th>Ostatni dzień</th>
+                  <th title="Podpisy dokumentów w HRappka">Dokumenty</th>
                   <th>Akcje</th>
                 </tr>
               </thead>
@@ -628,6 +702,39 @@
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      <!-- PAGE: BADANIA LEKARSKIE (public/js/office.js) — zamówienie badań dla osób z BHP w wybrane dni -->
+      <div id="pageMedical" style="display: none">
+        <div class="card">
+          <div style="display: flex; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); gap: 10px; flex-wrap: wrap">
+            <span style="font-size: 13px; font-weight: 600">🩺 Badania lekarskie</span>
+            <span style="font-size: 12px; color: var(--text2)">kto zaczyna pracę (BHP) w wybrane dni — jednym mailem do kliniki</span>
+          </div>
+          <div id="medBox" class="ofc-box"></div>
+        </div>
+      </div>
+
+      <!-- PAGE: KARY (public/js/fines.js) — wystawione kary: Moje obiekty / Region / Cała firma, nowa kara, mail do biura -->
+      <div id="pageFines" style="display: none">
+        <div class="card">
+          <div style="display: flex; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); gap: 10px; flex-wrap: wrap">
+            <span style="font-size: 13px; font-weight: 600">⚠️ Kary</span>
+            <span style="font-size: 12px; color: var(--text2)">kary pracowników — wystawienie, anulowanie, wysyłka do biura</span>
+          </div>
+          <div id="finBox" class="ofc-box"></div>
+        </div>
+      </div>
+
+      <!-- PAGE: USTAWIENIA BADAŃ (public/js/office.js) — kto ma panel badań, typ badania i adres zakładu; admin i regionalni -->
+      <div id="pageMedset" style="display: none">
+        <div class="card">
+          <div style="display: flex; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); gap: 10px; flex-wrap: wrap">
+            <span style="font-size: 13px; font-weight: 600">🩺 Ustawienia badań</span>
+            <span style="font-size: 12px; color: var(--text2)">panel dla koordynatorów, typ badania i adres — trafiają do maila i Excela</span>
+          </div>
+          <div id="medSetBox" class="ofc-box"></div>
         </div>
       </div>
 
@@ -905,7 +1012,7 @@
       </div>
       <div class="modal-field">
         <div class="modal-label">GODZINY (lub wybierz nieobecnosc)</div>
-        <input class="modal-input" id="modalHours" type="number" min="0.25" max="13" step="0.25" placeholder="np. 8" />
+        <input class="modal-input" id="modalHours" type="number" min="0.25" max="16" step="0.25" placeholder="np. 8" />
         <div class="modal-abs">
           <div class="abs-btn" onclick="setAbs('WZ', event)">DW — Dzień wolny</div>
           <div class="abs-btn" onclick="setAbs('DWZ', event)">DWZ — Dzień wolny zakładowy</div>
@@ -995,9 +1102,12 @@
   </div>
 
   <script src="/js/app.js"></script>
+  <script src="/tg/back.js"></script>  <!-- відкрито з мініпанелі Telegram: «Назад» → мініпанель -->
   <script src="/js/hours.js"></script>
   <script src="/js/workers.js"></script>
   <script src="/js/modules.js"></script>
+  <script src="/js/office.js"></script>
+  <script src="/js/fines.js"></script>  <!-- «Kary» (po office.js — korzysta z ofcEsc / ofcToast) -->  <!-- «Wyślij do biura» (zaliczki) i «Badania lekarskie» -->
 
   <!-- TABELE MODAL -->
   <div class="modal-overlay" id="tabeleModal">
@@ -1063,9 +1173,71 @@ document.querySelector('.sidebar')?.addEventListener('click', (e) => {
 });
 </script>
 <script>
+// ── Меню розділами: згорнути / розгорнути; порожній розділ (немає доступу) ховається ──
+(function () {
+  var KEY = 'sas_nav_open';
+  var open = null;
+  try { open = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { open = null; }
+  if (!open) open = { work: true, people: true };          // за замовчуванням: щоденна робота і люди
+  var nav = document.querySelector('.sidebar .nav');
+  var groups = [].slice.call(document.querySelectorAll('.nav-group'));
+  function refresh() {
+    groups.forEach(function (g) {
+      var items = [].slice.call(g.querySelectorAll('.nav-item')).filter(function (el) { return el.style.display !== 'none'; });
+      var disp = items.length ? '' : 'none';
+      if (g.style.display !== disp) g.style.display = disp;
+      var closed = !open[g.dataset.g] && !items.some(function (el) { return el.classList.contains('active'); });
+      if (g.classList.contains('closed') !== closed) g.classList.toggle('closed', closed);
+      var n = g.querySelector('.nav-gh .n');
+      if (n.textContent !== String(items.length)) n.textContent = items.length;
+    });
+  }
+  window.toggleNavGroup = function (k) {
+    var g = document.querySelector('.nav-group[data-g="' + k + '"]');
+    open[k] = g ? g.classList.contains('closed') : !open[k];
+    try { localStorage.setItem(KEY, JSON.stringify(open)); } catch (e) { /* приватне вікно */ }
+    if (g) g.classList.toggle('closed', !open[k]);
+  };
+  // посилання з'являються після перевірки доступу (fetch нижче) — перераховуємо розділи
+  new MutationObserver(function (muts) {
+    if (muts.some(function (m) { return m.target.classList && m.target.classList.contains('nav-item'); })) refresh();
+  }).observe(nav, { attributes: true, subtree: true, attributeFilter: ['style', 'class'] });
+  refresh();
+})();
 fetch('/api/regional/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
   .then(function (r) { return r.ok ? r.json() : null; })
   .then(function (d) { if (d && d.has_access) document.getElementById('regionLink').style.display = ''; })
+  .catch(function () {});
+fetch('/api/board/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (d) { if (d && d.has_access) document.getElementById('boardLink').style.display = ''; })
+  .catch(function () {});
+fetch('/api/flow/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (d) { if (d && d.has_access) document.getElementById('flowLink').style.display = ''; })
+  .catch(function () {});
+// «Rozmowy» — і для тих, хто бачить лише «Poleć znajomego» (тепер це блок усередині Rozmowy)
+['/api/care/me', '/api/ref/me'].forEach(function (u) {
+  fetch(u, { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) { if (d && d.has_access) document.getElementById('rozmowyLink').style.display = ''; })
+    .catch(function () {});
+});
+// «Badania lekarskie» — komu włączono (Ustawienia badań); «Ustawienia badań» — admin i regionalni
+fetch('/api/tg/office/med-access', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (d) {
+    if (d && d.access) document.getElementById('medicalLink').style.display = '';
+    if (d && d.manage) document.getElementById('medSetLink').style.display = '';
+  })
+  .catch(function () {});
+fetch('/api/broadcast/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (d) { if (d && d.has_access) document.getElementById('wysylkaLink').style.display = ''; })
+  .catch(function () {});
+fetch('/api/hours-report/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (d) { if (d && d.is_admin) document.getElementById('hoursReportLink').style.display = ''; })
   .catch(function () {});
 </script>
 </body>

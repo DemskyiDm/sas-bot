@@ -34,13 +34,67 @@ function hrsCell(w) {
   if (s.error) return `<span class="badge badge-orange" title="Błąd HRappka: ${escStan(s.error)}">błąd</span>`;
   if (!s.found || !s.total) return `<span class="badge badge-blue" title="Brak dokumentów do podpisu w HRappka · sprawdzono ${when}">brak w HRappka</span>`;
   const cls = s.signed >= s.total ? "badge-green" : s.signed === 0 ? "badge-red" : "badge-orange";
-  return `<span class="badge ${cls}" style="cursor:pointer" title="Pokaż dokumenty" onclick="hrsShow(${w.id})">${s.signed >= s.total ? "✓" : "✗"} ${s.signed}/${s.total}</span>`;
+  return `<span class="badge ${cls}" style="cursor:pointer" onclick="hrsShow(${w.id})"
+    onmouseenter="hrsHover(this, ${w.id})" onmouseleave="hrsHoverOut()">${s.signed >= s.total ? "✓" : "✗"} ${s.signed}/${s.total}</span>`;
 }
-// Okno z dokumentami: niepodpisane — na czerwono (±10 dni od BHP, przy powtórnej wysyłce — ostatnia)
+// Lista dokumentów: niepodpisane — na czerwono, na górze (±10 dni od BHP, przy powtórnej wysyłce — ostatnia)
+function hrsListHtml(w, s) {
+  const when = s.checked_at ? new Date(s.checked_at).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
+  const docs = s.docs.slice().sort((a, b) => (a.status === "SIGN") - (b.status === "SIGN"));
+  return `
+    <div style="font-size:13px;font-weight:600;margin-bottom:2px">📄 ${escStan(w.full_name)} · podpisano ${s.signed} z ${s.total}</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">BHP ${w.bhp_date ? new Date(w.bhp_date).toLocaleDateString("pl") : "—"} · sprawdzono ${when} · dokumenty wysłane ±10 dni od BHP</div>
+    <div style="display:flex;flex-direction:column;gap:4px;max-height:50vh;overflow-y:auto">
+      ${docs.map((d) => `<div style="display:flex;gap:8px;align-items:baseline;font-size:13px;color:${d.status === "SIGN" ? "var(--green)" : "var(--red)"};${d.status === "SIGN" ? "" : "font-weight:600"}">
+        <span>${d.status === "SIGN" ? "✓" : "✗"}</span><span style="flex:1">${escStan(d.label)}</span>
+        <span style="font-size:11px;color:var(--text3);font-weight:400">${d.created ? d.created.split("-").reverse().join(".") : ""}</span></div>`).join("")}
+    </div>`;
+}
+// Po najechaniu kursorem (z opóźnieniem) — dymek; kursor można przenieść na dymek (przewijanie długiej listy)
+const HRS_HOVER_MS = 350;
+let hrsTimer = null, hrsHideTimer = null;
+function hrsPop() {
+  let p = document.getElementById("hrsPop");
+  if (!p) {
+    p = document.createElement("div");
+    p.id = "hrsPop";
+    p.style.cssText = "position:fixed;z-index:120;display:none;width:440px;max-width:90vw;background:var(--surface);border:1px solid var(--border);"
+      + "border-radius:10px;padding:12px 14px;box-shadow:0 10px 28px rgba(0,0,0,.45)";
+    p.addEventListener("mouseenter", () => clearTimeout(hrsHideTimer));
+    p.addEventListener("mouseleave", hrsHoverOut);
+    document.body.appendChild(p);
+  }
+  return p;
+}
+function hrsHover(el, id) {
+  clearTimeout(hrsTimer); clearTimeout(hrsHideTimer);
+  hrsTimer = setTimeout(() => {
+    const w = (allWorkersData || []).find((x) => x.id === id);
+    const s = HRS.rows[id];
+    if (!w || !s || !el.isConnected) return;
+    const p = hrsPop();
+    p.innerHTML = hrsListHtml(w, s);
+    p.style.display = "block";
+    // pod plakietką; brak miejsca — nad nią; nie wychodzi poza ekran z prawej
+    const r = el.getBoundingClientRect(), ph = p.offsetHeight, pw = p.offsetWidth;
+    const top = r.bottom + 6 + ph > window.innerHeight ? Math.max(8, r.top - 6 - ph) : r.bottom + 6;
+    p.style.top = top + "px";
+    p.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pw - 8)) + "px";
+  }, HRS_HOVER_MS);
+}
+function hrsHoverOut() {
+  clearTimeout(hrsTimer);
+  clearTimeout(hrsHideTimer);
+  hrsHideTimer = setTimeout(() => { const p = document.getElementById("hrsPop"); if (p) p.style.display = "none"; }, 200);
+}
+// Kliknięcie — to samo w oknie (telefon / gdy trzeba dłużej popatrzeć)
 function hrsShow(id) {
   const w = (allWorkersData || []).find((x) => x.id === id);
   const s = HRS.rows[id];
   if (!w || !s) return;
+  clearTimeout(hrsTimer);
+  const pop = document.getElementById("hrsPop");
+  if (pop) pop.style.display = "none";
   let ov = document.getElementById("hrsOverlay");
   if (!ov) {
     ov = document.createElement("div");
@@ -50,19 +104,19 @@ function hrsShow(id) {
     ov.addEventListener("click", (e) => { if (e.target === ov) ov.classList.remove("open"); });
     document.body.appendChild(ov);
   }
-  const when = s.checked_at ? new Date(s.checked_at).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
-  const docs = s.docs.slice().sort((a, b) => (a.status === "SIGN") - (b.status === "SIGN"));   // niepodpisane na górze
-  document.getElementById("hrsBody").innerHTML = `
-    <div class="modal-title">📄 ${escStan(w.full_name)} · podpisano ${s.signed} z ${s.total}</div>
-    <div style="font-size:11px;color:var(--text3);margin:-8px 0 10px">BHP ${w.bhp_date ? new Date(w.bhp_date).toLocaleDateString("pl") : "—"} · sprawdzono ${when} · dokumenty wysłane ±10 dni od BHP</div>
-    <div style="display:flex;flex-direction:column;gap:4px;max-height:50vh;overflow-y:auto">
-      ${docs.map((d) => `<div style="display:flex;gap:8px;align-items:baseline;font-size:13px;color:${d.status === "SIGN" ? "var(--green)" : "var(--red)"};${d.status === "SIGN" ? "" : "font-weight:600"}">
-        <span>${d.status === "SIGN" ? "✓" : "✗"}</span><span style="flex:1">${escStan(d.label)}</span>
-        <span style="font-size:11px;color:var(--text3);font-weight:400">${d.created ? d.created.split("-").reverse().join(".") : ""}</span></div>`).join("")}
-    </div>
+  document.getElementById("hrsBody").innerHTML = hrsListHtml(w, s) + `
     <div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn btn-ghost btn-sm" onclick="document.getElementById('hrsOverlay').classList.remove('open')">Zamknij</button></div>`;
   ov.classList.add("open");
 }
+// Esc — zamyka okno i dymek
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const ov = document.getElementById("hrsOverlay");
+  if (ov) ov.classList.remove("open");
+  const p = document.getElementById("hrsPop");
+  if (p) p.style.display = "none";
+  clearTimeout(hrsTimer);
+});
 async function refreshSignatures() {
   const btn = document.getElementById("workersDocsBtn");
   const ids = (window._workersFiltered || []).filter(hrsInScope).map((w) => w.id).slice(0, 500);

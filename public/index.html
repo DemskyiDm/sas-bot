@@ -1232,7 +1232,7 @@ fetch('/api/tg/office/med-access', { headers: { 'x-session': localStorage.getIte
     if (d && d.manage) document.getElementById('medSetLink').style.display = '';
   })
   .catch(function () {});
-// «Zamówienia» (Rekrutacja) — na razie tylko admin (/api/rec/me)
+// «Zamówienia» (Rekrutacja) — admin i regionalni (/api/rec/me)
 fetch('/api/rec/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
   .then(function (r) { return r.ok ? r.json() : null; })
   .then(function (d) { if (d && d.has_access) document.getElementById('zamowieniaLink').style.display = ''; })

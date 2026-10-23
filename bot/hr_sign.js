@@ -7,6 +7,7 @@
 //   • о 7:00 — звіт «хто не підписав» листом з Excel на HR_SIGN_REPORT_TO (.env, через кому);
 //   • о 10:00 — нагадування працівнику в боті «перевірте посилання в e-mail» (раз на пакет, наступного дня);
 //   • з панелі — «Sprawdź podpisy» для вибраних / обʼєкта (не частіше ніж раз на хвилину на людину).
+// Анкети — лише вибрані (HR_SIGN_SURVEYS у .env, id з HRappka → Ankiety): відповіді беремо пачкою по анкеті, не по людині.
 // Доступ до HRappka — ті самі змінні .env, що й у sync_hrrappka_diff.js. Таблиці: db/migration_hr_sign.sql.
 "use strict";
 
@@ -86,14 +87,8 @@ async function fetchEmployees(passportsRaw) {
   const r = await axios.post(`${BASE}/api/v1/table`, body, { headers: await headers(), timeout: 60000 });
   return (r.data.data && r.data.data.data) || [];
 }
-// Анкети одного працівника HRappka (QUESTIONNAIRE_ANSWER віддає лише по одному: entityFkey)
-const SURVEY_COLS = ["state", "creationTime", "fillingDate", "questionnaire_QUESTIONNAIRE_name"].map((id) => ({ id, isLocked: false, width: null }));
-async function fetchSurveys(employeeId) {
-  const body = {
-    id: "QUESTIONNAIRE_ANSWER", offset: 0, limit: 200, columns: SURVEY_COLS,
-    filter: { logicOperator: "AND", conditions: [], subFilters: [] },
-    customFilters: { entityType: "EMPLOYEE", entityFkey: String(employeeId) }, order: {}, additionalParameters: { fullConfig: false },
-  };
+// Запит до таблиці HRappka; токен прострочився — раз повторюємо з новим
+async function table(body) {
   for (let attempt = 0; ; attempt++) {
     try {
       const r = await axios.post(`${BASE}/api/v1/table`, body, { headers: await headers(), timeout: 60000 });
@@ -104,14 +99,39 @@ async function fetchSurveys(employeeId) {
     }
   }
 }
-// items — по N одночасно (HRappka відповідає ~1,5 с на працівника)
-async function inParallel(items, n, fn) {
-  let i = 0;
-  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) await fn(items[i++]); }));
+// Анкети, які рахуємо: nowe OŚWIADCZENIE (EES), do podpisy OŚWIADCZENIE (EES), ANKIETA DO PRACOWNIKA (LZ), (LZ) udział w programie lojalnościowym
+const SURVEY_IDS = String(process.env.HR_SIGN_SURVEYS || "85586,87232,72966,87549").split(/[,;\s]+/).map(Number).filter(Boolean);
+const ANSWER_PAGE = 500;
+const ANSWER_COLS = ["id", "entity", "state", "fillingDate", "creationTime"].map((id) => ({ id, isLocked: false, width: null }));
+// Відповіді вибраних анкет, створені від since (YYYY-MM-DD): усі працівники разом, від найновіших → Map(id працівника HRappka → [відповіді])
+async function fetchAnswers(since) {
+  const names = new Map((await table({
+    id: "QUESTIONNAIRE", offset: 0, limit: 50, columns: [{ id: "name", isLocked: false, width: null }], customFilters: {}, order: {}, search: null,
+    filter: { logicOperator: "AND", subFilters: [], conditions: [{ key: { columnId: "id" }, operator: "IN", value: SURVEY_IDS }] },
+    additionalParameters: { fullConfig: false },
+  })).map((q) => [Number(q.id), q.name]));
+  const byEmp = new Map();
+  await Promise.all(SURVEY_IDS.map(async (qid) => {   // анкети — паралельно (HRappka ~4 с на запит)
+    for (let offset = 0; ; offset += ANSWER_PAGE) {
+      const rows = await table({
+        id: "QUESTIONNAIRE_ANSWER", offset, limit: ANSWER_PAGE, columns: ANSWER_COLS,
+        filter: { logicOperator: "AND", conditions: [], subFilters: [] }, customFilters: { questionnaireId: qid },
+        order: { creationTime: "DESC" }, search: null, additionalParameters: { fullConfig: false },
+      });
+      for (const r of rows) {
+        if (r.entityType !== "EMPLOYEE" || !r.entityFkey || String(r.creationTime || "") < since) continue;
+        const k = String(r.entityFkey);
+        if (!byEmp.has(k)) byEmp.set(k, []);
+        byEmp.get(k).push({ ...r, name: names.get(qid) || "" });
+      }
+      if (rows.length < ANSWER_PAGE || String(rows[rows.length - 1].creationTime || "") < since) break;
+    }
+  }));
+  return byEmp;
 }
-const SURVEY_PARALLEL = 4;
-// Анкети для партії працівників: id у HRappka — з документів, з попередніх перевірок або за паспортом
-async function syncSurveys(partIds, passports, byPass, docRows) {
+// Анкети для партії працівників: id у HRappka — з документів, з попередніх перевірок або за паспортом;
+// answers() — відповіді вибраних анкет (одні на всю перевірку)
+async function syncSurveys(partIds, passports, byPass, docRows, answers) {
   const emp = new Map();   // worker_id → Set(id працівника в HRappka)
   const add = (wid, eid) => { if (!wid || !eid) return; if (!emp.has(wid)) emp.set(wid, new Set()); emp.get(wid).add(String(eid)); };
   docRows.forEach((d) => add(byPass.get(normPass(d.user_EMPLOYEE_idsNumberValuePASSPORT)), d.user_EMPLOYEE_id));
@@ -119,19 +139,9 @@ async function syncSurveys(partIds, passports, byPass, docRows) {
   known.rows.forEach((x) => add(x.worker_id, x.hr_employee_id));
   const missing = passports.filter((p) => !emp.has(byPass.get(p)));
   if (missing.length) (await fetchEmployees(missing)).forEach((r) => add(byPass.get(normPass(r.idsNumberValuePASSPORT)), r.id));
-  const jobs = [];
-  emp.forEach((set, wid) => set.forEach((eid) => jobs.push({ wid, eid })));
-  const got = new Map(), failed = new Set();
-  await inParallel(jobs, SURVEY_PARALLEL, async (j) => {
-    try {
-      const rows = await fetchSurveys(j.eid);
-      if (!got.has(j.wid)) got.set(j.wid, []);
-      got.get(j.wid).push(...rows.map((r) => ({ ...r, eid: j.eid })));
-    } catch (e) {
-      failed.add(j.wid);
-      console.error(`[hr sign] анкети працівника HRappka ${j.eid}:`, String((e.response && e.response.status) || e.message));
-    }
-  });
+  const all = await answers();
+  const got = new Map();
+  emp.forEach((set, wid) => got.set(wid, [...set].flatMap((eid) => (all.get(eid) || []).map((r) => ({ ...r, eid })))));
   let n = 0;
   const client = await db.pool.connect();
   try {
@@ -144,12 +154,12 @@ async function syncSurveys(partIds, passports, byPass, docRows) {
            VALUES ($1, $2, $3, $4, $5, $6, $7, now())
            ON CONFLICT (hr_answer_id) DO UPDATE SET worker_id = EXCLUDED.worker_id, name = EXCLUDED.name, state = EXCLUDED.state,
              filled_at = EXCLUDED.filled_at, checked_at = now()`,
-          [s.id, wid, s.eid, s.questionnaire_QUESTIONNAIRE_name || "", s.state, s.creationTime || null, s.fillingDate || null]);
+          [s.id, wid, s.eid, s.name, s.state, s.creationTime || null, s.fillingDate || null]);
         n++;
       }
     }
-    const done = [...emp.keys()].filter((wid) => !failed.has(wid));   // кого прочитали повністю — старі анкети прибираємо
-    await client.query(`DELETE FROM hrs.surveys WHERE worker_id = ANY($1::int[]) AND checked_at < now() - interval '1 second'`, [done]);
+    // анкети, яких більше немає (або це не вибрані анкети) — прибираємо
+    await client.query(`DELETE FROM hrs.surveys WHERE worker_id = ANY($1::int[]) AND checked_at < now() - interval '1 second'`, [[...emp.keys()]]);
     for (const [wid, set] of emp) {
       await client.query(
         `UPDATE hrs.checks SET hr_employee_id = $2,
@@ -176,6 +186,10 @@ async function check(ids) {
   w.rows.forEach((x) => { const p = normPass(x.login); if (p) byPass.set(p, x.id); });
   const passes = [...byPass.keys()];
   let docs = 0, surveys = 0, signedNow = 0;
+  const m = await db.query(`SELECT to_char(min(bhp_date) - $2::int, 'YYYY-MM-DD') AS d FROM v_worker_current WHERE id = ANY($1::int[])`, [ids, WINDOW_DAYS]);
+  const since = m.rows[0].d || FROM;
+  let cache = null;
+  const answers = () => (cache = cache || fetchAnswers(since));
   for (let i = 0; i < passes.length; i += BATCH) {
     const part = passes.slice(i, i + BATCH);
     const partIds = part.map((p) => byPass.get(p));
@@ -224,7 +238,7 @@ async function check(ids) {
     }
     // анкети тієї ж партії; не вдалося — документи вже збережені, анкети спробуємо наступного разу
     try {
-      surveys += (await syncSurveys(partIds, part, byPass, rows)).surveys;
+      surveys += (await syncSurveys(partIds, part, byPass, rows, answers)).surveys;
     } catch (e) {
       console.error("[hr sign] анкети:", e.message);
     }

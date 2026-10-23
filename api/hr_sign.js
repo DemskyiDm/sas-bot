@@ -45,7 +45,13 @@ router.post("/refresh", async (req, res) => {
     if (want.length > MAX_IDS) return res.status(400).json({ ok: false, error: `Maks. ${MAX_IDS} osób naraz` });
     const ids = await visible(req.coordinator, want);
     const r = await hr.manual(ids);
-    res.json({ ok: !r.error, error: r.error || null, checked: r.checked, skipped: r.skipped, signed_now: r.signed_now,
+    // одразу — у таблицю «Dokumenty pocztą» (рядки цих працівників); помилка таблиці не ламає перевірку
+    let sheet = null;
+    if (!r.error && r.checked) {
+      try { sheet = (await require("../bot/docs_sheet").sync({ workerIds: ids, refresh: false })).written; }
+      catch (e) { console.error("[docs sheet] кнопка:", e.message); }
+    }
+    res.json({ ok: !r.error, error: r.error || null, checked: r.checked, skipped: r.skipped, signed_now: r.signed_now, sheet_written: sheet,
       rows: await hr.summary(ids) });
   } catch (e) { fail(res, e); }
 });

@@ -91,8 +91,11 @@ test("med: вимкнені заклади не показуються в нал
 });
 
 // ── Підписи HRappka ───────────────────────────────────────────────────
-test("hr: вікно −5 / +10 днів від BHP, повторний документ — останній, анкети рахуються", async () => {
-  const w = await tx.one(`SELECT v.id, to_char(v.bhp_date, 'YYYY-MM-DD') AS bhp FROM v_worker_current v WHERE v.bhp_date IS NOT NULL AND v.login NOT LIKE 'TEST_%' LIMIT 1`);
+test("hr: вікно ±10 днів від BHP без документів попереднього періоду, повторний документ — останній, анкети рахуються", async () => {
+  // працівник з одним (відкритим) періодом — щоб попередні періоди не обрізали вікно
+  const w = await tx.one(`SELECT v.id, to_char(v.bhp_date, 'YYYY-MM-DD') AS bhp FROM v_worker_current v
+    WHERE v.bhp_date IS NOT NULL AND v.last_work_date IS NULL AND v.status::text <> 'rezygnacja' AND v.login NOT LIKE 'TEST_%'
+      AND NOT EXISTS (SELECT 1 FROM worker_facility_history h WHERE h.worker_id = v.id AND h.bhp_date < v.bhp_date) LIMIT 1`);
   await tx.q(`DELETE FROM hrs.docs WHERE worker_id = $1`, [w.id]);
   await tx.q(`DELETE FROM hrs.surveys WHERE worker_id = $1`, [w.id]);
   await tx.q(`INSERT INTO hrs.checks (worker_id, checked_at, found) VALUES ($1, now(), true) ON CONFLICT (worker_id) DO UPDATE SET found = true, error = NULL`, [w.id]);
@@ -102,14 +105,21 @@ test("hr: вікно −5 / +10 днів від BHP, повторний доку
     (-2, $1, 'x___umowa_2026_01_01_00_00_00.pdf', ${d(0)},  'SEND'),      -- перша відправка
     (-3, $1, 'x___umowa_2026_01_01_00_00_01.pdf', ${d(2)},  'SIGN'),      -- повторна, підписана — рахується вона
     (-4, $1, 'x___pit_2_2026_01_01_00_00_00.pdf', ${d(1)},  'SEND'),
-    (-5, $1, 'x___rodo_2026_01_01_00_00_00.pdf', ${d(-6)}, 'SEND'),      -- 6 днів до BHP — поза вікном
-    (-6, $1, 'x___ppk_2026_01_01_00_00_00.pdf', ${d(-5)},  'SIGN'),      -- 5 днів до BHP — рахується
+    (-5, $1, 'x___rodo_2026_01_01_00_00_00.pdf', ${d(-11)}, 'SEND'),     -- 11 днів до BHP — поза вікном
+    (-6, $1, 'x___ppk_2026_01_01_00_00_00.pdf', ${d(-10)},  'SIGN'),     -- 10 днів до BHP — рахується
     (-7, $1, 'x___kara_2026_01_01_00_00_00.pdf', ${d(10)}, 'SEND')`, [w.id]);
   await tx.q(`INSERT INTO hrs.surveys (hr_answer_id, worker_id, name, state, hr_created_at) VALUES
     (-1, $1, 'ANKIETA DO PRACOWNIKA', 'SENT', ${d(1)}), (-2, $1, 'STARA', 'SENT', ${d(-40)})`, [w.id]);
   const s = (await hr.summary([w.id]))[w.id];
-  assert.equal(s.total, 5);                                   // umowa (остання), pit 2, ppk (−5), kara (+10), анкета; rodo (−6) і старі — ні
+  assert.equal(s.total, 5);                                   // umowa (остання), pit 2, ppk (−10), kara (+10), анкета; rodo (−11) і старі — ні
   assert.equal(s.signed, 2);
+  // попередній період (переведення) з BHP за 5 днів до поточного: документи до −5 включно — його, тож ppk (−10) уже не «наш»
+  const f = await tx.one(`SELECT facility_id FROM worker_facility_history WHERE worker_id = $1 LIMIT 1`, [w.id]);
+  await tx.q(`INSERT INTO worker_facility_history (worker_id, facility_id, status, source_sheet, bhp_date, last_work_date, imported_at)
+              VALUES ($1, $2, 'zwolniony', 'test', DATE '${w.bhp}' - 5, DATE '${w.bhp}' - 1, now())`, [w.id, f.facility_id]);
+  const s2 = (await hr.summary([w.id]))[w.id];
+  assert.equal(s2.total, 4);                                  // umowa (повторна, +2), pit 2, kara, анкета
+  assert.equal(s2.signed, 1);
   assert.deepEqual(s.docs.filter((x) => x.kind === "survey").map((x) => x.label), ["ANKIETA DO PRACOWNIKA"]);
   assert.equal(s.docs.find((x) => x.label === "umowa").status, "SIGN");
 });

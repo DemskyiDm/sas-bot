@@ -157,8 +157,10 @@ async function states(pairs) {
 }
 
 // ── Головне ───────────────────────────────────────────────────────────
-// dry = true — нічого не пише, повертає план; refresh = false — не питати HRappka (лише для dry)
-async function sync({ dry = false, refresh = !dry } = {}) {
+// dry = true — нічого не пише, повертає план; refresh = false — не питати HRappka;
+// workerIds — лише рядки цих працівників (кнопка «Sprawdź podpisy»: їх щойно перевірили — без refresh, список «не знайдено» не чіпаємо)
+async function sync({ dry = false, refresh = !dry, workerIds = null } = {}) {
+  const only = workerIds ? new Set(workerIds.map(Number)) : null;
   const sh = api();
   const meta = await sh.spreadsheets.get({ spreadsheetId: SHEET_ID, fields: "sheets(properties(sheetId,title))" });
   const W = await loadWorkers();
@@ -183,7 +185,8 @@ async function sync({ dry = false, refresh = !dry } = {}) {
   const issues = [], matched = [];
   for (const t of tabs) for (const r of t.rows) {
     const m = match(W, r);
-    if (m.worker) { r.worker = m.worker; matched.push(r); } else if (r.sent >= hr.FROM && r.sent < today) issues.push({ t, r, reason: m.reason });
+    if (m.worker && (!only || only.has(m.worker.id))) { r.worker = m.worker; matched.push(r); }
+    else if (!m.worker && !only && r.sent >= hr.FROM && r.sent < today) issues.push({ t, r, reason: m.reason });
   }
   // свіжі дані з HRappka для тих, кого давно не перевіряли (щоденна перевірка бере лише непідписаних)
   const fillRows = matched.filter((r) => r.sent >= hr.FROM);
@@ -227,7 +230,7 @@ async function sync({ dry = false, refresh = !dry } = {}) {
       await sh.spreadsheets.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { requests: requests.slice(i, i + 500) } });
     }
   }
-  if (!dry) {
+  if (!dry && !only) {
     const client = await db.pool.connect();
     try {
       await client.query("BEGIN");

@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SAS Logistic — Zamówienia</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <style>
+    /* ── tylko dla Zamówienia · Rekrutacja ── */
+    .fl-view { display: none; }
+    .fl-view.active { display: block; }
+    .nav-sec { padding: 10px 10px 4px; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--text3); font-family: var(--mono); user-select: none; }
+    .nav-badge { margin-left: auto; background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; border-radius: 9px; padding: 1px 7px; font-family: var(--mono); }
+    .nav-badge:empty { display: none; }
+    .card2 { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 22px; margin-bottom: 16px; }
+    .lbl { font-size: 12px; font-weight: 600; color: var(--text2); margin-bottom: 8px; display: block; }
+    .hint { font-size: 12px; color: var(--text3); }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .stepper { display: flex; align-items: center; gap: 12px; }
+    .stepper button { width: 46px; height: 46px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 22px; cursor: pointer; }
+    .stepper .val { min-width: 64px; text-align: center; font-size: 32px; font-weight: 700; font-family: var(--mono); }
+    .mini-step { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; }
+    .mini-step .t { font-size: 12px; color: var(--text2); margin-bottom: 6px; }
+    .mini-step .stepper button { width: 34px; height: 34px; font-size: 17px; border-radius: 9px; }
+    .mini-step .stepper .val { min-width: 30px; font-size: 22px; }
+    .mini-step .pct { margin-left: auto; font-size: 12px; color: var(--text3); }
+    .chip { height: 38px; padding: 0 16px; border-radius: 19px; border: 1px solid var(--border); background: transparent; color: var(--text2); font-size: 13px; cursor: pointer; font-family: inherit; }
+    .chip.on { border-color: var(--accent); background: rgba(59,130,246,.16); color: var(--text); font-weight: 600; }
+    .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .formbox { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-radius: 10px; background: rgba(59,130,246,.08); border: 1px solid rgba(59,130,246,.35); }
+    .inp { background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-size: 13px; padding: 8px 10px; border-radius: 8px; outline: none; font-family: inherit; color-scheme: dark; }
+    textarea.inp { width: 100%; box-sizing: border-box; resize: vertical; min-height: 70px; }
+    .ok { color: var(--green); } .bad { color: var(--red); } .warn { color: var(--accent2); } .dim { color: var(--text3); }
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+    .kpi .l { font-size: 12px; color: var(--text2); } .kpi .v { font-size: 24px; font-weight: 700; margin-top: 3px; } .kpi .s { font-size: 11px; color: var(--text3); }
+    table.ord { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.ord th { text-align: left; padding: 9px 10px; font-size: 10px; letter-spacing: .6px; color: var(--text3); border-bottom: 1px solid var(--border); font-family: var(--mono); text-transform: uppercase; white-space: nowrap; }
+    table.ord td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    table.ord tbody tr { cursor: pointer; } table.ord tbody tr:hover td { background: var(--surface2); }
+    table.ord tr.hot td { background: rgba(239,68,68,.05); }
+    .mono { font-family: var(--mono); }
+    .sub { font-size: 11px; color: var(--text3); margin-top: 2px; }
+    .tag { display: inline-block; font-size: 11px; padding: 2px 9px; border-radius: 10px; border: 1px solid var(--border); color: var(--text2); white-space: nowrap; }
+    .tag.red { color: #fca5a5; border-color: rgba(239,68,68,.45); background: rgba(239,68,68,.12); font-weight: 600; }
+    .tag.amber { color: #fcd34d; border-color: rgba(245,158,11,.45); background: rgba(245,158,11,.12); font-weight: 600; }
+    .tag.green { color: #86efac; border-color: rgba(34,197,94,.45); background: rgba(34,197,94,.12); }
+    .tag.blue { color: #a9c8ff; border-color: rgba(59,130,246,.45); background: rgba(59,130,246,.12); }
+    .tblwrap { overflow-x: auto; }
+    .empty, .loading { color: var(--text3); padding: 18px; font-size: 13px; }
+    .pend { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; }
+    .pend .facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+    .pend .fact { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; }
+    .pend .fact .l { font-size: 11px; color: var(--text3); } .pend .fact .v { font-size: 15px; font-weight: 600; margin-top: 2px; }
+    .btn-ok { background: #22c55e; color: #052e16; border: 0; font-weight: 700; }
+    .btn-no { color: #fca5a5; border-color: rgba(239,68,68,.45) !important; }
+    .drawer-bg { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 50; display: none; } .drawer-bg.open { display: block; }
+    .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(620px, 100%); background: var(--surface); border-left: 1px solid var(--border); z-index: 51; overflow-y: auto; transform: translateX(100%); transition: transform .2s; }
+    .drawer.open { transform: none; }
+    .dw-head { position: sticky; top: 0; background: var(--surface); border-bottom: 1px solid var(--border); padding: 14px 18px; display: flex; gap: 12px; align-items: flex-start; z-index: 2; }
+    .dw-head h2 { font-size: 15px; margin: 0; } .dw-close { margin-left: auto; background: var(--surface2); border: 1px solid var(--border); color: var(--text2); border-radius: 6px; width: 30px; height: 30px; cursor: pointer; }
+    .dw-body { padding: 14px 18px; display: flex; flex-direction: column; gap: 12px; }
+    .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: #1e293b; border: 1px solid #334155; color: #e2e8f0; padding: 10px 16px; border-radius: 10px; font-size: 13px; z-index: 99; }
+    .toast.bad { border-color: rgba(239,68,68,.6); }
+    @media (max-width: 800px) { .grid3, .pend .facts { grid-template-columns: 1fr 1fr; } .content { padding: 12px; } }
+  </style>
+  <link rel="stylesheet" href="/css/mobile.css" />
+</head>
+<body>
+  <div class="sidebar">
+    <button class="sidebar-toggle" onclick="toggleSidebar()" title="Ukryj / Przypnij menu">◀</button>
+    <div class="logo"><div class="logo-tag">SAS LOGISTIC</div><div class="logo-name">Rekrutacja</div></div>
+    <div class="nav">
+      <div class="nav-item" onclick="location.href='index.html'">⬅️ Panel główny</div>
+      <div class="nav-sec">🎯 Zamówienia</div>
+      <div class="nav-item active" data-view="new" onclick="showView('new')">＋ Nowe zamówienie</div>
+      <div class="nav-item" data-view="pending" onclick="showView('pending')">✅ Do zatwierdzenia <span class="nav-badge" id="badgePending"></span></div>
+      <div class="nav-item" data-view="board" onclick="showView('board')">📋 Tablica rekrutacji</div>
+      <div class="nav-item" data-view="settings" onclick="showView('settings')">⚙️ Ustawienia</div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-title" id="topTitle">Nowe zamówienie</div>
+      <div class="topbar-right"><span id="userName" style="font-size: 12px; color: var(--text2)"></span></div>
+    </div>
+    <div class="content">
+      <div id="noAccess" class="card2" style="display:none"><span class="bad">Brak dostępu. Sekcja na razie tylko dla administratora.</span></div>
+
+      <!-- ── Nowe zamówienie ── -->
+      <div class="fl-view active" id="view-new">
+        <div class="card2" style="max-width: 760px">
+          <div class="row" style="margin-bottom: 18px">
+            <h2 style="margin: 0; font-size: 18px">Nowe zamówienie</h2>
+            <span class="hint">3 pola obowiązkowe · reszta opcjonalnie</span>
+          </div>
+
+          <div style="margin-bottom: 18px">
+            <label class="lbl" for="fFac">1 · Obiekt</label>
+            <select id="fFac" class="inp" style="width: 100%; height: 42px; font-size: 14px" onchange="calcForm()"></select>
+          </div>
+
+          <div style="margin-bottom: 18px">
+            <span class="lbl">2 · Ile osób</span>
+            <div class="row" style="gap: 16px">
+              <div class="stepper">
+                <button type="button" aria-label="Mniej" onclick="step('qty',-1)">−</button>
+                <div class="val" id="vQty">10</div>
+                <button type="button" aria-label="Więcej" onclick="step('qty',1)">+</button>
+              </div>
+              <button type="button" class="chip" id="mAny" onclick="setMode(true)">Bez różnicy</button>
+              <button type="button" class="chip on" id="mMix" onclick="setMode(false)">Podaj skład</button>
+            </div>
+            <div id="mixBox" style="margin-top: 12px">
+              <div class="grid3">
+                <div class="mini-step"><div class="t">Mężczyźni</div><div class="stepper"><button type="button" aria-label="Mniej mężczyzn" onclick="step('men',-1)">−</button><div class="val" id="vMen">0</div><button type="button" aria-label="Więcej mężczyzn" onclick="step('men',1)">+</button><span class="pct" id="pMen"></span></div></div>
+                <div class="mini-step"><div class="t">Kobiety</div><div class="stepper"><button type="button" aria-label="Mniej kobiet" onclick="step('women',-1)">−</button><div class="val" id="vWomen">0</div><button type="button" aria-label="Więcej kobiet" onclick="step('women',1)">+</button><span class="pct" id="pWomen"></span></div></div>
+                <div class="mini-step"><div class="t">Pary (M + K)</div><div class="stepper"><button type="button" aria-label="Mniej par" onclick="step('pairs',-1)">−</button><div class="val" id="vPairs">0</div><button type="button" aria-label="Więcej par" onclick="step('pairs',1)">+</button><span class="pct" id="pPairs"></span></div></div>
+              </div>
+              <div id="splitMsg" class="hint" style="margin-top: 8px"></div>
+            </div>
+          </div>
+
+          <div style="margin-bottom: 18px">
+            <span class="lbl">3 · Data BHP u klienta</span>
+            <div class="row" id="dateChips"></div>
+            <div class="row" style="margin-top: 8px"><label class="hint" for="fBhp">lub data:</label><input type="date" id="fBhp" class="inp" onchange="pickDate(this.value)"></div>
+            <div class="formbox" style="margin-top: 12px">
+              <span aria-hidden="true">🗓️</span>
+              <div><div style="font-size: 14px">Nasze oformienie: <b id="vForm" style="color:#a9c8ff">—</b></div>
+                <div class="hint" id="vFormHint">liczy się samo z ustawienia obiektu · termin dla rekrutacji</div></div>
+            </div>
+          </div>
+
+          <details style="border-top: 1px solid var(--border); padding-top: 14px; margin-bottom: 16px">
+            <summary style="cursor: pointer; font-size: 13px; color: var(--text2)">Więcej (opcjonalnie): stanowisko, wymagania, treść maila</summary>
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 12px">
+              <div><label class="lbl" for="fPos">Stanowisko</label><input id="fPos" class="inp" list="posList" maxlength="120" placeholder="np. magazynier" style="width: 100%; box-sizing: border-box"><datalist id="posList"></datalist></div>
+              <div><label class="lbl" for="fReq">Wymagania</label><input id="fReq" class="inp" maxlength="500" placeholder="np. UDT, student, język polski" style="width: 100%; box-sizing: border-box"></div>
+              <div><label class="lbl" for="fMail">Treść maila od klienta</label><textarea id="fMail" class="inp" maxlength="5000" placeholder="Wklej treść maila — zostanie przy zamówieniu"></textarea></div>
+              <div class="hint">Miejsca w mieszkaniu (M / K) — wkrótce</div>
+            </div>
+          </details>
+
+          <div class="row" style="border-top: 1px solid var(--border); padding-top: 14px">
+            <span class="hint" style="flex: 1">Trafi do głównego rekrutera do zatwierdzenia. Po zatwierdzeniu koordynator dostanie wiadomość w bocie.</span>
+            <span id="saveMsg" style="font-size: 12px"></span>
+            <button type="button" class="btn btn-primary" id="btnSave" style="height: 42px; padding: 0 20px; font-size: 14px" onclick="saveOrder()">Zapisz zamówienie</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Do zatwierdzenia ── -->
+      <div class="fl-view" id="view-pending"><div id="pendingBox"><div class="loading">Ładowanie…</div></div></div>
+
+      <!-- ── Tablica ── -->
+      <div class="fl-view" id="view-board">
+        <div class="row" style="margin-bottom: 12px">
+          <button type="button" class="chip on" data-b="active" onclick="setBoard('active')">Aktywne</button>
+          <button type="button" class="chip" data-b="done" onclick="setBoard('done')">Zakończone</button>
+          <span class="hint" style="margin-left: auto">posortowane według naszego oformienia — to jest termin</span>
+        </div>
+        <div class="kpis" id="boardKpis"></div>
+        <div class="card2" style="padding: 0"><div class="tblwrap" id="boardTable"><div class="loading">Ładowanie…</div></div></div>
+        <div class="hint" style="line-height: 1.6">«Jest» liczy się samo: nowi z BHP na tym obiekcie od oformienia − 3 dni do BHP + 3 dni (bez rezygnacji); płeć — z numeru PESEL.
+          Termin: czerwony — do oformienia ≤ 2 dni i są braki, pomarańczowy — ≤ 5 dni. Plan naboru na tydzień — na razie wpisywany jak dotąd, równolegle.</div>
+      </div>
+
+      <!-- ── Ustawienia ── -->
+      <div class="fl-view" id="view-settings">
+        <div class="card2" style="max-width: 760px">
+          <h2 style="margin: 0 0 6px; font-size: 16px">Nasze oformienie — ile dni roboczych przed BHP klienta</h2>
+          <div class="hint" style="margin-bottom: 12px">Sobota i niedziela się nie liczą. Zmiana dotyczy nowych zamówień. Zapis od razu po zmianie.</div>
+          <input class="inp" id="setQ" placeholder="Szukaj obiektu…" oninput="drawSettings()" style="width: 280px; margin-bottom: 10px">
+          <div class="tblwrap" id="setTable"><div class="loading">Ładowanie…</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="drawer-bg" id="drawerBg" onclick="closeDrawer()"></div>
+  <div class="drawer" id="drawer" aria-hidden="true"></div>
+
+  <script src="js/zamowienia.js"></script>
+  <script>
+  function toggleSidebar() {
+    const hidden = document.body.classList.toggle('sidebar-hidden');
+    const btn = document.querySelector('.sidebar-toggle');
+    if (btn) { btn.textContent = hidden ? '▶' : '◀'; btn.title = hidden ? 'Przypnij menu' : 'Ukryj / Przypnij menu'; }
+    try { localStorage.setItem('sas_sidebar_hidden', hidden ? '1' : '0'); } catch (e) {}
+  }
+  if ((function () { try { return localStorage.getItem('sas_sidebar_hidden') === '1'; } catch (e) { return false; } })() || window.innerWidth < 800) {
+    document.body.classList.add('sidebar-hidden');
+    const btn = document.querySelector('.sidebar-toggle');
+    if (btn) { btn.textContent = '▶'; btn.title = 'Przypnij menu'; }
+  }
+  </script>
+</body>
+</html>

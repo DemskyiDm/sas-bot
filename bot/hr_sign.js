@@ -3,7 +3,7 @@
 // у таблиці EMPLOYEE_ATTACHMENT_FULL поле eSignature: SEND — надіслано, не підписано; SIGN — підписано.
 // Усієї бази HRappka (170 тис. вкладень) не тягнемо: питаємо лише за паспортами потрібних людей (фільтр на боці HRappka).
 //   • щодня о 6:00 (Варшава) — працівники з BHP від HR_SIGN_FROM (15.10.2026), які ще не підписали все;
-//     рахуються документи, надіслані ±10 днів від BHP (старі періоди — ні), повторний пакет — лише останній;
+//     рахуються документи, надіслані від 5 днів до BHP до 10 днів після (старі періоди — ні), повторний пакет — лише останній;
 //   • о 7:00 — звіт «хто не підписав» листом з Excel на HR_SIGN_REPORT_TO (.env, через кому);
 //   • о 10:00 — нагадування працівнику в боті «перевірте посилання в e-mail» (раз на пакет, наступного дня);
 //   • з панелі — «Sprawdź podpisy» для вибраних / обʼєкта (не частіше ніж раз на хвилину на людину).
@@ -186,7 +186,7 @@ async function check(ids) {
   w.rows.forEach((x) => { const p = normPass(x.login); if (p) byPass.set(p, x.id); });
   const passes = [...byPass.keys()];
   let docs = 0, surveys = 0, signedNow = 0;
-  const m = await db.query(`SELECT to_char(min(bhp_date) - $2::int, 'YYYY-MM-DD') AS d FROM v_worker_current WHERE id = ANY($1::int[])`, [ids, WINDOW_DAYS]);
+  const m = await db.query(`SELECT to_char(min(bhp_date) - $2::int, 'YYYY-MM-DD') AS d FROM v_worker_current WHERE id = ANY($1::int[])`, [ids, WINDOW_BEFORE]);
   const since = m.rows[0].d || FROM;
   let cache = null;
   const answers = () => (cache = cache || fetchAnswers(since));
@@ -270,10 +270,10 @@ async function manual(ids) {
 
 // ── Зведення для панелі / бота ────────────────────────────────────────
 // { worker_id: { total, signed, found, checked_at, error, docs: [{ label, status, created }] } }
-// Рахуються лише документи, надіслані в межах ±WINDOW_DAYS від BHP поточного періоду (старі — з минулих періодів роботи —
+// Рахуються лише документи, надіслані від WINDOW_BEFORE днів до BHP поточного періоду до WINDOW_AFTER днів після (старі — з минулих періодів роботи —
 // ігноруються); той самий документ надіслано двічі (повторний пакет) — береться останній.
 // found — у HRappka є документи на підпис саме для цього періоду.
-const WINDOW_DAYS = 10;
+const WINDOW_BEFORE = 5, WINDOW_AFTER = 10;   // днів до / після BHP
 async function summary(ids) {
   if (!ids.length) return {};
   const [d, k] = await Promise.all([
@@ -283,8 +283,8 @@ async function summary(ids) {
                 JOIN v_worker_current v ON v.id = d.worker_id
                WHERE d.worker_id = ANY($1::int[])
                  AND v.bhp_date IS NOT NULL
-                 AND d.hr_created_at::date BETWEEN v.bhp_date - $2::int AND v.bhp_date + $2::int
-               ORDER BY d.hr_created_at, d.hr_doc_id`, [ids, WINDOW_DAYS]),
+                 AND d.hr_created_at::date BETWEEN v.bhp_date - $2::int AND v.bhp_date + $3::int
+               ORDER BY d.hr_created_at, d.hr_doc_id`, [ids, WINDOW_BEFORE, WINDOW_AFTER]),
     db.query(`SELECT worker_id, checked_at, found, error FROM hrs.checks WHERE worker_id = ANY($1::int[])`, [ids]),
   ]);
   // анкети — те саме вікно; без таблиці hrs.surveys (міграцію ще не перезапустили) — без анкет
@@ -292,8 +292,8 @@ async function summary(ids) {
     `SELECT s.worker_id, s.name, s.state, to_char(s.hr_created_at, 'YYYY-MM-DD') AS created
        FROM hrs.surveys s JOIN v_worker_current v ON v.id = s.worker_id
       WHERE s.worker_id = ANY($1::int[]) AND v.bhp_date IS NOT NULL
-        AND s.hr_created_at::date BETWEEN v.bhp_date - $2::int AND v.bhp_date + $2::int
-      ORDER BY s.hr_created_at, s.hr_answer_id`, [ids, WINDOW_DAYS]).catch(() => ({ rows: [] }));
+        AND s.hr_created_at::date BETWEEN v.bhp_date - $2::int AND v.bhp_date + $3::int
+      ORDER BY s.hr_created_at, s.hr_answer_id`, [ids, WINDOW_BEFORE, WINDOW_AFTER]).catch(() => ({ rows: [] }));
   const out = {};
   k.rows.forEach((x) => { out[x.worker_id] = { total: 0, signed: 0, found: false, checked_at: x.checked_at, error: x.error, docs: [] }; });
   // worker → назва → останній (рядки впорядковані за датою — пізніший перезаписує); kind: survey (анкета) | doc
@@ -361,7 +361,7 @@ ${rows.map((x) => `<tr>${td(escH(x.region || "—"))}${td(escH(x.coordinator || 
   const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#1f2937">
 <p>Dzień dobry,</p>
 <p>${rows.length ? `pracownicy z BHP od ${dmyIso(FROM)}, którzy <b>nie podpisali dokumentów lub nie wypełnili ankiet</b> w HRappka: <b>${rows.length} os.</b>
-Liczą się dokumenty i ankiety wysłane ±${WINDOW_DAYS} dni od BHP; przy powtórnej wysyłce — ostatnia. Ta sama lista jest w załączniku (Excel).` : `wszyscy pracownicy z BHP od ${dmyIso(FROM)} podpisali dokumenty i wypełnili ankiety w HRappka.`}</p>
+Liczą się dokumenty i ankiety wysłane od ${WINDOW_BEFORE} dni przed BHP do ${WINDOW_AFTER} dni po; przy powtórnej wysyłce — ostatnia. Ta sama lista jest w załączniku (Excel).` : `wszyscy pracownicy z BHP od ${dmyIso(FROM)} podpisali dokumenty i wypełnili ankiety w HRappka.`}</p>
 ${table}
 <p style="color:#8a94a6;font-size:12px">KoorPanel · stan po sprawdzeniu o 6:00 · ${dmyIso(today)}</p></div>`;
   const att = rows.length ? [{
@@ -454,5 +454,5 @@ function schedule(bot) {
   }, { timezone: "Europe/Warsaw" });
 }
 
-module.exports = { check, daily, manual, summary, report, reportRows, reminders, remind, schedule, docLabel, FROM, COOLDOWN_S, WINDOW_DAYS,
+module.exports = { check, daily, manual, summary, report, reportRows, reminders, remind, schedule, docLabel, FROM, COOLDOWN_S, WINDOW_BEFORE, WINDOW_AFTER,
   _test: { setBot: (b) => { BOT = b; } } };

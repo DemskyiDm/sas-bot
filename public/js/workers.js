@@ -37,7 +37,7 @@ function hrsCell(w) {
   return `<span class="badge ${cls}" style="cursor:pointer" onclick="hrsShow(${w.id})"
     onmouseenter="hrsHover(this, ${w.id})" onmouseleave="hrsHoverOut()">${s.signed >= s.total ? "✓" : "✗"} ${s.signed}/${s.total}</span>`;
 }
-// Lista dokumentów: niepodpisane — na czerwono, na górze (±10 dni od BHP, przy powtórnej wysyłce — ostatnia)
+// Lista dokumentów: niepodpisane — na czerwono, na górze (od 5 dni przed BHP do 10 dni po, przy powtórnej wysyłce — ostatnia)
 function hrsListHtml(w, s) {
   const when = s.checked_at ? new Date(s.checked_at).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
   // najpierw ankiety, potem (pod kreską) dokumenty; w każdej grupie niepodpisane / niewypełnione na górze
@@ -50,7 +50,7 @@ function hrsListHtml(w, s) {
   const head = (t) => `<div style="font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);margin-top:2px">${t}</div>`;
   return `
     <div style="font-size:13px;font-weight:600;margin-bottom:2px">📄 ${escStan(w.full_name)} · gotowe ${s.signed} z ${s.total}</div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">BHP ${w.bhp_date ? new Date(w.bhp_date).toLocaleDateString("pl") : "—"} · sprawdzono ${when} · wysłane ±10 dni od BHP</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">BHP ${w.bhp_date ? new Date(w.bhp_date).toLocaleDateString("pl") : "—"} · sprawdzono ${when} · wysłane od 5 dni przed BHP do 10 po</div>
     <div style="display:flex;flex-direction:column;gap:4px;max-height:50vh;overflow-y:auto">
       ${surveys.length ? head(`Ankiety · wypełniono ${surveys.filter((d) => d.status === "SIGN").length} z ${surveys.length}`) + surveys.map(row).join("") : ""}
       ${surveys.length && docs.length ? `<div style="border-top:1px solid var(--border);margin:6px 0 2px"></div>` : ""}

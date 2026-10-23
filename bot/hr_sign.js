@@ -292,10 +292,14 @@ async function manual(ids) {
 
 // ── Зведення для панелі / бота ────────────────────────────────────────
 // { worker_id: { total, signed, found, checked_at, error, docs: [{ label, status, created }] } }
-// Рахуються лише документи, надіслані від WINDOW_BEFORE днів до BHP поточного періоду до WINDOW_AFTER днів після (старі — з минулих періодів роботи —
-// ігноруються); той самий документ надіслано двічі (повторний пакет) — береться останній.
+// Рахуються лише документи, надіслані від WINDOW_BEFORE днів до BHP поточного періоду до WINDOW_AFTER днів після; документи
+// попереднього періоду (надіслані до його BHP включно) — ні (WIN_FROM): при переведенні періоди бувають за кілька днів один від одного;
+// той самий документ двічі (повторний пакет) — останній.
 // found — у HRappka є документи на підпис саме для цього періоду.
-const WINDOW_BEFORE = 5, WINDOW_AFTER = 10;   // днів до / після BHP
+const WINDOW_BEFORE = 10, WINDOW_AFTER = 10;   // днів до / після BHP
+// Початок вікна для v (v_worker_current): BHP − $2, але лише після BHP попереднього періоду
+const WIN_FROM = `GREATEST(v.bhp_date - $2::int, COALESCE((SELECT max(h.bhp_date) FROM worker_facility_history h
+                    WHERE h.worker_id = v.id AND h.bhp_date < v.bhp_date) + 1, v.bhp_date - $2::int))`;
 async function summary(ids) {
   if (!ids.length) return {};
   const [d, k] = await Promise.all([
@@ -305,7 +309,7 @@ async function summary(ids) {
                 JOIN v_worker_current v ON v.id = d.worker_id
                WHERE d.worker_id = ANY($1::int[])
                  AND v.bhp_date IS NOT NULL
-                 AND d.hr_created_at::date BETWEEN v.bhp_date - $2::int AND v.bhp_date + $3::int
+                 AND d.hr_created_at::date BETWEEN ${WIN_FROM} AND v.bhp_date + $3::int
                ORDER BY d.hr_created_at, d.hr_doc_id`, [ids, WINDOW_BEFORE, WINDOW_AFTER]),
     db.query(`SELECT worker_id, checked_at, found, error FROM hrs.checks WHERE worker_id = ANY($1::int[])`, [ids]),
   ]);
@@ -314,7 +318,7 @@ async function summary(ids) {
     `SELECT s.worker_id, s.name, s.state, to_char(s.hr_created_at, 'YYYY-MM-DD') AS created
        FROM hrs.surveys s JOIN v_worker_current v ON v.id = s.worker_id
       WHERE s.worker_id = ANY($1::int[]) AND v.bhp_date IS NOT NULL
-        AND s.hr_created_at::date BETWEEN v.bhp_date - $2::int AND v.bhp_date + $3::int
+        AND s.hr_created_at::date BETWEEN ${WIN_FROM} AND v.bhp_date + $3::int
       ORDER BY s.hr_created_at, s.hr_answer_id`, [ids, WINDOW_BEFORE, WINDOW_AFTER]).catch(() => ({ rows: [] }));
   const out = {};
   k.rows.forEach((x) => { out[x.worker_id] = { total: 0, signed: 0, found: false, checked_at: x.checked_at, error: x.error, docs: [] }; });
@@ -391,7 +395,7 @@ ${lost.map((x) => `<tr>${td(escH(x.sheet))}${td(x.row_no)}${td(escH(x.full_name)
   const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#1f2937">
 <p>Dzień dobry,</p>
 <p>${rows.length ? `pracownicy z BHP od ${dmyIso(FROM)}, którzy <b>nie podpisali dokumentów lub nie wypełnili ankiet</b> w HRappka: <b>${rows.length} os.</b>
-Liczą się dokumenty i ankiety wysłane od ${WINDOW_BEFORE} dni przed BHP do ${WINDOW_AFTER} dni po; przy powtórnej wysyłce — ostatnia. Ta sama lista jest w załączniku (Excel).` : `wszyscy pracownicy z BHP od ${dmyIso(FROM)} podpisali dokumenty i wypełnili ankiety w HRappka.`}</p>
+Liczą się dokumenty i ankiety wysłane od ${WINDOW_BEFORE} dni przed BHP do ${WINDOW_AFTER} dni po (bez dokumentów poprzedniego okresu pracy); przy powtórnej wysyłce — ostatnia. Ta sama lista jest w załączniku (Excel).` : `wszyscy pracownicy z BHP od ${dmyIso(FROM)} podpisali dokumenty i wypełnili ankiety w HRappka.`}</p>
 ${table}
 ${lostTable}
 <p style="color:#8a94a6;font-size:12px">KoorPanel · stan po sprawdzeniu o 6:00 · ${dmyIso(today)}</p></div>`;

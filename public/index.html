@@ -60,6 +60,7 @@
         <div class="nav-gh" onclick="toggleNavGroup('recruit')"><span>Rekrutacja</span><span class="n"></span><span class="chev">▾</span></div>
         <div class="nav-gb">
           <div id="wysylkaLink" class="nav-item" onclick="location.href='wysylka.html'" style="display: none">📣 Wysyłka wiadomości</div>
+          <div id="zamowieniaLink" class="nav-item" onclick="location.href='zamowienia.html'" style="display: none">🎯 Zamówienia</div>
         </div>
       </div>
       <div class="nav-group" data-g="reports">
@@ -1230,6 +1231,11 @@ fetch('/api/tg/office/med-access', { headers: { 'x-session': localStorage.getIte
     if (d && d.access) document.getElementById('medicalLink').style.display = '';
     if (d && d.manage) document.getElementById('medSetLink').style.display = '';
   })
+  .catch(function () {});
+// «Zamówienia» (Rekrutacja) — na razie tylko admin (/api/rec/me)
+fetch('/api/rec/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (d) { if (d && d.has_access) document.getElementById('zamowieniaLink').style.display = ''; })
   .catch(function () {});
 fetch('/api/broadcast/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
   .then(function (r) { return r.ok ? r.json() : null; })

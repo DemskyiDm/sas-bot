@@ -37,15 +37,29 @@ function workdaysBefore(iso, n) {
   return d.toISOString().slice(0, 10);
 }
 
-// ── Доступ: поки що лише адмін (потім — ролі «rekrutacja» і «główny rekruter») ──
-function access(c) { return { admin: !!c.is_admin, me: c.coordinator_id }; }
-router.use((req, res, next) => {
-  req.acc = access(req.coordinator);
+// ── Доступ: адмін — усе; регіональний — замовлення закладів своїх регіонів (без підтвердження й налаштувань) ──
+// { admin, lead, me, facilityIds: null (усі) | [id…] }
+async function access(c) {
+  const me = c.coordinator_id;
+  if (c.is_admin) return { admin: true, lead: false, me, facilityIds: null };
+  const f = await db.query(
+    `SELECT f.id FROM facilities f
+       JOIN reg.site_owner so ON so.site_key = reg.site_key(f.group_name, f.name) AND so.valid_to IS NULL
+       JOIN reg.region_leads rl ON rl.region_id = so.region_id AND rl.coordinator_id = $1
+       JOIN reg.regions rg ON rg.id = rl.region_id AND rg.is_active`, [me]).catch(() => ({ rows: [] }));
+  const lead = f.rows.length > 0;
+  return { admin: false, lead, me, facilityIds: lead ? f.rows.map((x) => Number(x.id)) : [] };
+}
+const ADMIN_ONLY = /^\/(settings|orders\/\d+\/(approve|reject|question))$/;
+router.use(async (req, res, next) => {
+  try { req.acc = await access(req.coordinator); } catch (e) { return fail(res, e); }
   if (req.path === "/me") return next();
-  if (!req.acc.admin) return res.status(403).json({ ok: false, error: "Brak dostępu" });
+  if (!req.acc.admin && !req.acc.lead) return res.status(403).json({ ok: false, error: "Brak dostępu" });
+  if (!req.acc.admin && ADMIN_ONLY.test(req.path)) return res.status(403).json({ ok: false, error: "Tylko dla administratora" });
   next();
 });
-router.get("/me", (req, res) => res.json({ ok: true, has_access: req.acc.admin }));
+const mine = (acc, facilityId) => acc.facilityIds === null || acc.facilityIds.includes(Number(facilityId));
+router.get("/me", (req, res) => res.json({ ok: true, has_access: req.acc.admin || req.acc.lead, role: req.acc.admin ? "admin" : req.acc.lead ? "lead" : "none" }));
 
 async function log(orderId, by, action, details) {
   await db.query(`INSERT INTO rec.order_log (order_id, by_id, action, details) VALUES ($1, $2, $3, $4)`, [orderId, by, action, details || null]);
@@ -64,7 +78,8 @@ router.get("/options", async (req, res) => {
            LEFT JOIN coordinators co ON co.id = so.coordinator_id
           WHERE COALESCE(f.is_active, true)
             AND EXISTS (SELECT 1 FROM v_worker_current v WHERE v.facility_id = f.id)
-          ORDER BY f.name`),
+            AND ($1::int[] IS NULL OR f.id = ANY($1::int[]))
+          ORDER BY f.name`, [req.acc.facilityIds]),
       db.query(`SELECT position, count(*)::int n FROM rec.orders WHERE position IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT 8`),
     ]);
     const today = todayIso();
@@ -111,7 +126,7 @@ router.post("/orders", async (req, res) => {
     const facilityId = int(b.facility_id, 1, 1e9);
     const f = await db.query(`SELECT f.id, COALESCE(rf.form_days, 1) AS n FROM facilities f LEFT JOIN rec.facility rf ON rf.facility_id = f.id
                                WHERE f.id = $1 AND COALESCE(f.is_active, true)`, [facilityId]);
-    if (!f.rows.length) throw bad("Wybierz obiekt");
+    if (!f.rows.length || !mine(req.acc, facilityId)) throw bad("Wybierz obiekt");
     const v = orderInput(b, todayIso());
     const form = v.form || workdaysBefore(v.bhp, f.rows[0].n);
     if (form > v.bhp) throw bad("Oformienie nie może być po BHP");
@@ -135,6 +150,7 @@ const LIST_SQL = `
       LEFT JOIN coordinators co ON co.id = so.coordinator_id
       LEFT JOIN coordinators cb ON cb.id = o.created_by
      WHERE ($1::text[] IS NULL OR o.status = ANY($1::text[])) AND ($2::bigint IS NULL OR o.id = $2)
+       AND ($3::int[] IS NULL OR o.facility_id = ANY($3::int[]))
   )
   SELECT o.*, to_char(o.bhp_date, 'YYYY-MM-DD') AS bhp, to_char(o.form_date, 'YYYY-MM-DD') AS form,
          (o.form_date - CURRENT_DATE) AS days_left,
@@ -171,13 +187,13 @@ const VIEWS = { active: ["new", "approved"], pending: ["new"], done: ["done", "r
 router.get("/orders", async (req, res) => {
   try {
     const st = Object.prototype.hasOwnProperty.call(VIEWS, req.query.view) ? VIEWS[req.query.view] : VIEWS.active;
-    const r = await db.query(LIST_SQL, [st, null]);
+    const r = await db.query(LIST_SQL, [st, null, req.acc.facilityIds]);
     res.json({ ok: true, today: todayIso(), rows: r.rows.map(shape) });
   } catch (e) { fail(res, e); }
 });
 router.get("/orders/:id", async (req, res) => {
   try {
-    const r = await db.query(LIST_SQL, [null, int(req.params.id, 1, 1e12)]);
+    const r = await db.query(LIST_SQL, [null, int(req.params.id, 1, 1e12), req.acc.facilityIds]);
     if (!r.rows.length) return res.status(404).json({ ok: false, error: "Nie ma takiego zamówienia" });
     const l = await db.query(
       `SELECT l.at, l.action, l.details, c.full_name AS by_name FROM rec.order_log l LEFT JOIN coordinators c ON c.id = l.by_id
@@ -185,16 +201,16 @@ router.get("/orders/:id", async (req, res) => {
     res.json({ ok: true, order: shape(r.rows[0]), log: l.rows });
   } catch (e) { fail(res, e); }
 });
-async function getOrder(id) {
+async function getOrder(id, acc) {
   const r = await db.query(`SELECT * FROM rec.orders WHERE id = $1`, [int(id, 1, 1e12)]);
-  if (!r.rows.length) throw Object.assign(new Error("Nie ma takiego zamówienia"), { code: 404 });
+  if (!r.rows.length || !mine(acc, r.rows[0].facility_id)) throw Object.assign(new Error("Nie ma takiego zamówienia"), { code: 404 });
   return r.rows[0];
 }
 
 // Підтвердити → координатору в бот «повідомте клієнта»
 router.post("/orders/:id/approve", async (req, res) => {
   try {
-    const o = await getOrder(req.params.id);
+    const o = await getOrder(req.params.id, req.acc);
     if (o.status !== "new") throw bad("Zamówienie już rozpatrzone");
     await db.query(`UPDATE rec.orders SET status = 'approved', approved_by = $2, approved_at = now(), note = NULL, updated_at = now() WHERE id = $1`, [o.id, req.acc.me]);
     await log(o.id, req.acc.me, "approved");
@@ -204,7 +220,7 @@ router.post("/orders/:id/approve", async (req, res) => {
 });
 router.post("/orders/:id/reject", async (req, res) => {
   try {
-    const o = await getOrder(req.params.id);
+    const o = await getOrder(req.params.id, req.acc);
     const reason = txt((req.body || {}).reason, 500);
     if (!["new", "approved"].includes(o.status)) throw bad("Nie można odrzucić");
     await db.query(`UPDATE rec.orders SET status = 'rejected', note = $2, updated_at = now() WHERE id = $1`, [o.id, reason]);
@@ -214,7 +230,7 @@ router.post("/orders/:id/reject", async (req, res) => {
 });
 router.post("/orders/:id/question", async (req, res) => {
   try {
-    const o = await getOrder(req.params.id);
+    const o = await getOrder(req.params.id, req.acc);
     const q = txt((req.body || {}).text, 500);
     if (!q) throw bad("Wpisz pytanie");
     await db.query(`UPDATE rec.orders SET note = $2, updated_at = now() WHERE id = $1`, [o.id, q]);
@@ -224,7 +240,7 @@ router.post("/orders/:id/question", async (req, res) => {
 });
 router.post("/orders/:id/status", async (req, res) => {
   try {
-    const o = await getOrder(req.params.id);
+    const o = await getOrder(req.params.id, req.acc);
     const to = String((req.body || {}).status || "");
     const allowed = { done: ["approved"], cancelled: ["new", "approved"], approved: ["done"] };   // done → approved = «знову відкрити»
     if (!allowed[to] || !allowed[to].includes(o.status)) throw bad("Nie można zmienić stanu");
@@ -235,7 +251,7 @@ router.post("/orders/:id/status", async (req, res) => {
 });
 router.post("/orders/:id/update", async (req, res) => {
   try {
-    const o = await getOrder(req.params.id);
+    const o = await getOrder(req.params.id, req.acc);
     if (!["new", "approved"].includes(o.status)) throw bad("Zamówienie zamknięte");
     const b = req.body || {};
     const cur = { qty: o.qty, any_gender: o.any_gender, men: o.men, women: o.women, pairs: o.pairs,

@@ -44,6 +44,8 @@ async function init() {
     document.querySelectorAll(".fl-view").forEach((v) => (v.style.display = "none"));
     return;
   }
+  ST.admin = me.role === "admin";   // регіональний: без «Do zatwierdzenia» і «Ustawienia»
+  if (!ST.admin) document.querySelectorAll('.nav-item[data-view="pending"], .nav-item[data-view="settings"]').forEach((el) => (el.style.display = "none"));
   const r = await api("/options");
   if (!r || !r.ok) { toast((r && r.error) || "Błąd", true); return; }
   ST.opt = r;
@@ -55,7 +57,7 @@ async function init() {
   drawDateChips();
   drawForm();
   const h = (location.hash || "").replace("#", "");
-  showView(["new", "pending", "board", "settings"].includes(h) ? h : "new");
+  showView((ST.admin ? ["new", "pending", "board", "settings"] : ["new", "board"]).includes(h) ? h : "new");
   refreshBadge();
 }
 function showView(v) {
@@ -69,6 +71,7 @@ function showView(v) {
   if (v === "settings") loadSettings();
 }
 async function refreshBadge() {
+  if (!ST.admin) return;
   const r = await api("/orders?view=pending");
   document.getElementById("badgePending").textContent = r && r.ok && r.rows.length ? r.rows.length : "";
 }
@@ -292,7 +295,7 @@ async function openOrder(id, editNow) {
       <div class="hint" style="margin-top: 6px">Oformienie przeliczy się samo z nowej daty BHP.</div>
     </div>` : ""}
     <div class="row">
-      ${o.status === "new" ? `<button type="button" class="btn btn-ok btn-sm" style="height: 36px" onclick="approve(${o.id})">✓ Zatwierdź</button>` : ""}
+      ${o.status === "new" && ST.admin ? `<button type="button" class="btn btn-ok btn-sm" style="height: 36px" onclick="approve(${o.id})">✓ Zatwierdź</button>` : ""}
       ${o.status === "approved" ? `<button type="button" class="btn btn-ok btn-sm" style="height: 36px" onclick="setStatus(${o.id}, 'done', 'Oznaczyć jako zrealizowane?')">✓ Zrealizowane</button>` : ""}
       ${o.status === "done" ? `<button type="button" class="btn btn-ghost btn-sm" style="height: 36px" onclick="setStatus(${o.id}, 'approved')">Otwórz ponownie</button>` : ""}
       ${openSt ? `<button type="button" class="btn btn-ghost btn-sm btn-no" style="height: 36px; margin-left: auto" onclick="setStatus(${o.id}, 'cancelled', 'Anulować zamówienie (klient zrezygnował)?')">Anuluj</button>` : ""}

@@ -70,7 +70,9 @@ app.use("/api/flow", flow.router);
 app.use("/api/hours-report", hoursReport.router);
 app.use("/api/ref", require("./api/ref").router);
 app.use("/api/broadcast", broadcast.router);
-app.use("/api/hrsign", require("./api/hr_sign").router);   // підписи документів HRappka (Pracownicy → Dokumenty)
+app.use("/api/hrsign", require("./api/hr_sign").router);
+const rec = require("./api/rec");   // Zamówienia · Rekrutacja (поки лише адмін)
+app.use("/api/rec", rec.router);   // підписи документів HRappka (Pracownicy → Dokumenty)
 app.use("/api", apiRoutes);
 app.use("/api", require("./api/reports"));
 app.use("/admin", adminRoutes);
@@ -479,6 +481,7 @@ medcheck.schedule(bot);
 broadcast.schedule(bot);
 require("./bot/fines").schedule(bot);   // штрафи: повідомлення працівнику
 require("./bot/fines_sheet").schedule();  // штрафи → Google-таблиця: повтор незаписаних
+rec.schedule(bot);                         // замовлення: повідомлення координатору
 require("./bot/hr_sign").schedule(bot);    // підписи HRappka: 6:00 перевірка, 7:00 звіт, 10:00 нагадування працівникам
 
 //new

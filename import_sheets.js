@@ -1384,6 +1384,7 @@ async function recheckUnknowns() {
           AND h.facility_id = u.facility_id
           AND h.id <> u.id
           AND h.status::text <> 'unknown'
+          AND h.bhp_date IS NOT DISTINCT FROM u.bhp_date   -- той самий період; повторний найм (новий BHP) не чіпаємо
       )
     RETURNING u.id
   `);

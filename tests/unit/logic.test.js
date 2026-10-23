@@ -15,7 +15,7 @@ test("hr_sign.docLabel: прибирає імʼя працівника, дату
 });
 
 test("hr_sign: вікно ±10 днів і FROM за замовчуванням", () => {
-  assert.equal(hr.WINDOW_BEFORE, 5);
+  assert.equal(hr.WINDOW_BEFORE, 10);
   assert.equal(hr.WINDOW_AFTER, 10);
   assert.match(hr.FROM, /^\d{4}-\d{2}-\d{2}$/);
 });
@@ -74,4 +74,7 @@ test("docs_sheet: дати клітинок, імена, колонки, зіс�
   assert.equal(ds.match(W, { name: "x", pass: "aa 111" }).worker.id, 1);                                    // паспорт у таблиці
   assert.equal(ds.match(W, { name: "NOWAK ADAM", umowa: "2026-10-20" }).reason, "no_period");               // давній період — не він
   assert.equal(ds.match(W, { name: "KOWAL JAN", umowa: "2026-10-20", fac: "" }).reason, "ambiguous");
+  const multi = p(4, "X Y", "", [{ bhp: "2026-03-01" }, { bhp: "2026-10-01" }, { bhp: "2026-10-22" }]);
+  assert.equal(ds.prevBhp(multi, "2026-10-21"), "2026-10-01");                                            // період перед найближчим до UMOWA OD
+  assert.equal(ds.prevBhp(a, "2026-10-20"), null);
 });

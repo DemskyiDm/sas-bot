@@ -122,9 +122,18 @@ function match(W, r) {
   return c.length === 1 ? { worker: c[0] } : { reason: "ambiguous" };
 }
 
+// BHP періоду перед тим, що найближчий до anchor («UMOWA OD»)
+function prevBhp(worker, anchor) {
+  const ps = worker.periods.map((p) => p.bhp).sort();
+  if (!ps.length) return null;
+  const dist = (b) => Math.abs(Date.parse(b) - Date.parse(anchor));
+  const cur = ps.reduce((a, b) => (dist(b) < dist(a) ? b : a));
+  return ps.filter((b) => b < cur).pop() || null;
+}
+
 // ── Стан працівника в HRappka (з hrs.docs / hrs.surveys) у вікні від anchor ──
 async function states(pairs) {
-  // pairs: [{ wid, anchor }]
+  // pairs: [{ wid, anchor, prevBhp }] — prevBhp: BHP попереднього періоду (документи до нього включно не рахуємо)
   if (!pairs.length) return new Map();
   const ids = [...new Set(pairs.map((p) => p.wid))];
   const [d, s] = await Promise.all([
@@ -134,8 +143,10 @@ async function states(pairs) {
                 FROM hrs.surveys WHERE worker_id = ANY($1::int[]) AND qid = ANY($2::int[]) ORDER BY hr_created_at, hr_answer_id`, [ids, SURVEYS]),
   ]);
   const out = new Map();
-  for (const { wid, anchor } of pairs) {
-    const from = addDays(anchor, -hr.WINDOW_BEFORE), to = addDays(anchor, hr.WINDOW_AFTER);
+  for (const { wid, anchor, prevBhp } of pairs) {
+    let from = addDays(anchor, -hr.WINDOW_BEFORE);
+    const to = addDays(anchor, hr.WINDOW_AFTER);
+    if (prevBhp && addDays(prevBhp, 1) > from) from = addDays(prevBhp, 1);
     const inWin = (x) => x.worker_id === wid && x.created >= from && x.created <= to;
     const docs = d.rows.filter(inWin), surveys = s.rows.filter(inWin);
     const st = {};
@@ -197,7 +208,7 @@ async function sync({ dry = false, refresh = !dry, workerIds = null } = {}) {
       [wids, String(RECHECK_H)])).rows.map((x) => x.x);
     if (stale.length) await hr.check(stale);
   }
-  const st = await states(fillRows.map((r) => ({ wid: r.worker.id, anchor: r.umowa || r.sent })));
+  const st = await states(fillRows.map((r) => ({ wid: r.worker.id, anchor: r.umowa || r.sent, prevBhp: prevBhp(r.worker, r.umowa || r.sent) })));
   // що писати: лише порожні клітинки
   const writes = [];
   const put = (t, r, col, kind, value) => {
@@ -261,4 +272,4 @@ async function issues() {
     .catch(() => ({ rows: [] }))).rows;
 }
 
-module.exports = { sync, issues, SHEET_ID, _test: { cellDate, serial, nameKey, columns, match } };
+module.exports = { sync, issues, SHEET_ID, _test: { cellDate, serial, nameKey, columns, match, prevBhp } };

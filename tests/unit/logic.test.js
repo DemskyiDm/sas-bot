@@ -15,7 +15,8 @@ test("hr_sign.docLabel: прибирає імʼя працівника, дату
 });
 
 test("hr_sign: вікно ±10 днів і FROM за замовчуванням", () => {
-  assert.equal(hr.WINDOW_DAYS, 10);
+  assert.equal(hr.WINDOW_BEFORE, 5);
+  assert.equal(hr.WINDOW_AFTER, 10);
   assert.match(hr.FROM, /^\d{4}-\d{2}-\d{2}$/);
 });
 

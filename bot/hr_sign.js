@@ -102,7 +102,26 @@ async function table(body) {
 // Анкети, які рахуємо: nowe OŚWIADCZENIE (EES), do podpisy OŚWIADCZENIE (EES), ANKIETA DO PRACOWNIKA (LZ), (LZ) udział w programie lojalnościowym
 const SURVEY_IDS = String(process.env.HR_SIGN_SURVEYS || "85586,87232,72966,87549").split(/[,;\s]+/).map(Number).filter(Boolean);
 const ANSWER_PAGE = 500;
-const ANSWER_COLS = ["id", "entity", "state", "fillingDate", "creationTime"].map((id) => ({ id, isLocked: false, width: null }));
+const ANSWER_COLS = ["id", "entity", "state", "fillingDate", "creationTime"];
+// Відповіді, потрібні для таблиці «Dokumenty pocztą» (bot/docs_sheet.js): id питань у HRappka (у різних версіях анкет — різні)
+//   insurance — «Czy jest Pan/Pani zainteresowany/a objęciem prywatnym ubezpieczeniem zdrowotnym?» → TAK / NIE
+//   loyalty   — «Czy wyraża Pan/Pani zgodę na udział w programie lojalnościowym?» → ZGODA / NIE
+const SURVEY_ITEMS = {
+  72966: { insurance: [832650] },
+  87549: { insurance: [832727], loyalty: [832728, 824752] },
+};
+function surveyAnswers(qid, r) {
+  const items = SURVEY_ITEMS[qid];
+  if (!items) return null;
+  const pick = (ids) => ids.map((id) => r["questionnaireItemAnswer_" + id]).find((v) => typeof v === "string" && v.trim()) || "";
+  const out = {};
+  const ins = pick(items.insurance || []).trim().toUpperCase();
+  if (ins === "TAK" || ins === "NIE") out.insurance = ins;
+  const loy = pick(items.loyalty || []);
+  if (/nie\s+wyra/i.test(loy)) out.loyalty = "NIE";
+  else if (/wyra/i.test(loy)) out.loyalty = "ZGODA";
+  return Object.keys(out).length ? out : null;
+}
 // Відповіді вибраних анкет, створені від since (YYYY-MM-DD): усі працівники разом, від найновіших → Map(id працівника HRappka → [відповіді])
 async function fetchAnswers(since) {
   const names = new Map((await table({
@@ -114,7 +133,8 @@ async function fetchAnswers(since) {
   await Promise.all(SURVEY_IDS.map(async (qid) => {   // анкети — паралельно (HRappka ~4 с на запит)
     for (let offset = 0; ; offset += ANSWER_PAGE) {
       const rows = await table({
-        id: "QUESTIONNAIRE_ANSWER", offset, limit: ANSWER_PAGE, columns: ANSWER_COLS,
+        id: "QUESTIONNAIRE_ANSWER", offset, limit: ANSWER_PAGE,
+        columns: ANSWER_COLS.concat(Object.values(SURVEY_ITEMS[qid] || {}).flat().map((i) => "questionnaireItemAnswer_" + i)).map((id) => ({ id, isLocked: false, width: null })),
         filter: { logicOperator: "AND", conditions: [], subFilters: [] }, customFilters: { questionnaireId: qid },
         order: { creationTime: "DESC" }, search: null, additionalParameters: { fullConfig: false },
       });
@@ -122,7 +142,7 @@ async function fetchAnswers(since) {
         if (r.entityType !== "EMPLOYEE" || !r.entityFkey || String(r.creationTime || "") < since) continue;
         const k = String(r.entityFkey);
         if (!byEmp.has(k)) byEmp.set(k, []);
-        byEmp.get(k).push({ ...r, name: names.get(qid) || "" });
+        byEmp.get(k).push({ id: r.id, state: r.state, creationTime: r.creationTime, fillingDate: r.fillingDate, qid, name: names.get(qid) || "", answers: surveyAnswers(qid, r) });
       }
       if (rows.length < ANSWER_PAGE || String(rows[rows.length - 1].creationTime || "") < since) break;
     }
@@ -150,11 +170,11 @@ async function syncSurveys(partIds, passports, byPass, docRows, answers) {
       for (const s of rows) {
         if (!["SENT", "FILLED"].includes(s.state)) continue;   // інші стани (чернетки тощо) не рахуємо
         await client.query(
-          `INSERT INTO hrs.surveys (hr_answer_id, worker_id, hr_employee_id, name, state, hr_created_at, filled_at, checked_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+          `INSERT INTO hrs.surveys (hr_answer_id, worker_id, hr_employee_id, name, state, hr_created_at, filled_at, qid, answers, checked_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
            ON CONFLICT (hr_answer_id) DO UPDATE SET worker_id = EXCLUDED.worker_id, name = EXCLUDED.name, state = EXCLUDED.state,
-             filled_at = EXCLUDED.filled_at, checked_at = now()`,
-          [s.id, wid, s.eid, s.name, s.state, s.creationTime || null, s.fillingDate || null]);
+             filled_at = EXCLUDED.filled_at, qid = EXCLUDED.qid, answers = EXCLUDED.answers, checked_at = now()`,
+          [s.id, wid, s.eid, s.name, s.state, s.creationTime || null, s.fillingDate || null, s.qid, s.answers]);
         n++;
       }
     }
@@ -256,6 +276,8 @@ async function daily() {
   const t0 = Date.now();
   const res = await check(all.filter((id) => !fullySigned(s[id])));   // хто все підписав (у межах вікна) — більше не питаємо
   console.log(`[hr sign] щоденна: ${res.checked} осіб, ${res.docs} док., нових підписів ${res.signed_now} (${Math.round((Date.now() - t0) / 1000)} с)${res.error ? " · помилка: " + res.error : ""}`);
+  // таблиця «Dokumenty pocztą» — після перевірки (require тут: docs_sheet сам підключає цей модуль)
+  try { await require("./docs_sheet").sync(); } catch (e) { console.error("[docs sheet]", e.message); }
   return res;
 }
 // Ручна: лише ті, кого не перевіряли останню хвилину
@@ -358,11 +380,20 @@ async function report() {
 <tr>${head.map(th).join("")}</tr>
 ${rows.map((x) => `<tr>${td(escH(x.region || "—"))}${td(escH(x.coordinator || "—"))}${td(escH(x.facility || "—"))}${td(escH(x.full_name))}${td(escH(x.login || ""))}${td(dmyIso(x.bhp))}${td(escH(state(x)))}${td(escH(unsigned(x).join(", ")), true)}</tr>`).join("\n")}
 </table>` : "";
+  // рядки «Dokumenty pocztą», для яких не знайшли працівника в базі (bot/docs_sheet.js)
+  const lost = await require("./docs_sheet").issues();
+  const REASON = { not_found: "brak w bazie", no_period: "brak okresu z BHP przy dacie umowy", ambiguous: "kilka osób o tym nazwisku" };
+  const lostTable = lost.length ? `<p><b>Dokumenty pocztą</b> — nie znaleziono pracownika (paszport i podpisy nie zostały wpisane): <b>${lost.length}</b></p>
+<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:13px">
+<tr>${["Arkusz", "Wiersz", "Nazwisko i imię", "Zakład", "Umowa od", "Powód"].map(th).join("")}</tr>
+${lost.map((x) => `<tr>${td(escH(x.sheet))}${td(x.row_no)}${td(escH(x.full_name))}${td(escH(x.facility || ""))}${td(dmyIso(x.umowa))}${td(escH(REASON[x.reason] || x.reason))}</tr>`).join("\n")}
+</table>` : "";
   const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#1f2937">
 <p>Dzień dobry,</p>
 <p>${rows.length ? `pracownicy z BHP od ${dmyIso(FROM)}, którzy <b>nie podpisali dokumentów lub nie wypełnili ankiet</b> w HRappka: <b>${rows.length} os.</b>
 Liczą się dokumenty i ankiety wysłane od ${WINDOW_BEFORE} dni przed BHP do ${WINDOW_AFTER} dni po; przy powtórnej wysyłce — ostatnia. Ta sama lista jest w załączniku (Excel).` : `wszyscy pracownicy z BHP od ${dmyIso(FROM)} podpisali dokumenty i wypełnili ankiety w HRappka.`}</p>
 ${table}
+${lostTable}
 <p style="color:#8a94a6;font-size:12px">KoorPanel · stan po sprawdzeniu o 6:00 · ${dmyIso(today)}</p></div>`;
   const att = rows.length ? [{
     name: `podpisy_${today}.xlsx`, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

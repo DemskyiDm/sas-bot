@@ -483,5 +483,6 @@ require("./bot/fines").schedule(bot);   // штрафи: повідомленн�
 require("./bot/fines_sheet").schedule();  // штрафи → Google-таблиця: повтор незаписаних
 rec.schedule(bot);                         // замовлення: повідомлення координатору
 require("./bot/hr_sign").schedule(bot);    // підписи HRappka: 6:00 перевірка, 7:00 звіт, 10:00 нагадування працівникам
+require("./bot/hr_reason").schedule(bot);  // причина звільнення з HRappka: 5:00 щодня, у понеділок — повний прохід і звіт
 
 //new

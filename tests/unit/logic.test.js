@@ -78,3 +78,38 @@ test("docs_sheet: дати клітинок, імена, колонки, зіс�
   assert.equal(ds.prevBhp(multi, "2026-10-21"), "2026-10-01");                                            // період перед найближчим до UMOWA OD
   assert.equal(ds.prevBhp(a, "2026-10-20"), null);
 });
+
+const reason = require("../../bot/hr_reason");
+test("hr_reason.decide: причина належить періоду, якщо змінилася після BHP і до +10 днів", () => {
+  const ctx = { today: "2026-11-30", jstart: "2026-01-01" };
+  const emp = { state: "Zwolniony", reason: "Другая работа" };
+  const p = { status: "zwolniony", bhp: "2026-09-01", lwd: "2026-10-15", next_bhp: null };
+  // внесли за 3 тижні до звільнення
+  assert.deepEqual(reason.decide(p, emp, [{ reason: "Другая работа", baseline: false, d: "2026-09-25" }], ctx), { value: "Другая работа", source: "hrappka" });
+  // перше значення, а не виправлене
+  assert.equal(reason.decide(p, emp, [{ reason: "Редукция", baseline: false, d: "2026-10-16" }, { reason: "Другая работа", baseline: false, d: "2026-10-20" }], ctx).value, "Редукция");
+  // стара причина з минулого періоду → stale
+  assert.deepEqual(reason.decide(p, emp, [{ reason: "Другая работа", baseline: false, d: "2026-05-01" }], ctx), { problem: "stale" });
+  // внесли пізніше ніж за 10 днів → не беремо
+  assert.deepEqual(reason.decide(p, { ...emp, reason: null }, [{ reason: "Редукция", baseline: false, d: "2026-10-26" }, { reason: null, baseline: false, d: "2026-11-01" }], ctx), { problem: "empty" });
+  // ще чекаємо
+  assert.deepEqual(reason.decide(p, { ...emp, reason: null }, [], { ...ctx, today: "2026-10-20" }), { wait: true });
+});
+
+test("hr_reason.decide: новий період, перенесення, старі звільнення", () => {
+  const ctx = { today: "2026-11-30", jstart: "2026-10-25" };
+  const emp = { state: "Pracuje", reason: "Возврат Домой" };
+  const p = { status: "zwolniony", bhp: "2026-06-01", lwd: "2026-10-01", next_bhp: "2026-10-05" };
+  // змінилась до старту нового періоду — наша
+  assert.equal(reason.decide(p, emp, [{ reason: "Возврат Домой", baseline: false, d: "2026-10-03" }], ctx).value, "Возврат Домой");
+  // змінилась уже під час нового періоду — не наша
+  assert.deepEqual(reason.decide(p, emp, [{ reason: "Возврат Домой", baseline: false, d: "2026-10-07" }], ctx), { problem: "next_period" });
+  assert.deepEqual(reason.decide({ ...p, status: "przeniesiony" }, null, [], ctx), { value: "przeniesienie", source: "auto" });
+  assert.deepEqual(reason.decide(p, null, [], ctx), { problem: "not_found" });
+  // старе звільнення: значення з першого знімка, людина звільнена, наступного періоду немає
+  const old = { status: "zwolniony", bhp: "2025-03-01", lwd: "2025-05-01", next_bhp: null };
+  const dis = { state: "Zwolniony", reason: "Редукция" };
+  assert.equal(reason.decide(old, dis, [{ reason: "Редукция", baseline: true, d: "2026-10-25" }], ctx).value, "Редукция");
+  // …але не коли в HRappka людина знову працює
+  assert.deepEqual(reason.decide(old, { ...dis, state: "Pracuje" }, [{ reason: "Редукция", baseline: true, d: "2026-10-25" }], ctx), { problem: "stale" });
+});

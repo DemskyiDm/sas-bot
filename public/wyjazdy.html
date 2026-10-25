@@ -61,6 +61,13 @@
     table.fl tr.tot td { font-weight: 700; background: var(--surface2); border-bottom: none; }
     table.fl tr.tot.top td { border-bottom: 2px solid var(--border); }
     table.fl tr:hover td { background: var(--surface2); }
+    /* рядок регіону: підсумок, клік — згорнути / розгорнути */
+    table.fl tr.rg { cursor: pointer; }
+    table.fl tr.rg td { font-weight: 700; background: var(--surface2); }
+    table.fl tr.rg td.l { white-space: nowrap; font-size: 11px; letter-spacing: .5px; text-transform: uppercase; color: var(--text2); }
+    table.fl tr.rg td.l .sub { display: inline; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+    table.fl tr.rg .rg-arrow { display: inline-block; width: 12px; }
+    table.fl tr[hidden] { display: none; }
     a.n { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--text3); cursor: pointer; }
     a.n:hover { color: var(--accent); border-color: var(--accent); }
     .z { color: var(--text3); }

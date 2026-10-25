@@ -26,6 +26,22 @@ function regionHeads(list, metaOf, head) {
   return out;
 }
 
+// Згорнуті регіони в таблиці груп (назви) — пам'ятаємо в браузері
+const RG_CLOSED_KEY = "hours_rg_closed";
+const rgEsc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+function rgClosed() {
+  try { return new Set(JSON.parse(localStorage.getItem(RG_CLOSED_KEY) || "[]")); } catch (e) { return new Set(); }
+}
+// Клік по рядку регіону: сховати / показати його рядки
+function toggleRegion(tr) {
+  const key = tr.dataset.rg, closed = rgClosed();
+  const shut = !closed.has(key);
+  if (shut) closed.add(key); else closed.delete(key);
+  try { localStorage.setItem(RG_CLOSED_KEY, JSON.stringify([...closed])); } catch (e) { /* prywatne okno */ }
+  tr.querySelector(".rg-arrow").textContent = shut ? "▸" : "▾";
+  tr.parentNode.querySelectorAll("tr[data-rgi]").forEach((r) => { if (r.dataset.rgi === key) r.hidden = shut; });
+}
+
 async function loadWorkers() {
   const month = document.getElementById("monthSelect").value;
   const url = `/api/workers?month=${month}`;
@@ -342,9 +358,33 @@ function renderGroupsTable(workers) {
     return `<th style="font-family:var(--mono);font-size:9px;padding:8px 3px;text-align:center;min-width:26px;color:${isFuture ? "var(--text3)" : "var(--text2)"};background:var(--surface2);border-bottom:1px solid var(--border)">${String(d).padStart(2, "0")}</th>`;
   }).join("");
 
+  // Підсумки регіонів: години по днях, разом, людей; згорнуті регіони — у localStorage
+  const rgName = (g) => g.region || "Bez regionu";
+  const rgSum = {};
+  groupList.forEach(([, g]) => {
+    const s = (rgSum[rgName(g)] = rgSum[rgName(g)] || { days: {}, total: 0, people: 0 });
+    s.people += g.workers.size; s.total += g.total;
+    Object.entries(g.days).forEach(([d, val]) => { s.days[d] = (s.days[d] || 0) + val; });
+  });
+  const closed = rgClosed();
+  const multiRg = Object.keys(rgSum).length > 1;
   const rows = regionHeads(groupList, ([, g]) => g, (r) => r).map((x) => {
-    if (x.head) return `<tr><td colspan="${daysInMonth + 2}" style="padding:12px 14px 6px;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text3);background:var(--surface2)">📍 ${x.head}</td></tr>`;
+    if (x.head) {
+      const s = rgSum[x.head], shut = closed.has(x.head);
+      const dayCells = Array.from({ length: daysInMonth }, (_, i) => {
+        const d = i + 1; const val = s.days[d] || 0;
+        return `<td style="padding:4px 3px;text-align:center;font-family:var(--mono);font-size:10px;font-weight:700;color:var(--text2)">${val > 0 && d <= todayDay ? (val % 1 === 0 ? val : val.toFixed(2)) : ""}</td>`;
+      }).join("");
+      return `<tr data-rg="${rgEsc(x.head)}" onclick="toggleRegion(this)" title="Zwiń / rozwiń region" style="cursor:pointer;background:var(--surface2);border-bottom:1px solid var(--border)">
+        <td style="padding:9px 14px;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text2);white-space:nowrap">
+          <span class="rg-arrow" style="display:inline-block;width:12px">${shut ? "▸" : "▾"}</span> 📍 ${rgEsc(x.head)}
+          <span style="color:var(--text3);margin-left:8px;letter-spacing:0;text-transform:none">${s.people} os.</span></td>
+        ${dayCells}
+        <td style="padding:9px 14px;font-family:var(--mono);font-weight:700;font-size:13px;color:var(--text2);white-space:nowrap;text-align:right">${s.total > 0 ? s.total.toFixed(2) + "h" : "—"}</td>
+      </tr>`;
+    }
     const [gname, g] = x.item;
+    const rgAttr = multiRg ? ` data-rgi="${rgEsc(rgName(g))}"${closed.has(rgName(g)) ? " hidden" : ""}` : "";
     const cells = Array.from({ length: daysInMonth }, (_, i) => {
       const d = i + 1;
       const isFuture = d > todayDay;
@@ -354,7 +394,7 @@ function renderGroupsTable(workers) {
       else if (!isFuture) { bg = "rgba(239,68,68,.1)"; text = "var(--red)"; content = "·"; }
       return `<td style="padding:4px 3px;text-align:center"><div style="background:${bg};color:${text};border-radius:3px;font-family:var(--mono);font-size:10px;font-weight:600;padding:3px 2px;line-height:1">${content}</div></td>`;
     }).join("");
-    return `<tr onclick="selectGroup('${gname.replace(/'/g, "\\'")}')" style="cursor:pointer;border-bottom:1px solid rgba(42,51,71,.4)" onmouseover="this.style.background='rgba(255,255,255,.02)'" onmouseout="this.style.background=''">
+    return `<tr${rgAttr} onclick="selectGroup('${gname.replace(/'/g, "\\'")}')" style="cursor:pointer;border-bottom:1px solid rgba(42,51,71,.4)" onmouseover="this.style.background='rgba(255,255,255,.02)'" onmouseout="this.style.background=''">
       <td style="padding:10px 14px;white-space:nowrap;min-width:200px">
         <span style="font-weight:600;font-size:13px">📁 ${gname}</span>
         <span style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-left:8px">${g.workers.size} os.</span>

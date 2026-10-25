@@ -189,16 +189,18 @@ function renderWeek() {
   const n = (v, kind, site, cls) => {
     if (v == null) return `<span class="z">—</span>`;
     if (!v) return `<span class="z">0</span>`;
+    if (site == null) return `<span class="${cls || ""}">${v}</span>`;   // підсумок регіону — без списку
     return `<a class="n ${cls || ""}" data-k="${kind}" data-s="${esc(site)}" onclick="openList(this.dataset.k, this.dataset.s)">${v}</a>`;
   };
   const th = (k, label, cls) => `<th class="${cls || ""}" data-k="${k}" onclick="sortWeek(this.dataset.k)">${label}${ST.sort.key === k ? (ST.sort.dir < 0 ? " ▼" : " ▲") : ""}</th>`;
   const F = fut;
-  const line = (x, tot) => {
-    const site = tot ? "" : x.site_key;
+  // підсумок регіону: суми по обʼєктах (null — коли ні в кого немає значення)
+  const SUMK = ["order_qty", "arr_entered", "arr_fact", "arr_unconf", "arr_rez", "tr_entered", "tr_fact", "dep_plan", "dep_now", "dep_fact", "dep_unplanned", "dep_fact_tr"];
+  const rgSum = (list) => Object.fromEntries(SUMK.map((k) => [k, list.some((y) => y[k] != null) ? list.reduce((a, y) => a + (Number(y[k]) || 0), 0) : null]));
+  const cells = (x, site, tot) => {
     const real = x.order_qty ? `<span class="${realCls(x.arr_fact, x.order_qty)}">${pct(x.arr_fact, x.order_qty)}</span>` : `<span class="z">—</span>`;
     const net = x.arr_fact + x.tr_fact - x.dep_fact;
-    return `<tr class="${tot ? "tot" : ""}">
-      <td class="l">${tot ? "Razem" : `${esc(x.site_key)}<div class="sub">${x.coordinator_name ? esc(x.coordinator_name) : "— bez koordynatora —"}${x.region_name && document.getElementById("selRegion").value === "all" && ST.me.role !== "coord" ? " · " + esc(x.region_name) : ""}</div>`}</td>
+    return `
       <td class="sep">${x.order_qty == null ? `<span class="z" title="Plan nie wpisany">—</span>` : x.order_qty}${!tot && x.order_in_week ? ` <span class="tag" title="Zmieniony w trakcie tygodnia: ${esc(x.order_at)}">zm.</span>` : ""}</td>
       <td>${n(x.arr_entered, "arr_entered", site)}</td>
       <td>${F ? `<span class="z">—</span>` : n(x.arr_fact, "arr_fact", site)}</td>
@@ -211,9 +213,12 @@ function renderWeek() {
       <td>${F ? `<span class="z">—</span>` : n(x.dep_fact, "dep_fact", site)}</td>
       <td>${F ? `<span class="z">—</span>` : n(x.dep_unplanned, "dep_unplanned", site, "bad")}</td>
       <td>${F ? `<span class="z">—</span>` : n(x.dep_fact_tr, "dep_fact_tr", site)}</td>
-      <td class="sep">${F ? `<span class="z">—</span>` : `<span class="${net > 0 ? "good" : net < 0 ? "bad" : "z"}">${net > 0 ? "+" : ""}${net}</span>`}</td>
-    </tr>`;
+      <td class="sep">${F ? `<span class="z">—</span>` : `<span class="${net > 0 ? "good" : net < 0 ? "bad" : "z"}">${net > 0 ? "+" : ""}${net}</span>`}</td>`;
   };
+  const line = (x, tot) => `<tr class="${tot ? "tot" : ""}">
+      <td class="l">${tot ? "Razem" : `${esc(x.site_key)}<div class="sub">${x.coordinator_name ? esc(x.coordinator_name) : "— bez koordynatora —"}${x.region_name && document.getElementById("selRegion").value === "all" && ST.me.role !== "coord" ? " · " + esc(x.region_name) : ""}</div>`}</td>
+      ${cells(x, tot ? "" : x.site_key, tot)}
+    </tr>`;
   document.getElementById("weekTable").innerHTML = `
     <table class="fl"><thead>
       <tr><th class="l grp"></th><th class="grp sep" colspan="7">Nabór</th><th class="grp sep" colspan="5">Wyjazdy</th><th class="grp sep"></th></tr>
@@ -221,7 +226,7 @@ function renderWeek() {
         <th title="Fakt / plan">Real.</th>${th("arr_unconf", "Bez<br>statusu")}${th("arr_rez", "Nie<br>dojechali")}${th("tr_entered", "Z przenie-<br>sienia")}
         ${th("dep_plan", "Plan", "sep")}${th("dep_now", "Wpisano")}${th("dep_fact", "Fakt")}${th("dep_unplanned", "Poza<br>planem")}${th("dep_fact_tr", "Przenie-<br>sienia")}
         <th class="sep">Liczeb-<br>ność</th></tr>
-    </thead><tbody>${ST.sort.key ? rows.map((x) => line(x, false)).join("") : withRegionRows(rows, 14, (x) => line(x, false))}${line(t, true)}</tbody></table>`;
+    </thead><tbody>${ST.sort.key ? rows.map((x) => line(x, false)).join("") : withRegionRows(rows, (x) => line(x, false), (list) => cells(rgSum(list), null, true))}${line(t, true)}</tbody></table>`;
   document.getElementById("weekNote").innerHTML = `
     <b>Nabór:</b> plan — ile ludzi trzeba zrekrutować (wpisuje koordynator w niedzielę); wpisano — nowi z pierwszym dniem w tym tygodniu,
     status „pracuje” lub bez statusu; fakt — rozpoczęli pracę (pierwszy dzień minął, status ustawiony); przeniesienia z innych obiektów liczone osobno.
@@ -234,16 +239,36 @@ function siteCmp(a, b) {
   const pl = (x, y) => (x == null || x === "") - (y == null || y === "") || String(x || "").localeCompare(String(y || ""), "pl");
   return pl(a.region_name, b.region_name) || pl(a.coordinator_name, b.coordinator_name) || pl(a.site_key, b.site_key);
 }
-// Рядки (уже в порядку siteCmp) з заголовком перед кожним регіоном — коли регіонів більше одного
-function withRegionRows(rows, cols, rowHtml) {
-  const multi = new Set(rows.map((x) => x.region_name || null)).size > 1;
+// Рядки (уже в порядку siteCmp) з рядком регіону перед кожним регіоном — коли регіонів більше одного.
+// sumCells(list) → <td> підсумків регіону після назви; клік по рядку регіону згортає / розгортає його (пам'ятаємо в браузері).
+function rgClosed() {
+  try { return new Set(JSON.parse(store.get("wyj_rg_closed") || "[]")); } catch (e) { return new Set(); }
+}
+function withRegionRows(rows, rowHtml, sumCells) {
+  const name = (x) => x.region_name || "Bez regionu";
+  const multi = new Set(rows.map(name)).size > 1;
+  const closed = rgClosed();
   let cur;
   return rows.map((x, i) => {
-    const r = x.region_name || null;
-    const head = multi && r !== cur ? `<tr class="rg"><td class="l" colspan="${cols}" style="background:var(--surface2);font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text3)">📍 ${esc(r || "Bez regionu")}</td></tr>` : "";
+    const r = name(x), shut = multi && closed.has(r);
+    let head = "";
+    if (multi && r !== cur) {
+      const list = rows.filter((y) => name(y) === r);
+      head = `<tr class="rg" data-rg="${esc(r)}" onclick="toggleRegion(this)" title="Zwiń / rozwiń region">
+        <td class="l"><span class="rg-arrow">${shut ? "▸" : "▾"}</span> 📍 ${esc(r)} <span class="sub">${list.length} ob.</span></td>${sumCells(list)}</tr>`;
+    }
     cur = r;
-    return head + rowHtml(x, i);
+    const html = rowHtml(x, i);
+    return head + (multi ? html.replace(/^\s*<tr/, `<tr data-rgi="${esc(r)}"${shut ? " hidden" : ""}`) : html);
   }).join("");
+}
+function toggleRegion(tr) {
+  const key = tr.dataset.rg, closed = rgClosed();
+  const shut = !closed.has(key);
+  if (shut) closed.add(key); else closed.delete(key);
+  store.set("wyj_rg_closed", JSON.stringify([...closed]));
+  tr.querySelector(".rg-arrow").textContent = shut ? "▸" : "▾";
+  tr.parentNode.querySelectorAll("tr[data-rgi]").forEach((r) => { if (r.dataset.rgi === key) r.hidden = shut; });
 }
 // Рядки таблиці тижня з урахуванням пошуку, «показати без руху» і сортування (і для Excel)
 function weekRowsShown() {
@@ -429,6 +454,7 @@ function renderOrders() {
   // Bieżący tydzień: plan i fakt przyjazdów (jak w tabeli tygodnia; realizacja = razem / plan, czerwone — poniżej tempa)
   const cwk = r.current_week;
   const num = (v, kind, site, cls) => (!v ? `<span class="z">0</span>`
+    : site == null ? `<span class="${cls || ""}">${v}</span>`   // підсумок регіону — без списку
     : `<a class="n ${cls || ""}" data-k="${kind}" data-s="${esc(site)}" onclick="openList(this.dataset.k, this.dataset.s, null, ST.orders.current_week)">${v}</a>`);
   const real = (c) => (!c.plan ? `<span class="z">—</span>`
     : `<span class="${c.lag ? "bad" : c.razem >= c.plan ? "good" : ""}" title="${c.lag ? `Poniżej tempa: na dziś trzeba ${r.pace}% planu tygodnia` : "Razem / plan"}">${pct(c.razem, c.plan)}</span>`);
@@ -443,8 +469,19 @@ function renderOrders() {
   const planCur = (row, i) => (r.can_edit_current
     ? `<div class="ord-cell"><input type="number" min="0" max="999" value="${row.current.qty == null ? "" : row.current.qty}" data-i="${i}" data-j="cur" oninput="this.dataset.dirty='1'" /><span class="h">wyj. ${row.current.dep}</span></div>`
     : `${row.current.qty == null ? `<span class="z">—</span>` : row.current.qty}<div class="sub">wyj. ${row.current.dep}</div>`);
-  const sum = (f) => r.rows.reduce((a, x) => a + (Number(f(x)) || 0), 0);
+  const sum = (f, list = r.rows) => list.reduce((a, x) => a + (Number(f(x)) || 0), 0);
   const t = r.cw_total;
+  // підсумок регіону — ті самі колонки, що й «Razem»
+  const rgCells = (list) => {
+    const has = (f) => list.some((x) => f(x) != null);
+    const c = Object.fromEntries(["entered", "fact", "tr", "razem", "unconf", "rez"].map((k) => [k, sum((x) => x.cw[k], list)]));
+    c.plan = has((x) => x.current.qty) ? sum((x) => x.current.qty, list) : null;
+    return `<td>${sum((x) => x.headcount, list)}</td>
+      <td class="sep">${c.plan == null ? `<span class="z">—</span>` : c.plan}<div class="sub">wyj. ${sum((x) => x.current.dep, list)}</div></td>
+      ${cwCells(c, null)}
+      ${r.weeks.map((w, j) => `<td class="sep">${has((x) => x.weeks[j].qty) ? sum((x) => x.weeks[j].qty, list) : `<span class="z">—</span>`}<div class="sub">wyj. ${sum((x) => x.weeks[j].dep, list)} · wpis. ${sum((x) => x.weeks[j].arr, list)}</div></td>`).join("")}
+      <td class="l sep">potwierdzone ${list.filter((x) => x.confirmed).length} z ${list.length}</td><td></td>`;
+  };
   const totalRow = `<tr class="tot top">
       <td class="l">Razem</td><td>${sum((x) => x.headcount)}</td>
       <td class="sep">${t.plan == null ? `<span class="z">—</span>` : t.plan}<div class="sub">wyj. ${sum((x) => x.current.dep)}</div></td>
@@ -470,7 +507,7 @@ function renderOrders() {
       ${r.weeks.map((w) => `<th class="sep">${dd(w)}–${dd(addDays(w, 6))}</th>`).join("")}
       <th class="l sep">Stan</th><th></th></tr></thead><tbody>
     ${totalRow}
-    ${withRegionRows(r.rows, 12 + r.weeks.length, (row, i) => `<tr>
+    ${withRegionRows(r.rows, (row, i) => `<tr>
       <td class="l">${esc(row.site_key)}<div class="sub">${row.coordinator_name ? esc(row.coordinator_name) : "— bez koordynatora —"}</div></td>
       <td>${row.headcount}</td>
       <td class="sep">${planCur(row, i)}</td>
@@ -481,7 +518,7 @@ function renderOrders() {
         : `<span class="no-mark">do wpisania</span>`}
         <div class="sub">${row.weeks[0].entered_at ? "ost. zmiana " + esc(row.weeks[0].entered_at.slice(8, 10) + "." + row.weeks[0].entered_at.slice(5, 7) + " " + row.weeks[0].entered_at.slice(11)) : ""}</div></td>
       <td><button class="btn btn-ghost btn-sm" data-i="${i}" onclick="saveOrders(Number(this.dataset.i))">Zapisz</button></td>
-    </tr>`)}</tbody></table>`;
+    </tr>`, rgCells)}</tbody></table>`;
 }
 async function saveOrders(onlyRow) {
   const r = ST.orders;

@@ -208,6 +208,34 @@ async function typeById(id) {
   const r = await db.query(`SELECT id, name_pl, name_uk, name_ru, amount, is_active FROM fin.types WHERE id = $1`, [parseInt(id, 10) || 0]);
   return r.rows[0] || null;
 }
+// ── Прогул → табель (hours_log) ───────────────────────────────────────
+// Штраф типу «Прогул» (Absencja) ставить у табелі NN на дату штрафу (source 'fine').
+// Пишемо лише в порожню клітинку (або де вже NN) і в межах періоду працевлаштування — години / URL / L4 не чіпаємо.
+// Зміна дати / типу або скасування знімає NN, поставлене штрафом, якщо на ту дату не лишилось іншого активного прогулу.
+const isAbsence = (t) => !!t && [t.name_pl, t.name_uk, t.name_ru].some((n) => /^(absencja|прогул)$/i.test(String(n || "").trim()));
+async function markAbsence(workerId, date) {
+  const r = await db.query(
+    `INSERT INTO hours_log (worker_id, work_date, hours, absence_type, source)
+     SELECT $1, $2::date, NULL, 'NN', 'fine'
+      WHERE EXISTS (SELECT 1 FROM worker_facility_history h
+                     WHERE h.worker_id = $1 AND h.bhp_date <= $2::date
+                       AND (h.last_work_date IS NULL OR h.last_work_date >= $2::date))
+     ON CONFLICT (worker_id, work_date) DO UPDATE
+       SET absence_type = 'NN', hours = NULL, source = 'fine', updated_at = now()
+       WHERE (hours_log.hours IS NULL AND hours_log.absence_type IS NULL) OR hours_log.absence_type = 'NN'
+     RETURNING work_date`, [workerId, date]);
+  return r.rowCount > 0;
+}
+async function unmarkAbsence(workerId, date) {
+  await db.query(
+    `DELETE FROM hours_log h
+      WHERE h.worker_id = $1 AND h.work_date = $2::date AND h.source = 'fine' AND h.absence_type = 'NN' AND h.hours IS NULL
+        AND NOT EXISTS (SELECT 1 FROM fin.fines f JOIN fin.types t ON t.id = f.type_id
+                         WHERE f.worker_id = $1 AND f.fine_date = $2::date AND f.cancelled_at IS NULL
+                           AND (lower(trim(t.name_pl)) = 'absencja' OR lower(trim(t.name_uk)) = 'прогул' OR lower(trim(t.name_ru)) = 'прогул'))`,
+    [workerId, date]);
+}
+
 async function issue(c, b) {
   const wi = await workerInfo(c, b && b.worker_id);
   if (!wi.ok) return wi;
@@ -221,9 +249,10 @@ async function issue(c, b) {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
     [wi.worker.id, wi.worker.facility_id, t.id, t.name_pl, v.amount, v.date, v.note, c.id]);
   const id = r.rows[0].id;
+  const nn = isAbsence(t) ? await markAbsence(wi.worker.id, v.date) : undefined;
   const notified = await notify("new", id);
   console.log(`[fines] #${id} by coordinator ${c.id}: worker ${wi.worker.id}, ${t.name_pl} ${v.amount} zł`);
-  return { ok: true, id, notified };
+  return { ok: true, id, notified, nn };
 }
 async function one(c, id) {
   const r = await list(c, { ids: [parseInt(id, 10) || 0] });
@@ -239,8 +268,10 @@ async function update(c, id, b) {
   await db.query(
     `UPDATE fin.fines SET type_id = $2, type_name = $3, amount = $4, fine_date = $5, note = $6, updated_by = $7, updated_at = now()
       WHERE id = $1 AND cancelled_at IS NULL`, [x.id, t.id, t.name_pl, v.amount, v.date, v.note, c.id]);
+  if (isAbsence({ name_pl: x.type_name, name_uk: x.name_uk, name_ru: x.name_ru })) await unmarkAbsence(x.worker_id, x.fine_date);
+  const nn = isAbsence(t) ? await markAbsence(x.worker_id, v.date) : undefined;
   const notified = await notify("edit", x.id);
-  return { ok: true, notified };
+  return { ok: true, notified, nn };
 }
 async function cancel(c, id, reason) {
   const x = await one(c, id);
@@ -249,6 +280,7 @@ async function cancel(c, id, reason) {
   await db.query(
     `UPDATE fin.fines SET cancelled_at = now(), cancelled_by = $2, cancel_reason = $3 WHERE id = $1 AND cancelled_at IS NULL`,
     [x.id, c.id, String(reason || "").trim().slice(0, NOTE_MAX) || null]);
+  if (isAbsence({ name_pl: x.type_name, name_uk: x.name_uk, name_ru: x.name_ru })) await unmarkAbsence(x.worker_id, x.fine_date);
   const notified = await notify("cancel", x.id);
   return { ok: true, notified };
 }

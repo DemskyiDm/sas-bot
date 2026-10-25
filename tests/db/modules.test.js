@@ -52,6 +52,41 @@ test("fines: після «в офіс» змінити / скасувати мо
   assert.equal((await fines.cancel(admin, a.id, "x")).error, "already_cancelled");
 });
 
+test("fines: прогул ставить NN у табелі на дату штрафу; зміна дати переносить, скасування знімає", async () => {
+  const types = await fines.types(false);
+  const abs = types.find((x) => /^absencja$/i.test(x.name_pl));
+  const rcp = types.find((x) => x !== abs);
+  // працівник з двома порожніми днями в періоді працевлаштування за останні 20 днів
+  const x = await tx.one(
+    `SELECT v.id, array_agg(to_char(d, 'YYYY-MM-DD') ORDER BY d DESC) AS days
+       FROM v_worker_current v
+       CROSS JOIN generate_series(CURRENT_DATE - 20, CURRENT_DATE - 1, '1 day') d
+      WHERE v.status = 'pracuje' AND v.login NOT LIKE 'TEST_%'
+        AND NOT EXISTS (SELECT 1 FROM hours_log h WHERE h.worker_id = v.id AND h.work_date = d::date)
+        AND EXISTS (SELECT 1 FROM worker_facility_history h WHERE h.worker_id = v.id AND h.bhp_date <= d::date
+                      AND (h.last_work_date IS NULL OR h.last_work_date >= d::date))
+      GROUP BY v.id HAVING count(*) >= 2 LIMIT 1`);
+  if (!abs || !x) return;
+  const wid = x.id, free = x.days;
+  const cell = async (d) => tx.one(`SELECT hours, absence_type::text AS abs FROM hours_log WHERE worker_id = $1 AND work_date = $2`, [wid, d]);
+  const a = await fines.issue(admin, { worker_id: wid, type_id: abs.id, amount: 500, fine_date: free[0] });
+  assert.equal(a.nn, true);
+  assert.equal((await cell(free[0])).abs, "NN");
+  await fines.update(admin, a.id, { type_id: abs.id, amount: 500, fine_date: free[1] });
+  assert.equal(await cell(free[0]), null);
+  assert.equal((await cell(free[1])).abs, "NN");
+  await fines.update(admin, a.id, { type_id: rcp.id, amount: 50, fine_date: free[1] });
+  assert.equal(await cell(free[1]), null);
+  await fines.update(admin, a.id, { type_id: abs.id, amount: 500, fine_date: free[1] });
+  await fines.cancel(admin, a.id, "x");
+  assert.equal(await cell(free[1]), null);
+  // години в клітинці не перезаписуються
+  await tx.q(`INSERT INTO hours_log (worker_id, work_date, hours, source) VALUES ($1, $2, 8, 'web')`, [wid, free[0]]);
+  const b = await fines.issue(admin, { worker_id: wid, type_id: abs.id, amount: 500, fine_date: free[0] });
+  assert.equal(b.nn, false);
+  assert.equal(Number((await cell(free[0])).hours), 8);
+});
+
 test("fines: штраф тестовому працівнику (TEST_) не йде в підсумки й в офіс", async () => {
   const tw = await tx.one(`SELECT v.id FROM v_worker_current v WHERE v.login LIKE 'TEST_%' AND v.status = 'pracuje' LIMIT 1`);
   if (!tw) return;

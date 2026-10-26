@@ -378,7 +378,7 @@ let pageHistory = 1;
 async function loadHistoryPage() {
   allHistory = [];
   document.getElementById("historyTable").innerHTML =
-    `<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:40px">
+    `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:40px">
       Введіть фільтри і натисніть "Szukaj"
     </td></tr>`;
   document.getElementById("historyCount").textContent = "0";
@@ -485,6 +485,52 @@ function filterHistoryFacList() {
     el.style.display = el.dataset.fsearch.includes(q) ? '' : 'none';
   });
 }
+
+// ── Причина звільнення (з HRappka, bot/hr_reason.js): мультивибір ──
+// Список — довідник HRappka + те, що прийшло в результатах пошуку; «Brak przyczyny» — порожні
+const HISTORY_REASONS = ["Другая работа", "Возврат Домой", "Редукция", "Эффективность", "Другая причина", "Переход напрямую",
+  "Состояние здоровья", "Лимит 18 месяцев", "До 3 дней", "Переезд в другой город", "Алкоголь/наркотики", "przeniesienie"];
+const HISTORY_NO_REASON = "__none__";
+const historyReasons = new Set();
+const escHtml = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function historyReasonMatch(h) {
+  if (historyReasons.size === 0) return true;
+  return historyReasons.has(h.przyczyna_zwolnienia || HISTORY_NO_REASON);
+}
+
+function buildHistoryReasonList() {
+  const list = document.getElementById("historyReasonList");
+  if (!list) return;
+  const all = [...new Set([...HISTORY_REASONS, ...allHistory.map((h) => h.przyczyna_zwolnienia).filter(Boolean)])];
+  const green = "#22c55e";
+  const box = (on) => `<span style="width:14px;height:14px;border:1px solid ${on ? green : "var(--border)"};background:${on ? green : "transparent"};border-radius:3px;display:inline-block;flex-shrink:0;"></span>`;
+  const row = (val, text) => `<div data-reason="${escHtml(val)}" onclick="toggleHistoryReason(this.dataset.reason)"
+      style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">${box(historyReasons.has(val))}${escHtml(text)}</div>`;
+  list.innerHTML =
+    `<div data-reason="" onclick="toggleHistoryReason('')" style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">${box(historyReasons.size === 0)}Wszystkie</div>
+     <div style="height:1px;background:var(--border);margin:4px 0"></div>
+     ${all.map((r) => row(r, r)).join("")}
+     <div style="height:1px;background:var(--border);margin:4px 0"></div>
+     ${row(HISTORY_NO_REASON, "Brak przyczyny")}`;
+  const label = document.getElementById("historyReasonLabel");
+  if (label) label.textContent = historyReasons.size === 0 ? "Wszystkie przyczyny" : `Przyczyny (${historyReasons.size})`;
+}
+
+function toggleHistoryReasonDrop() {
+  const drop = document.getElementById("historyReasonDrop");
+  if (!drop) return;
+  if (drop.style.display === "none") buildHistoryReasonList();
+  drop.style.display = drop.style.display === "none" ? "block" : "none";
+}
+
+function toggleHistoryReason(value) {
+  if (!value) historyReasons.clear();
+  else if (historyReasons.has(value)) historyReasons.delete(value);
+  else historyReasons.add(value);
+  buildHistoryReasonList();
+  filterHistory();
+}
 async function searchHistory() {
   try {
     const q = document.getElementById("historySearch").value;
@@ -508,7 +554,7 @@ async function searchHistory() {
     if (lastTo) params.set("last_to", lastTo);
 
     document.getElementById("historyTable").innerHTML =
-      '<tr><td colspan="6"><div class="loading"><div class="spinner"></div>Ladowanie...</div></td></tr>';
+      '<tr><td colspan="7"><div class="loading"><div class="spinner"></div>Ladowanie...</div></td></tr>';
 
     const result = await apiFetch(`/api/history?${params.toString()}`);
     if (!result) return;
@@ -554,6 +600,7 @@ function filterHistory(reset = true) {
     if (bhpTo && (!h.bhp_date || localDate(h.bhp_date) > bhpTo)) return false;
     if (lastFrom && (!h.last_work_date || localDate(h.last_work_date) < lastFrom)) return false;
     if (lastTo && (!h.last_work_date || localDate(h.last_work_date) > lastTo)) return false;
+    if (!historyReasonMatch(h)) return false;
     return true;
   });
 
@@ -576,11 +623,12 @@ function filterHistory(reset = true) {
       <td><span class="badge ${statusColor[h.status] || "badge-blue"}">${h.status}</span></td>
       <td style="font-family:var(--mono);font-size:11px;color:var(--text2)">${h.bhp_date ? new Date(h.bhp_date).toLocaleDateString("pl") : "—"}</td>
       <td style="font-family:var(--mono);font-size:11px;color:var(--text2)">${h.last_work_date ? new Date(h.last_work_date).toLocaleDateString("pl") : "—"}</td>
+      <td style="font-size:12px;color:var(--text2)">${h.przyczyna_zwolnienia ? escHtml(h.przyczyna_zwolnienia) : "—"}</td>
       <td style="font-size:11px;color:var(--text3)">${new Date(h.imported_at).toLocaleDateString("pl")}</td>
     </tr>`,
       )
       .join("") ||
-    `<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
+    `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
 
   renderPagination("paginationHistory", pageHistory, pages, "goPageHistory");
 }
@@ -1057,6 +1105,7 @@ function exportToExcel(type) {
       if (bhpTo && (!h.bhp_date || localDate(h.bhp_date) > bhpTo)) return false;
       if (lastFrom && (!h.last_work_date || localDate(h.last_work_date) < lastFrom)) return false;
       if (lastTo && (!h.last_work_date || localDate(h.last_work_date) > lastTo)) return false;
+      if (!historyReasonMatch(h)) return false;
       return true;
     }).map((h) => ({
       "Pracownik": h.full_name,
@@ -1065,6 +1114,7 @@ function exportToExcel(type) {
       "Status": h.status || "—",
       "BHP": h.bhp_date ? new Date(h.bhp_date).toLocaleDateString("pl") : "—",
       "Ostatni dzień": h.last_work_date ? new Date(h.last_work_date).toLocaleDateString("pl") : "—",
+      "Przyczyna": h.przyczyna_zwolnienia || "—",
       "Import": new Date(h.imported_at).toLocaleDateString("pl"),
     }));
     filename = `historia_${today}.xlsx`;
@@ -1249,6 +1299,8 @@ function clearHistoryFilters() {
     .forEach((id) => { document.getElementById(id).value = ""; });
   selectedStatuses.history.clear();
   updateStatusUI('history');
+  historyReasons.clear();
+  buildHistoryReasonList();
   filterHistory();
 }
 /*

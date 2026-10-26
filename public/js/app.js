@@ -335,6 +335,7 @@ document.addEventListener('click', (e) => {
   const configs = [
     { wrap: 'statusDropWrap', drop: 'workersStatusDrop' },
     { wrap: 'historyStatusDropWrap', drop: 'historyStatusDrop' },
+    { wrap: 'historyReasonDropWrap', drop: 'historyReasonDrop' },
   ];
   configs.forEach(({ wrap, drop }) => {
     const wrapEl = document.getElementById(wrap);

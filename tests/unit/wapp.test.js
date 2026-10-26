@@ -103,10 +103,11 @@ test("wapp: виплата авансу в пʼятницю — як у боті
   assert.equal(payDate("2026-10-25"), "2026-10-30");   // нд → найближча
 });
 
-test("wapp: вікно правки годин — поточний і попередній місяць, до завтра", () => {
+test("wapp: вікно правки годин — максимум 2 дні назад, плюс завтра", () => {
   const { editWindow, monthEnd, addMonths, inPeriods } = wapp._test;
-  assert.deepEqual(editWindow("2026-10-26"), { from: "2026-09-01", to: "2026-10-27" });
-  assert.deepEqual(editWindow("2026-01-15"), { from: "2025-12-01", to: "2026-01-16" });
+  assert.deepEqual(editWindow("2026-10-26"), { from: "2026-10-24", to: "2026-10-27" });
+  assert.deepEqual(editWindow("2026-01-01"), { from: "2025-12-30", to: "2026-01-02" });
+  assert.deepEqual(editWindow("2026-03-31"), { from: "2026-03-29", to: "2026-04-01" });
   assert.equal(monthEnd("2026-02"), "2026-02-28");
   assert.equal(addMonths("2026-01", -3), "2025-10");
   const ps = [{ from: "2026-09-10", to: "2026-09-30" }, { from: "2026-10-05", to: null }];

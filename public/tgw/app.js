@@ -9,9 +9,9 @@ const DEMO = !TGW && /[?&]demo\b/.test(location.search);
 const MAXPX = 2000;           // довша сторона фото перед відправкою
 const JPEG_Q = 0.85;
 const SRC_MAX = 2600;         // джерело, з якого вирізаємо документ (довша сторона)
-// OpenCV.js — лише пошук країв документа; вантажиться на екранах документів, далі — з кешу (jsDelivr, рік)
-const CV_URL = "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js";
-const CV_WAIT_MS = 15000;     // скільки чекати бібліотеку, коли фото вже зроблено
+// scanic (MIT) — пошук кутів документа нейромережею; вантажиться на екранах документів, далі — з кешу (jsDelivr)
+const SCANIC_URL = "https://cdn.jsdelivr.net/npm/scanic@1.7.1/dist/scanic.js";
+const DET_WAIT_MS = 15000;    // скільки чекати бібліотеку, коли фото вже зроблено
 
 const L = {
   uk: {
@@ -66,6 +66,7 @@ const L = {
     need_check: "Підтвердьте, що фото чіткі.", pdf_n: (n) => `Буде один PDF · ${n} стор.`, uploading: "Фото ще завантажуються…",
     rotate: "Повернути", remove: "Видалити",
     crop_t: "Рамка документа", crop_hint: "Перетягніть кути, якщо рамка стала неточно.", crop_find: "Шукаю краї документа…", crop_none: "Краї не знайдено — поставте кути вручну.", crop_nolib: "Автопошук недоступний — поставте кути вручну.", crop_full: "Весь кадр", crop_ok: "Готово", crop_cancel: "Скасувати", crop: "Рамка",
+    sc_find: "Наведіть камеру на документ", sc_hold: "Тримайте рівно — знімаю…", sc_ready: "Документ знайдено — натисніть кнопку", sc_bg: "Не бачу документа — покладіть його на однотонну поверхню, без відблисків", sc_auto: "Авто", sc_gallery: "Галерея", sc_torch: "Ліхтарик", sc_shot: "Зробити знімок", sc_err: "Камера в Telegram недоступна", sc_sys: "Системна камера",
     done_t: "Надіслано в офіс", done_mail: "Офіс отримав лист з PDF.", done_saved: "Документ збережено — офіс побачить його в панелі.",
     to_chat: "Зберегти PDF у чат собі", to_chat_ok: "PDF надіслано вам у чат з ботом",
     // помилки
@@ -130,6 +131,7 @@ const L = {
     need_check: "Подтвердите, что фото чёткие.", pdf_n: (n) => `Будет один PDF · ${n} стр.`, uploading: "Фото ещё загружаются…",
     rotate: "Повернуть", remove: "Удалить",
     crop_t: "Рамка документа", crop_hint: "Перетащите углы, если рамка встала неточно.", crop_find: "Ищу края документа…", crop_none: "Края не найдены — поставьте углы вручную.", crop_nolib: "Автопоиск недоступен — поставьте углы вручную.", crop_full: "Весь кадр", crop_ok: "Готово", crop_cancel: "Отмена", crop: "Рамка",
+    sc_find: "Наведите камеру на документ", sc_hold: "Держите ровно — снимаю…", sc_ready: "Документ найден — нажмите кнопку", sc_bg: "Не вижу документа — положите его на однотонную поверхность, без бликов", sc_auto: "Авто", sc_gallery: "Галерея", sc_torch: "Фонарик", sc_shot: "Сделать снимок", sc_err: "Камера в Telegram недоступна", sc_sys: "Системная камера",
     done_t: "Отправлено в офис", done_mail: "Офис получил письмо с PDF.", done_saved: "Документ сохранён — офис увидит его в панели.",
     to_chat: "Сохранить PDF в чат себе", to_chat_ok: "PDF отправлен вам в чат с ботом",
     e_title: "Не удалось открыть", e_not_linked: "Сначала войдите в бот: напишите боту свой ID, затем откройте приложение снова.",
@@ -193,6 +195,7 @@ const L = {
     need_check: "Potwierdź, że zdjęcia są czytelne.", pdf_n: (n) => `Jeden PDF · ${n} str.`, uploading: "Zdjęcia jeszcze się wysyłają…",
     rotate: "Obróć", remove: "Usuń",
     crop_t: "Ramka dokumentu", crop_hint: "Przeciągnij rogi, jeśli ramka jest niedokładna.", crop_find: "Szukam krawędzi dokumentu…", crop_none: "Nie znaleziono krawędzi — ustaw rogi ręcznie.", crop_nolib: "Automatyczne wykrywanie niedostępne — ustaw rogi ręcznie.", crop_full: "Cały kadr", crop_ok: "Gotowe", crop_cancel: "Anuluj", crop: "Ramka",
+    sc_find: "Skieruj aparat na dokument", sc_hold: "Trzymaj prosto — robię zdjęcie…", sc_ready: "Dokument znaleziony — naciśnij przycisk", sc_bg: "Nie widzę dokumentu — połóż go na jednolitej powierzchni, bez odblasków", sc_auto: "Auto", sc_gallery: "Galeria", sc_torch: "Latarka", sc_shot: "Zrób zdjęcie", sc_err: "Aparat w Telegramie jest niedostępny", sc_sys: "Aparat systemowy",
     done_t: "Wysłano do biura", done_mail: "Biuro dostało maila z PDF.", done_saved: "Dokument zapisany — biuro zobaczy go w panelu.",
     to_chat: "Zapisz PDF w czacie", to_chat_ok: "PDF wysłany na czat z botem",
     e_title: "Nie udało się otworzyć", e_not_linked: "Najpierw zaloguj się w bocie: wpisz swój ID, potem otwórz aplikację ponownie.",
@@ -256,6 +259,7 @@ const L = {
     need_check: "Confirm the photos are readable.", pdf_n: (n) => `One PDF · ${n} p.`, uploading: "Photos are still uploading…",
     rotate: "Rotate", remove: "Remove",
     crop_t: "Document frame", crop_hint: "Drag the corners if the frame is off.", crop_find: "Looking for document edges…", crop_none: "No edges found — set the corners by hand.", crop_nolib: "Auto-detection unavailable — set the corners by hand.", crop_full: "Whole photo", crop_ok: "Done", crop_cancel: "Cancel", crop: "Frame",
+    sc_find: "Point the camera at the document", sc_hold: "Hold steady — taking the photo…", sc_ready: "Document found — press the button", sc_bg: "Can't see a document — put it on a plain surface, without glare", sc_auto: "Auto", sc_gallery: "Gallery", sc_torch: "Flashlight", sc_shot: "Take photo", sc_err: "The camera is not available in Telegram", sc_sys: "System camera",
     done_t: "Sent to the office", done_mail: "The office received an e-mail with the PDF.", done_saved: "Document saved — the office will see it in the panel.",
     to_chat: "Save the PDF to my chat", to_chat_ok: "PDF sent to your chat with the bot",
     e_title: "Could not open", e_not_linked: "Log in to the bot first: send your ID to the bot, then open the app again.",
@@ -328,6 +332,7 @@ const I = {
   file: `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 12v6M9 15l3-3 3 3"/></svg>`,
   rot: `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>`,
   crop: `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>`,
+  flash: `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>`,
   x: `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>`,
   sent: `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m7.5 12.5 3 3 6-7"/></svg>`,
 };
@@ -372,6 +377,7 @@ function hashRoute() {
   return raw.replace(/(^|[#&?])tgWebApp[\s\S]*$/, "").split("&")[0] || "";
 }
 function onBack() {
+  if (SC.on) return closeScanner();
   if (ST.crop) return cropCancel();
   if (ST.done) { ST.done = null; return go("home"); }
   if (ST.view !== "home") go("home");
@@ -434,9 +440,10 @@ function route() {
   const view = ["home", "hours", "adv", "dof", "student", "docs"].includes(v) ? v : "home";
   if (view !== ST.view) ST.done = null;
   if (ST.crop) closeCrop();
+  if (SC.on) closeScanner();
   ST.view = view;
-  // OpenCV — заздалегідь, поки працівник читає екран і наводить камеру (помилка — не страшно, рамка буде вручну)
-  if (view === "docs" || view === "student") loadCv().catch(() => {});
+  // модель — заздалегідь, поки працівник читає екран (помилка — не страшно, рамку поставлять вручну)
+  if (view === "docs" || view === "student") warmDoc();
   if (TGW) { try { if (view === "home" && !ST.done) TGW.BackButton.hide(); else TGW.BackButton.show(); } catch (e) { /* старий клієнт */ } }
   window.scrollTo(0, 0);
   if (ST.done) return renderDone();
@@ -878,168 +885,44 @@ function warp(src, q) {
   return out;
 }
 
-// ── OpenCV.js: пошук країв документа ─────────────────────────────────────
-// Проміс віддає { cv }, а не сам cv: модуль Emscripten має власний .then — проміс, розвʼязаний ним,
-// чекав би його вічно (нескінченний цикл мікрозадач, сторінка зависає)
-let CV = null;
-function loadCv() {
-  if (CV) return CV;
-  CV = new Promise((res, rej) => {
-    const s = document.createElement("script");
-    s.src = CV_URL;
-    s.async = true;
-    s.crossOrigin = "anonymous";
-    s.onload = () => {
-      const c = window.cv;
-      const ok = (m) => res({ cv: m });
-      if (!c) return rej(new Error("no cv"));
-      if (c instanceof Promise) c.then(ok, rej);
-      else if (c.Mat) ok(c);
-      else c.onRuntimeInitialized = () => ok(c);
-    };
-    s.onerror = () => rej(new Error("cv load"));
-    document.head.appendChild(s);
-  });
-  CV.catch(() => { CV = null; });   // не завантажилась — наступна спроба знову
-  return CV;
+// ── scanic: пошук кутів документа ─────────────────────────────────────────
+// Нейромережа DocCornerNet (scanic ML; MIT, © marquaye — див. LICENSES.txt): кадр 224×224 → 4 кути + імовірність
+// «тут документ». Бібліотека (~110 КБ) і модель із середовищем ONNX (~3,5 МБ) — з jsDelivr, далі з кешу; вантажаться
+// на екранах документів. Модель не завантажилась — запасний класичний детектор scanic; бібліотека теж ні — рамка вручну.
+let SCN = null;
+function loadScanic() {
+  if (!SCN) SCN = import(SCANIC_URL).catch((e) => { SCN = null; throw e; });
+  return SCN;
 }
 const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
-
-// Зменшене фото (~500 px; у видошукачі ~360 px) → 4 кути документа в частках [0..1] або null.
-// Кандидати — опуклі 4-кутники з контурів у двох каналах: яскравість (L з Lab) і насиченість (S з HSV).
-// Насиченість рятує, коли аркуш і стіл однакові за яскравістю, але різні за кольором (білий папір на світлому дереві).
-// Кожен канал розтягнуто на весь діапазон (слабкий контраст стає сильним), MORPH_CLOSE прибирає текст,
-// далі Canny з двома порогами і поріг Оцу. Переможець — найбільша різниця кольору (ΔE у Lab) між документом
-// і смугою тла навколо, × √площі (більший документ важливіший за фото всередині нього).
-function detectQuad(cv, canvas, dbg) {
-  const W = canvas.width, H = canvas.height;
-  const minA = W * H * 0.12;
-  const mats = [];
-  const M = (m) => { mats.push(m); return m; };
-  try {
-    const rgba = M(cv.imread(canvas));
-    const rgb = M(new cv.Mat());
-    cv.cvtColor(rgba, rgb, cv.COLOR_RGBA2RGB);
-    const lab = M(new cv.Mat()), hsv = M(new cv.Mat());
-    cv.cvtColor(rgb, lab, cv.COLOR_RGB2Lab);
-    cv.cvtColor(rgb, hsv, cv.COLOR_RGB2HSV);
-    const labCh = M(new cv.MatVector()), hsvCh = M(new cv.MatVector());
-    cv.split(lab, labCh);
-    cv.split(hsv, hsvCh);
-    const L = M(labCh.get(0)), S = M(hsvCh.get(1));
-    const k5 = M(cv.Mat.ones(5, 5, cv.CV_8U)), k3 = M(cv.Mat.ones(3, 3, cv.CV_8U));
-    const anchor = new cv.Point(-1, -1);
-
-    const cands = [];
-    const allEdges = M(cv.Mat.zeros(H, W, cv.CV_8U));   // усі краї Canny разом — для перевірки периметра
-    const collect = (bin) => {
-      const contours = M(new cv.MatVector()), hier = M(new cv.Mat());
-      cv.findContours(bin, contours, hier, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-      for (let i = 0; i < contours.size(); i++) {
-        const c = M(contours.get(i));
-        if (cv.contourArea(c) < minA) continue;
-        const hull = M(new cv.Mat());
-        cv.convexHull(c, hull, false, true);
-        const peri = cv.arcLength(hull, true);
-        for (const e of [0.02, 0.035, 0.05, 0.07]) {
-          const ap = M(new cv.Mat());
-          cv.approxPolyDP(hull, ap, e * peri, true);
-          if (ap.rows < 4) break;
-          if (ap.rows === 4) {
-            const a = cv.contourArea(ap);
-            const p = ap.data32S;
-            if (a >= minA) cands.push({ a, pts: [[p[0], p[1]], [p[2], p[3]], [p[4], p[5]], [p[6], p[7]]] });
-            break;
-          }
-        }
-      }
-    };
-    // розтягнути канал між 1-м і 99-м процентилями (крайні значення — шум і відблиски, за ними не тягнемо)
-    const stretch = (ch, dst) => {
-      const d = ch.data, h = new Uint32Array(256);
-      for (let i = 0; i < d.length; i++) h[d[i]]++;
-      const q = (f) => { let acc = 0; for (let v = 0; v < 256; v++) { acc += h[v]; if (acc >= d.length * f) return v; } return 255; };
-      const lo = q(0.01), hi = Math.max(lo + 8, q(0.99));
-      ch.convertTo(dst, -1, 255 / (hi - lo), (-lo * 255) / (hi - lo));
-    };
-    for (const [ch, thr] of [[L, [[30, 90], [12, 40]]], [S, [[30, 90], [12, 40]]]]) {
-      const norm = M(new cv.Mat()), closed = M(new cv.Mat()), blur = M(new cv.Mat());
-      stretch(ch, norm);
-      cv.morphologyEx(norm, closed, cv.MORPH_CLOSE, k5, anchor, 2);
-      cv.GaussianBlur(closed, blur, new cv.Size(5, 5), 0);
-      for (const [lo, hi] of thr) {
-        const edges = M(new cv.Mat());
-        cv.Canny(blur, edges, lo, hi);
-        cv.dilate(edges, edges, k3, anchor, 1);
-        cv.bitwise_or(allEdges, edges, allEdges);
-        collect(edges);
-      }
-      const bin = M(new cv.Mat());
-      cv.threshold(blur, bin, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-      cv.morphologyEx(bin, bin, cv.MORPH_OPEN, k5, anchor, 2);
-      collect(bin);
-    }
-    if (dbg) dbg.n = cands.length;
-    if (!cands.length) return null;
-
-    // Різниця кольору «документ / смуга тла навколо» (ΔE у 8-бітному Lab OpenCV)
-    const labBlur = M(new cv.Mat());
-    cv.GaussianBlur(lab, labBlur, new cv.Size(5, 5), 0);
-    const r = Math.max(3, Math.round(Math.min(W, H) * 0.03));
-    const kr = M(cv.Mat.ones(2 * r + 1, 2 * r + 1, cv.CV_8U));
-    const score = (pts) => {
-      const mask = M(cv.Mat.zeros(H, W, cv.CV_8U));
-      const poly = M(cv.matFromArray(4, 1, cv.CV_32SC2, [].concat(...pts)));
-      const pv = M(new cv.MatVector());
-      pv.push_back(poly);
-      cv.fillPoly(mask, pv, new cv.Scalar(255));
-      const inner = M(new cv.Mat()), outer = M(new cv.Mat()), ring = M(new cv.Mat());
-      cv.erode(mask, inner, kr);
-      cv.dilate(mask, outer, kr);
-      cv.subtract(outer, mask, ring);
-      if (cv.countNonZero(inner) < 50) return 0;
-      // документ на весь кадр: тла навколо майже немає — помірна оцінка замість випадкової
-      if (cv.countNonZero(ring) < 200) return 30;
-      const a = cv.mean(labBlur, inner), b = cv.mean(labBlur, ring);
-      return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-    };
-    // Частка периметра, що лежить на краях (кути з запасом 8% — вони бувають заокруглені)
-    const ed = allEdges.data;
-    const support = (pts) => {
-      let hit = 0, n = 0;
-      for (let i = 0; i < 4; i++) {
-        const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % 4];
-        for (let t = 0.08; t <= 0.92; t += 0.02) {
-          const x = Math.round(ax + (bx - ax) * t), y = Math.round(ay + (by - ay) * t);
-          if (x < 0 || y < 0 || x >= W || y >= H) continue;
-          n++;
-          if (ed[y * W + x]) hit++;
-        }
-      }
-      return n ? hit / n : 0;
-    };
-    // однакові кандидати з різних каналів — оцінюємо один раз
-    // і не рамка самого кадру (поріг Оцу інколи бере тло за «документ»: 4 кути — в кутах зображення)
-    const edge = Math.min(W, H) * 0.02;
-    const isFrame = (pts) => orderQuad(pts).every((p, i) => Math.hypot(p[0] - [0, W - 1, W - 1, 0][i], p[1] - [0, 0, H - 1, H - 1][i]) < edge);
-    const seen = [];
-    let best = null, bestS = 0;
-    cands.sort((x, y) => y.a - x.a).forEach((c) => {
-      if (seen.length >= 14 || isFrame(c.pts)) return;
-      const tol = Math.min(W, H) * 0.02;
-      if (seen.some((s) => s.every((p, i) => Math.hypot(p[0] - c.pts[i][0], p[1] - c.pts[i][1]) < tol))) return;
-      seen.push(c.pts);
-      const dE = score(c.pts), sup = support(c.pts);
-      if (dbg) dbg.push({ a: Math.round((c.a / (W * H)) * 100), dE: Math.round(dE), sup: Math.round(sup * 100), pts: c.pts });
-      // слабка різниця кольору — лише якщо краї підтверджують увесь контур
-      if (dE < 10 && !(dE >= 2.5 && sup >= 0.7)) return;
-      const s = Math.max(dE, 10) * Math.sqrt(c.a / (W * H)) * (0.5 + sup);
-      if (s > bestS) { bestS = s; best = c; }
-    });
-    return best ? orderQuad(best.pts.map(([x, y]) => [x / W, y / H])) : null;
-  } finally {
-    for (const m of mats) { try { m.delete(); } catch (e) { /* уже звільнено */ } }
+// Кути scanic { topLeft: {x, y}, … } у пікселях кадру → 4 точки в частках [0..1]
+function scanicQuad(r, w, h) {
+  const c = r && r.success && r.corners;
+  if (!c || !c.topLeft) return null;
+  return orderQuad(["topLeft", "topRight", "bottomRight", "bottomLeft"].map((k) => [c[k].x / w, c[k].y / h]));
+}
+let ML_BAD = false;            // модель не вантажиться — до кінця сесії класичний детектор
+// canvas → { q: кути або null, score: імовірність документа }; minScore — з якої імовірності приймаємо кути
+async function findDoc(canvas, minScore) {
+  const m = await loadScanic();
+  if (!ML_BAD) {
+    try {
+      const r = await m.scanDocument(canvas, { mode: "detect", detector: "ml", ml: { minScore } });
+      return { q: scanicQuad(r, canvas.width, canvas.height), score: r && r.score != null ? r.score : 0 };
+    } catch (e) { ML_BAD = true; }
   }
+  const r = await m.scanDocument(canvas, { mode: "detect", maxProcessingDimension: Math.max(canvas.width, canvas.height) });
+  return { q: scanicQuad(r, canvas.width, canvas.height), score: r && r.success ? 1 : 0 };
+}
+// Прогрів: бібліотека + модель, поки людина читає екран і наводить камеру
+let WARM = null;
+function warmDoc() {
+  if (!WARM) {
+    const c = document.createElement("canvas");
+    c.width = c.height = 64;
+    WARM = findDoc(c, 0.5).catch(() => { WARM = null; });
+  }
+  return WARM;
 }
 
 // Стабілізатор рамки для живого відео: кути плавно підтягуються до нового положення (EMA),
@@ -1080,6 +963,182 @@ function trackQuad(tr, q, now) {
   return tr.q;
 }
 
+// ── Видошукач: жива камера з рамкою документа і автознімком ──────────────
+// Своя камера (getUserMedia) замість системної: рамка поверх відео, тримається ~1 с — знімок сам (або кнопкою).
+// iPhone: відео 4K — кадр з відео і є знімком (8 Мп). Android: відео 1080p (кадр 4K там копіюється надто повільно)
+// і повний знімок takePhoto (12 Мп). Далі — той самий екран рамки з уже знайденими кутами.
+// Камера в Telegram недоступна — кнопка «Системна камера» (стара схема: фото → рамка).
+const IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || !!(TGW && TGW.platform === "ios");
+const LIVE_OK = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) && !!(TGW || DEMO);
+const SCAN_PX = 320;          // кадр для пошуку кутів (довша сторона); модель однаково бачить 224×224
+const AUTO_MS = 1000;         // скільки рамка має стояти для автознімка
+const SC = { on: false };
+
+async function openScanner() {
+  if (SC.on) return;
+  Object.assign(SC, { on: true, stream: null, track: null, run: false, tr: makeTracker(), auto: true, busy: false,
+    t0: performance.now(), err: null, torch: false, torchOk: false, box: null });
+  try { if (TGW && TGW.disableVerticalSwipes) TGW.disableVerticalSwipes(); } catch (e) { /* старий клієнт */ }
+  if (TGW) { try { TGW.BackButton.show(); } catch (e) { /* старий клієнт */ } }
+  warmDoc();
+  drawScanner();
+  try {
+    SC.stream = await navigator.mediaDevices.getUserMedia({
+      audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: IOS ? 3840 : 1920 }, height: { ideal: IOS ? 2160 : 1080 } },
+    });
+  } catch (e) {
+    if (!SC.on) return;
+    SC.err = e.name || "error";
+    return drawScanner();
+  }
+  if (!SC.on) { SC.stream.getTracks().forEach((x) => x.stop()); return; }
+  SC.track = SC.stream.getVideoTracks()[0];
+  try { const c = SC.track.getCapabilities ? SC.track.getCapabilities() : null; SC.torchOk = !!(c && c.torch); } catch (e) { /* без ліхтарика */ }
+  drawScanner();
+  const v = $("scVideo");
+  v.srcObject = SC.stream;
+  v.onloadedmetadata = scanLayout;
+  try { await v.play(); } catch (e) { /* автозапуск заборонено — кадри все одно йдуть */ }
+  SC.run = true;
+  scanLoop();
+}
+function closeScanner() {
+  if (!SC.on) return;
+  SC.on = false;
+  SC.run = false;
+  if (SC.stream) SC.stream.getTracks().forEach((x) => x.stop());
+  SC.stream = null;
+  $("scan").hidden = true;
+  $("scan").innerHTML = "";
+  document.body.classList.remove("cropping");
+  try { if (TGW && TGW.enableVerticalSwipes) TGW.enableVerticalSwipes(); } catch (e) { /* старий клієнт */ }
+  if (TGW) { try { if (ST.view === "home" && !ST.done) TGW.BackButton.hide(); } catch (e) { /* старий клієнт */ } }
+}
+function drawScanner() {
+  const t = T(), el = $("scan");
+  el.hidden = false;
+  document.body.classList.add("cropping");
+  if (SC.err) {
+    el.innerHTML = `<div class="scan-msg"><b>${esc(t.sc_err)}</b><span>${esc(SC.err)}</span>
+      <button class="btn" onclick="scanSystem()">${esc(t.sc_sys)}</button>
+      <button class="btn ghost" onclick="closeScanner()">${esc(t.crop_cancel)}</button></div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="scan-top">
+      <button class="scan-ib" onclick="closeScanner()" aria-label="${esc(t.crop_cancel)}">${I.x}</button>
+      <span id="scHint" class="scan-hint">${esc(t.sc_find)}</span>
+      <button class="scan-ib ${SC.torch ? "on" : ""}" onclick="scanTorch()" aria-label="${esc(t.sc_torch)}" aria-pressed="${SC.torch}" ${SC.torchOk ? "" : "hidden"}>${I.flash}</button>
+    </div>
+    <div class="scan-stage" id="scStage">${SC.stream ? `<div class="scan-wrap" id="scWrap">
+        <video id="scVideo" playsinline muted autoplay></video>
+        <svg id="scSvg" class="crop-svg" aria-hidden="true"><polygon id="scPoly" class="crop-poly" points=""></polygon></svg>
+      </div>` : `<div class="spin"></div>`}</div>
+    <div class="scan-bar">
+      <button class="scan-auto ${SC.auto ? "on" : ""}" onclick="scanAuto()" aria-pressed="${SC.auto}">${esc(t.sc_auto)}</button>
+      <button class="shutter" onclick="scanShot()" aria-label="${esc(t.sc_shot)}" ${SC.stream ? "" : "disabled"}><span></span></button>
+      <button class="scan-auto" onclick="scanGallery()">${esc(t.sc_gallery)}</button>
+    </div>`;
+}
+// Відео вписати в сцену зі збереженням пропорцій — рамка тоді лягає точно на кадр
+function scanLayout() {
+  const v = $("scVideo"), st = $("scStage"), w = $("scWrap");
+  if (!v || !st || !w || !v.videoWidth) return;
+  const k = Math.min(st.clientWidth / v.videoWidth, st.clientHeight / v.videoHeight);
+  SC.box = { w: Math.round(v.videoWidth * k), h: Math.round(v.videoHeight * k) };
+  w.style.width = SC.box.w + "px";
+  w.style.height = SC.box.h + "px";
+  $("scSvg").setAttribute("viewBox", `0 0 ${SC.box.w} ${SC.box.h}`);
+}
+window.addEventListener("resize", () => { if (SC.on && SC.stream) scanLayout(); });
+async function scanLoop() {
+  if (!SC.run) return;
+  const v = $("scVideo");
+  if (v && v.readyState >= 2 && v.videoWidth && !SC.busy) {
+    if (!SC.box) scanLayout();
+    const k = SCAN_PX / Math.max(v.videoWidth, v.videoHeight);
+    const small = SC.small || (SC.small = document.createElement("canvas"));
+    small.width = Math.round(v.videoWidth * k);
+    small.height = Math.round(v.videoHeight * k);
+    small.getContext("2d").drawImage(v, 0, 0, small.width, small.height);
+    let res = null;
+    try { res = await findDoc(small, 0.3); } catch (e) { /* бібліотека ще вантажиться або недоступна */ }
+    if (!SC.run) return;
+    // гістерезис: рамка з'являється від імовірності 0,5, далі тримається, поки не впаде нижче 0,3
+    const q = res && res.q && res.score >= (SC.tr.q ? 0.3 : 0.5) ? res.q : null;
+    const now = performance.now();
+    const shown = trackQuad(SC.tr, q, now);
+    const b = SC.box, poly = $("scPoly"), t = T();
+    if (b && poly) {
+      poly.setAttribute("points", shown ? shown.map(([x, y]) => `${x * b.w},${y * b.h}`).join(" ") : "");
+      poly.style.fill = shown && SC.tr.still > AUTO_MS / 2 ? "rgba(78, 184, 120, 0.3)" : "";
+    }
+    const hint = $("scHint");
+    if (hint) hint.textContent = !shown && now - Math.max(SC.t0, SC.tr.seen || 0) > 2500 ? t.sc_bg : shown ? (SC.auto ? t.sc_hold : t.sc_ready) : t.sc_find;
+    if (SC.auto && shown && SC.tr.still >= AUTO_MS && now - SC.t0 > 1500) { scanShot(); return; }
+  }
+  setTimeout(scanLoop, 30);
+}
+function scanAuto() {
+  SC.auto = !SC.auto;
+  document.querySelectorAll(".scan-bar .scan-auto")[0].classList.toggle("on", SC.auto);
+}
+async function scanTorch() {
+  if (!SC.track) return;
+  SC.torch = !SC.torch;
+  try { await SC.track.applyConstraints({ advanced: [{ torch: SC.torch }] }); } catch (e) { SC.torch = false; }
+  const b = document.querySelector(".scan-top .scan-ib:last-child");
+  if (b) { b.classList.toggle("on", SC.torch); b.setAttribute("aria-pressed", SC.torch); }
+}
+async function scanShot() {
+  const v = $("scVideo");
+  if (!SC.on || SC.busy || !v || !v.videoWidth) return;
+  SC.busy = true;
+  SC.run = false;
+  $("scan").classList.add("flash");
+  haptic("success");
+  let blob = null;
+  // Android: повний знімок камери; iPhone (і коли не вийшло) — кадр з відео
+  if (!IOS && window.ImageCapture && SC.track) {
+    try { blob = await withTimeout(new window.ImageCapture(SC.track).takePhoto(), 4000); } catch (e) { blob = null; }
+  }
+  if (!blob) {
+    const c = document.createElement("canvas");
+    c.width = v.videoWidth;
+    c.height = v.videoHeight;
+    c.getContext("2d").drawImage(v, 0, 0);
+    blob = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.92));
+  }
+  const live = SC.tr.q ? SC.tr.q.map((p) => p.slice()) : null;
+  const liveAspect = v.videoWidth / v.videoHeight;
+  closeScanner();
+  $("scan").classList.remove("flash");
+  if (!blob) return toast(errText("bad_type"), true);
+  const file = new File([blob], `scan_${Date.now()}.jpg`, { type: "image/jpeg" });
+  // кути — ще раз на самому знімку (у takePhoto інші пропорції, ніж у відео); не вийшло — рамка з відео
+  let quad = null;
+  try {
+    const src = await sourceCanvas(file, 0, 640);
+    const r = await withTimeout(findDoc(src, 0.3), 5000);
+    quad = r.q;
+    if (!quad && live && Math.abs(src.width / src.height - liveAspect) < 0.02) quad = live;
+  } catch (e) { quad = live; }
+  addPhoto(file, quad);
+}
+// Камера недоступна — системна камера; «Галерея» — готове фото з телефона
+function scanSystem() {
+  closeScanner();
+  const el = $("camIn");
+  el.value = "";
+  el.click();
+}
+function scanGallery() {
+  closeScanner();
+  const el = $("fileIn");
+  el.value = "";
+  el.click();
+}
+
 // ── Рамка документа: автопошук + ручна правка кутів ───────────────────────
 // onDone(page) — рамку підтверджено (page.quad уже записано), onCancel — фото відкинуто
 async function openCrop(page, onDone, onCancel) {
@@ -1101,8 +1160,7 @@ async function openCrop(page, onDone, onCancel) {
   drawCrop();
   if (page.quad) return;
   try {
-    const { cv } = await withTimeout(loadCv(), CV_WAIT_MS);
-    const q = detectQuad(cv, scaleCanvas(cr.prev, 500));
+    const { q } = await withTimeout(findDoc(scaleCanvas(cr.prev, 640), 0.4), DET_WAIT_MS);
     if (ST.crop !== cr || cr.drag >= 0) return;
     if (q) { cr.quad = q; cr.status = "hint"; } else cr.status = "none";
   } catch (e) {
@@ -1270,6 +1328,7 @@ const redraw = () => { if (ST.crop) return; if (ST.view === "student" && !ST.don
 // Куди піде наступне фото: { where: "student" } або { where: "docs", kind, idx }
 function pick(where, kind, idx, fromFile) {
   ST.pick = { where, kind, idx };
+  if (!fromFile && LIVE_OK) return openScanner();   // жива камера з рамкою; недоступна — там же кнопка системної
   const el = fromFile ? $("fileIn") : $("camIn");
   el.value = "";
   el.click();
@@ -1283,7 +1342,14 @@ function onFiles(input) {
   const isPdf = f.type === "application/pdf" || /\.pdf$/i.test(f.name || "");
   if (f.size > 12 * 1024 * 1024 && isPdf) return toast(errText("too_big"), true);
   if (isPdf && p0.where !== "student") return toast(errText("bad_type"), true);
+  addPhoto(f, null, isPdf);
+}
+// Нова сторінка туди, куди показує ST.pick; фото — спершу рамка документа (quad — уже знайдені кути, якщо є)
+function addPhoto(f, quad, isPdf) {
+  const p0 = ST.pick;
+  if (!p0) return;
   const p = newPage(f, isPdf ? "pdf" : "jpg");
+  p.quad = quad || null;
   const place = () => {
     if (p0.where === "student") {
       // PDF — лише один, без фото; фото — кілька сторінок
@@ -1297,7 +1363,7 @@ function onFiles(input) {
     renderView();
   };
   if (isPdf) return place();
-  openCrop(p, place, null);   // фото — спершу рамка документа
+  openCrop(p, place, null);
 }
 const renderView = () => (ST.view === "student" ? renderStudent() : renderDocs());
 function pageOf(where, kind, idx) { return where === "student" ? ST.stud.pages[idx] : ST.docs.pages[kind][idx]; }
@@ -1483,30 +1549,37 @@ async function toChat(id) {
 
 // ── Тест камери (#camtest, команда /camtest у боті) ──────────────────────
 // Чи дає Telegram на цьому телефоні камеру всередині застосунку, яка роздільність, як швидко шукаються краї
-// в живому відео. Без входу працівника. Звіт — POST /api/wapp/camtest → лог сервера. Тимчасово.
+// в живому відео. Перемикач детекторів scanic: ML (нейромережа DocCornerNet, як у видошукачі) і класичний (WASM).
+// Без входу працівника. Звіт — POST /api/wapp/camtest → лог сервера. Тимчасово.
+const CT_MODES = ["ml", "sc"];
 const CTX = {
   uk: {
     title: "Тест камери", intro: "Перевіримо, чи працює камера всередині Telegram на цьому телефоні і чи встигає рамка ловити краї документа.",
     start: "Увімкнути камеру", aim: "Наведіть на документ — зелена рамка має ловити краї.", lib: "Завантаження бібліотеки пошуку країв…",
-    cam: "Камера", lib_t: "Бібліотека", det: "Пошук країв", found: "Знайдено в кадрах", shot: "Зробити знімок", torch: "Ліхтарик", send: "Надіслати звіт",
+    cam: "Камера", lib_t: "Бібліотека", found: "Знайдено в кадрах", shot: "Зробити знімок", torch: "Ліхтарик", send: "Надіслати звіт",
     sent: "Звіт надіслано. Дякуємо!", err: "Камера недоступна", no_md: "Цей Telegram не дає застосунку доступу до камери.",
-    photo: "Знімок", frame: "Кадр з відео", lib_err: "Бібліотека не завантажилась",
+    photo: "Знімок", frame: "Кадр з відео", lib_err: "не завантажилась",
     stable: "Рамка стоїть — тут буде автознімок", hint_bg: "Не бачу документа — покладіть його на однотонну поверхню, без відблисків.",
-    jitter: "Тремтіння рамки (сире → згладжене)",
+    algo: "Алгоритм", modes: { sc: "scanic", ml: "scanic ML" }, loading: "Завантаження…",
+    m_row: (ms, fps, pct, n) => `${ms} ms · ${fps}/s · ${pct}% з ${n}`, m_jit: "тремтіння",
+    tip: "Порівняйте обидва на тих самих документах і фоні — по 10–15 секунд кожен — і надішліть звіт.",
   },
   ru: {
     title: "Тест камеры", intro: "Проверим, работает ли камера внутри Telegram на этом телефоне и успевает ли рамка ловить края документа.",
     start: "Включить камеру", aim: "Наведите на документ — зелёная рамка должна ловить края.", lib: "Загрузка библиотеки поиска краёв…",
-    cam: "Камера", lib_t: "Библиотека", det: "Поиск краёв", found: "Найдено в кадрах", shot: "Сделать снимок", torch: "Фонарик", send: "Отправить отчёт",
+    cam: "Камера", lib_t: "Библиотека", found: "Найдено в кадрах", shot: "Сделать снимок", torch: "Фонарик", send: "Отправить отчёт",
     sent: "Отчёт отправлен. Спасибо!", err: "Камера недоступна", no_md: "Этот Telegram не даёт приложению доступа к камере.",
-    photo: "Снимок", frame: "Кадр из видео", lib_err: "Библиотека не загрузилась",
+    photo: "Снимок", frame: "Кадр из видео", lib_err: "не загрузилась",
     stable: "Рамка стоит — здесь будет автоснимок", hint_bg: "Не вижу документа — положите его на однотонную поверхность, без бликов.",
-    jitter: "Дрожание рамки (сырое → сглаженное)",
+    algo: "Алгоритм", modes: { sc: "scanic", ml: "scanic ML" }, loading: "Загрузка…",
+    m_row: (ms, fps, pct, n) => `${ms} ms · ${fps}/s · ${pct}% из ${n}`, m_jit: "дрожание",
+    tip: "Сравните оба на тех же документах и фоне — по 10–15 секунд каждый — и отправьте отчёт.",
   },
 };
-const CT = { stream: null, track: null, run: false, det: [], frames: 0, found: 0, info: {}, cv: null, quad: null, torch: false, lastPaint: 0,
-  tr: null, rawPrev: null, shownPrev: null, jRaw: [], jShown: [], stableMs: 0 };
 const LIVE_PX = 360;          // кадр для пошуку країв у живому відео (довша сторона)
+const ctStat = () => ({ det: [], frames: 0, found: 0, t0: 0, secs: 0, jRaw: [], jShown: [], stable: 0 });
+const CT = { stream: null, track: null, run: false, info: {}, quad: null, torch: false, lastPaint: 0,
+  mode: "ml", m: { sc: ctStat(), ml: ctStat() }, tr: null, rawPrev: null, shownPrev: null, scanic: null, busy: false };
 const ctT = () => CTX[ST.lang] || CTX.uk;
 
 function renderCamTest() {
@@ -1526,17 +1599,26 @@ function renderCamTest() {
     md: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
     imageCapture: typeof window.ImageCapture !== "undefined",
   };
-  // бібліотеку — одразу, поки людина читає
+  // бібліотеку — одразу, поки людина читає (ML-частину — модель і середовище ONNX — scanic довантажить при першому виклику)
   const t0 = performance.now();
-  loadCv().then(({ cv }) => { CT.cv = cv; CT.info.cvMs = Math.round(performance.now() - t0); ctStats(); },
-    () => { CT.info.cvError = true; ctStats(); });
+  loadScanic().then((m) => { CT.scanic = m; CT.info.scanicMs = Math.round(performance.now() - t0); ctStats(); },
+    (e) => { CT.info.scanicError = String((e && e.message) || e).slice(0, 200); ctStats(); });
+}
+function setCtMode(m) {
+  if (!CT_MODES.includes(m) || m === CT.mode) return;
+  CT.mode = m;
+  CT.tr = makeTracker();
+  CT.rawPrev = CT.shownPrev = null;
+  document.querySelectorAll("#ctSeg button").forEach((b) => { b.classList.toggle("on", b.dataset.m === m); b.setAttribute("aria-pressed", b.dataset.m === m); });
+  ctStats();
 }
 async function camStart() {
   const t = ctT(), box = $("ctBox");
   if (!CT.info.md) { CT.info.error = "no mediaDevices"; box.innerHTML = `<div class="banner bad">${I.warn}<span class="l"><b>${esc(t.no_md)}</b></span></div>`; return ctFinish(); }
   try {
+    // 1080p: для видошукача досить, а кадр 4K на Android копіюється в пошук країв надто повільно
     CT.stream = await navigator.mediaDevices.getUserMedia({
-      audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 3840 }, height: { ideal: 2160 } },
+      audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
     });
   } catch (e) {
     CT.info.error = `${e.name}: ${e.message}`;
@@ -1551,29 +1633,34 @@ async function camStart() {
     if (c) CT.info.caps = { maxW: c.width && c.width.max, maxH: c.height && c.height.max, torch: !!c.torch, focus: c.focusMode || null, zoom: c.zoom ? [c.zoom.min, c.zoom.max] : null };
   } catch (e) { CT.info.capsError = e.message; }
   box.innerHTML = `
+    <div class="row" style="min-height:40px"><span class="muted">${esc(t.algo)}</span>
+      <div class="seg" id="ctSeg" role="group" aria-label="${esc(t.algo)}">${CT_MODES.map((m) =>
+        `<button data-m="${m}" class="${m === CT.mode ? "on" : ""}" aria-pressed="${m === CT.mode}" onclick="setCtMode('${m}')">${esc(t.modes[m])}</button>`).join("")}</div></div>
     <div id="ctWrap" style="position:relative;width:100%;border-radius:12px;overflow:hidden;background:#000">
       <video id="ctVideo" playsinline muted autoplay style="display:block;width:100%;height:auto"></video>
       <svg id="ctSvg" style="position:absolute;inset:0;width:100%;height:100%" aria-hidden="true"><polygon id="ctPoly" class="crop-poly" points=""></polygon></svg>
     </div>
-    <span class="muted" id="ctHint">${esc(CT.cv ? t.aim : t.lib)}</span>
+    <span class="muted" id="ctHint">${esc(CT.scanic ? t.aim : t.lib)}</span>
     <div class="grid2">
       <button class="btn sec" onclick="camShot()">${esc(t.shot)}</button>
       <button class="btn sec" onclick="camTorch()" ${CT.info.caps && CT.info.caps.torch ? "" : "disabled"}>${esc(t.torch)}</button>
-    </div>`;
+    </div>
+    <p class="note">${I.info}<span>${esc(t.tip)}</span></p>`;
   const v = $("ctVideo");
   v.srcObject = CT.stream;
   try { await v.play(); } catch (e) { CT.info.playError = e.message; }
   CT.run = true;
-  CT.t0 = performance.now();
   CT.tr = makeTracker();
   camLoop();
   ctFinish();
 }
-function camLoop() {
+async function camLoop() {
   if (!CT.run) return;
   const v = $("ctVideo");
   if (!v) { camStop(); return; }
-  if (v.readyState >= 2 && v.videoWidth && CT.cv) {
+  const mode = CT.mode, st = CT.m[mode];
+  const ready = !!CT.scanic;
+  if (v.readyState >= 2 && v.videoWidth && ready) {
     const k = LIVE_PX / Math.max(v.videoWidth, v.videoHeight);
     const small = CT.small || (CT.small = document.createElement("canvas"));
     small.width = Math.round(v.videoWidth * k);
@@ -1581,30 +1668,41 @@ function camLoop() {
     small.getContext("2d").drawImage(v, 0, 0, small.width, small.height);
     const t = performance.now();
     let q = null;
-    try { q = detectQuad(CT.cv, small); } catch (e) { CT.info.detError = e.message; }
-    CT.det.push(performance.now() - t);
-    if (CT.det.length > 40) CT.det.shift();
-    CT.frames++;
-    if (q) CT.found++;
+    try {
+      const first = mode === "ml" && !CT.info.mlMs;
+      const r = await CT.scanic.scanDocument(small, { mode: "detect", detector: mode === "ml" ? "ml" : "classical", maxProcessingDimension: LIVE_PX });
+      if (first) CT.info.mlMs = Math.round(performance.now() - t);   // перший виклик ML = завантаження моделі
+      q = scanicQuad(r, small.width, small.height);
+    } catch (e) { CT.info[mode + "Error"] = String(e && e.message || e).slice(0, 200); }
     const now = performance.now();
+    if (CT.mode !== mode) { setTimeout(camLoop, 15); return; }   // перемкнули, поки рахували
+    if (!(mode === "ml" && CT.info.mlMs && st.frames === 0 && now - t > 1500)) st.det.push(now - t);   // без часу завантаження моделі
+    if (st.det.length > 40) st.det.shift();
+    if (!st.t0) st.t0 = now;
+    st.frames++;
+    if (q) st.found++;
     const shown = trackQuad(CT.tr, q, now);
     // тремтіння: середній зсув кутів між сусідніми кадрами, ‰ від кадру — сире і після стабілізатора
     const move = (a, b) => a.reduce((sum, p, i) => sum + Math.hypot(p[0] - b[i][0], p[1] - b[i][1]), 0) / 4 * 1000;
-    if (q && CT.rawPrev) { CT.jRaw.push(move(q, CT.rawPrev)); if (CT.jRaw.length > 60) CT.jRaw.shift(); }
-    if (shown && CT.shownPrev) { CT.jShown.push(move(shown, CT.shownPrev)); if (CT.jShown.length > 60) CT.jShown.shift(); }
+    if (q && CT.rawPrev) { st.jRaw.push(move(q, CT.rawPrev)); if (st.jRaw.length > 60) st.jRaw.shift(); }
+    if (shown && CT.shownPrev) { st.jShown.push(move(shown, CT.shownPrev)); if (st.jShown.length > 60) st.jShown.shift(); }
     CT.rawPrev = q;
     CT.shownPrev = shown ? shown.map((p) => p.slice()) : null;
     CT.quad = shown;
     const stable = !!shown && CT.tr.still > 800;
-    if (stable) CT.stableMs += 1;
+    if (stable) st.stable++;
+    st.secs = (now - st.t0) / 1000;
     const svg = $("ctSvg"), poly = $("ctPoly");
     const W = svg.clientWidth, H = svg.clientHeight;
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     poly.setAttribute("points", shown ? shown.map(([x, y]) => `${x * W},${y * H}`).join(" ") : "");
     poly.style.fill = stable ? "rgba(78, 184, 120, 0.35)" : "";
     const hint = $("ctHint"), tx = ctT();
-    if (hint) hint.textContent = stable ? tx.stable : !shown && now - Math.max(CT.t0, CT.tr.seen || 0) > 2500 ? tx.hint_bg : tx.aim;
-    if (performance.now() - CT.lastPaint > 500) { CT.lastPaint = performance.now(); ctStats(); }
+    if (hint) hint.textContent = stable ? tx.stable : !shown && now - Math.max(st.t0, CT.tr.seen || 0) > 2500 ? tx.hint_bg : tx.aim;
+    if (now - CT.lastPaint > 500) { CT.lastPaint = now; ctStats(); }
+  } else if (!CT.scanic) {
+    const hint = $("ctHint");
+    if (hint) hint.textContent = ctT().loading;
   }
   setTimeout(camLoop, 15);   // таймер, не requestAnimationFrame: кадр розпізнаємо, щойно готовий попередній
 }
@@ -1635,14 +1733,18 @@ async function camTorch() {
   ctStats();
 }
 function ctSummary() {
-  const avg = CT.det.length ? CT.det.reduce((s, x) => s + x, 0) / CT.det.length : null;
-  const secs = CT.t0 ? (performance.now() - CT.t0) / 1000 : 0;
   const mean = (a) => (a.length ? Math.round((a.reduce((x, y) => x + y, 0) / a.length) * 10) / 10 : null);
-  return {
-    ...CT.info, live: LIVE_PX, detMs: avg == null ? null : Math.round(avg), fps: secs > 1 ? Math.round((CT.frames / secs) * 10) / 10 : null,
-    foundPct: CT.frames ? Math.round((CT.found / CT.frames) * 100) : null, frames: CT.frames,
-    jitterRaw: mean(CT.jRaw), jitterShown: mean(CT.jShown), stableFrames: CT.stableMs,
-  };
+  const modes = {};
+  for (const m of CT_MODES) {
+    const s = CT.m[m];
+    if (!s.frames) continue;
+    modes[m] = {
+      detMs: Math.round(mean(s.det) || 0), fps: s.secs > 1 ? Math.round((s.frames / s.secs) * 10) / 10 : null,
+      foundPct: Math.round((s.found / s.frames) * 100), frames: s.frames,
+      jitterRaw: mean(s.jRaw), jitterShown: mean(s.jShown), stablePct: Math.round((s.stable / s.frames) * 100),
+    };
+  }
+  return { ...CT.info, live: LIVE_PX, modes };
 }
 function ctStats() {
   const t = ctT(), el = $("ctStats");
@@ -1652,10 +1754,12 @@ function ctStats() {
   el.hidden = false;
   el.innerHTML = [
     s.settings ? row(t.cam, `${s.settings.w}×${s.settings.h}${s.settings.fps ? ` · ${Math.round(s.settings.fps)} fps` : ""}${s.caps && s.caps.maxW ? ` (max ${s.caps.maxW}×${s.caps.maxH})` : ""}`) : "",
-    row(t.lib_t, s.cvError ? t.lib_err : s.cvMs == null ? "…" : `${s.cvMs} ms`),
-    s.detMs != null ? row(t.det, `${s.detMs} ms · ${s.fps || "…"}/s`) : "",
-    s.frames ? row(t.found, `${s.foundPct}% (${s.frames})`) : "",
-    s.jitterRaw != null ? row(t.jitter, `${s.jitterRaw}‰ → ${s.jitterShown == null ? "…" : s.jitterShown + "‰"}`) : "",
+    row(`${t.lib_t} scanic`, s.scanicError ? t.lib_err : s.scanicMs == null ? "…" : `${s.scanicMs} ms`),
+    s.mlMs != null ? row(`${t.lib_t} ML`, `${s.mlMs} ms`) : "",
+    ...CT_MODES.filter((m) => s.modes[m]).map((m) => {
+      const x = s.modes[m];
+      return row(`${t.modes[m]}${m === CT.mode ? " ●" : ""}`, `${t.m_row(x.detMs, x.fps || "…", x.foundPct, x.frames)}${x.jitterShown != null ? ` · ${t.m_jit} ${x.jitterShown}‰` : ""}`);
+    }),
     s.frame ? row(t.frame, `${s.frame.w}×${s.frame.h}`) : "",
     s.photo ? row(t.photo, s.photo.error ? s.photo.error : `${s.photo.w}×${s.photo.h} · ${s.photo.kb} KB`) : "",
     s.tg ? row("Telegram", `${s.tg.platform} ${s.tg.version}`) : "",

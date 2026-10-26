@@ -6,12 +6,13 @@
   <title>SAS Praca</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="app.css?v=11" />
+  <link rel="stylesheet" href="app.css?v=13" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
   <!-- Застосунок працівника в Telegram: кнопка «Застосунок» у чаті з ботом (bot/worker_app.js). API — api/wapp.js.
-       Відкрито не з Telegram: ?demo — тестові дані без сервера (перевірка вигляду). -->
+       Відкрито не з Telegram: ?demo — тестові дані без сервера (перевірка вигляду).
+       Сторонній код і модель (scanic, ONNX Runtime, DocCornerNet) — ліцензії MIT, див. LICENSES.txt. -->
   <main id="view" aria-live="polite">
     <div class="center"><div class="spin" aria-hidden="true"></div></div>
   </main>
@@ -19,7 +20,8 @@
   <input id="camIn" type="file" accept="image/*" capture="environment" hidden />
   <input id="fileIn" type="file" accept="image/*,application/pdf" hidden />
   <div id="crop" class="crop" role="dialog" aria-modal="true" hidden></div>
+  <div id="scan" class="scan" role="dialog" aria-modal="true" hidden></div>
   <div id="toast" class="toast" role="status" hidden></div>
-  <script src="app.js?v=11"></script>
+  <script src="app.js?v=13"></script>
 </body>
 </html>

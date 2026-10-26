@@ -1592,5 +1592,6 @@ router.post("/day-off/batch", requireAuth, async (req, res) => {
 router.decideAdvance = decideAdvance;
 router.decideDayOff = decideDayOff;
 router.workerInEditScope = workerInEditScope;
+router.workerInScope = workerInScope;      // документи працівника в панелі (api/wapp.js)
 
 module.exports = router;

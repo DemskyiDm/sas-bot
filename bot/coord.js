@@ -126,6 +126,7 @@ const TX = {
     c_bot: (b) => (b ? "Бот: підключений" : "Бот: не підключений"), c_hist: "Заклади",
     b_hours: "Години за місяць", b_hist: "Історія", b_open: "Відкрити в панелі", b_fine: "⚠️ Штраф",
     c_docs: (s, n) => `Документи HRappka: ${s === n ? "✅" : "❌"} підписано ${s} з ${n}`, c_docs_none: "Документи HRappka: не знайдено", c_docs_wait: "не підписані",
+    c_student: (st, d) => `Студент: ${{ active: `✅ довідка до ${d}`, expiring: `⚠️ довідка до ${d}`, expired: `❌ довідка закінчилась ${d}`, unknown: "так, без дати довідки" }[st]}`,
     h_title: (n, m) => `<b>${n}</b> · години за ${m}`, h_none: "Цього місяця записів немає.", total: "Разом",
     hist_t: (n) => `<b>${n}</b> · історія закладів`, now: "досі",
   },
@@ -177,6 +178,7 @@ const TX = {
     c_bot: (b) => (b ? "Бот: подключён" : "Бот: не подключён"), c_hist: "Объекты",
     b_hours: "Часы за месяц", b_hist: "История", b_open: "Открыть в панели", b_fine: "⚠️ Штраф",
     c_docs: (s, n) => `Документы HRappka: ${s === n ? "✅" : "❌"} подписано ${s} из ${n}`, c_docs_none: "Документы HRappka: не найдены", c_docs_wait: "не подписаны",
+    c_student: (st, d) => `Студент: ${{ active: `✅ справка до ${d}`, expiring: `⚠️ справка до ${d}`, expired: `❌ справка закончилась ${d}`, unknown: "да, без даты справки" }[st]}`,
     h_title: (n, m) => `<b>${n}</b> · часы за ${m}`, h_none: "В этом месяце записей нет.", total: "Итого",
     hist_t: (n) => `<b>${n}</b> · история объектов`, now: "по сей день",
   },
@@ -1058,6 +1060,11 @@ async function card(c, workerId) {
         if (open.length) L.push(`<i>${t.c_docs_wait}: ${esc(open.slice(0, 6).join(", "))}${open.length > 6 ? "…" : ""}</i>`);
       }
     }
+  } catch (e) { /* без міграції — без рядка */ }
+  // статус студента (bot/student.js: довідка з міні-застосунку працівника, пізніше — HRappka)
+  try {
+    const st = await require("./student").get(x.id);
+    if (st.state !== "none") L.push(t.c_student(st.state, st.valid_until ? dd(st.valid_until) + "." + st.valid_until.slice(0, 4) : ""));
   } catch (e) { /* без міграції — без рядка */ }
   // «Штраф» — мініпанель з формою (bot/fines.js); лише там, де координатор може виписувати
   let fineBtn = null;

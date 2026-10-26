@@ -6,7 +6,7 @@
 //  і одна заявка за раз, вихідні на 14 днів уперед з автовідмовою WOLNE_AUTO_REJECT, усе — за налаштуваннями обʼєкта.
 //
 //   GET  /api/wapp/me              головна: працівник, місяць, заявки, статус студента, документи
-//   GET  /api/wapp/hours?month=    години за місяць (поточний і 3 попередні; правка — поточний і попередній до завтра)
+//   GET  /api/wapp/hours?month=    години за місяць (поточний і 3 попередні — перегляд; правка — HOURS_BACK дні назад … завтра)
 //   POST /api/wapp/hours           { date, hours } або { date, abs }
 //   POST /api/wapp/advance         заявка на аванс
 //   POST /api/wapp/dayoff          { dates: [YYYY-MM-DD] }
@@ -161,7 +161,7 @@ router.get("/me", auth, async (req, res) => {
     res.json({
       ok: true, today, lang: w.lang,
       worker: { id: w.id, name: w.full_name, login: w.login, facility: w.facility, status: w.status, bhp: w.bhp, lwd: w.lwd, dismissed: w.dismissed },
-      month: { total: hrs.total, missing, filled: Object.keys(hrs.days).length },
+      month: { total: hrs.total, missing, filled: Object.keys(hrs.days).length, edit: editWindow(today) },
       advance: {
         enabled: !!s.enable_advances, amount: ADV_STD, pay_date: payDate(today),
         pending: adv.rows.some((x) => x.status === "pending"),
@@ -179,8 +179,9 @@ router.get("/me", auth, async (req, res) => {
 });
 
 // ── Години ────────────────────────────────────────────────────────────
-// Правка: поточний і попередній місяць, до завтра включно (у боті — сьогодні/вчора/… і завтра)
-const editWindow = (today) => ({ from: `${addMonths(today.slice(0, 7), -1)}-01`, to: addDays(today, 1) });
+// Правка: сьогодні й HOURS_BACK дні назад, плюс завтра (як кнопка «→» у боті); старіші дні — лише координатор у панелі
+const HOURS_BACK = 2;
+const editWindow = (today) => ({ from: addDays(today, -HOURS_BACK), to: addDays(today, 1) });
 
 router.get("/hours", auth, async (req, res) => {
   try {

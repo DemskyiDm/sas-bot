@@ -22,6 +22,7 @@ const L = {
     hi: (n) => `Вітаю, ${n}`,
     h_unit: "год за місяць", tabel: "Табель",
     miss: (d) => `Не заповнено: ${d}`, miss_more: (n) => `і ще ${n}`, fill: "Заповнити", all_filled: "Усі дні заповнено",
+    miss_old: (d) => `Без годин: ${d}. Ці дні вже не змінити в застосунку — зверніться до координатора.`,
     t_hours: "Години", t_adv: "Аванс", t_dof: "Вихідний",
     sec_docs: "Документи в офіс", st_title: "Довідка студента", dc_title: "Паспорт / карта побиту",
     st_state: { none: "Ще не надіслано", active: (d) => `Діє до ${d}`, expiring: (d) => `Закінчується ${d}`, expired: (d) => `Закінчилась ${d}`, unknown: "Студент · без дати" },
@@ -90,6 +91,7 @@ const L = {
     hi: (n) => `Здравствуйте, ${n}`,
     h_unit: "ч за месяц", tabel: "Табель",
     miss: (d) => `Не заполнено: ${d}`, miss_more: (n) => `и ещё ${n}`, fill: "Заполнить", all_filled: "Все дни заполнены",
+    miss_old: (d) => `Без часов: ${d}. Эти дни уже не изменить в приложении — обратитесь к координатору.`,
     t_hours: "Часы", t_adv: "Аванс", t_dof: "Выходной",
     sec_docs: "Документы в офис", st_title: "Справка студента", dc_title: "Паспорт / карта побыту",
     st_state: { none: "Ещё не отправлена", active: (d) => `Действует до ${d}`, expiring: (d) => `Заканчивается ${d}`, expired: (d) => `Закончилась ${d}`, unknown: "Студент · без даты" },
@@ -152,6 +154,7 @@ const L = {
     hi: (n) => `Cześć, ${n}`,
     h_unit: "godz. w miesiącu", tabel: "Grafik",
     miss: (d) => `Nie wpisano: ${d}`, miss_more: (n) => `i jeszcze ${n}`, fill: "Uzupełnij", all_filled: "Wszystkie dni uzupełnione",
+    miss_old: (d) => `Bez godzin: ${d}. Tych dni nie zmienisz już w aplikacji — zwróć się do koordynatora.`,
     t_hours: "Godziny", t_adv: "Zaliczka", t_dof: "Wolne",
     sec_docs: "Dokumenty do biura", st_title: "Zaświadczenie studenta", dc_title: "Paszport / karta pobytu",
     st_state: { none: "Jeszcze nie wysłano", active: (d) => `Ważne do ${d}`, expiring: (d) => `Wygasa ${d}`, expired: (d) => `Wygasło ${d}`, unknown: "Student · bez daty" },
@@ -214,6 +217,7 @@ const L = {
     hi: (n) => `Hello, ${n}`,
     h_unit: "hours this month", tabel: "Timesheet",
     miss: (d) => `Not filled: ${d}`, miss_more: (n) => `and ${n} more`, fill: "Fill in", all_filled: "All days filled in",
+    miss_old: (d) => `No hours: ${d}. These days can't be changed in the app — ask your coordinator.`,
     t_hours: "Hours", t_adv: "Advance", t_dof: "Day off",
     sec_docs: "Documents to the office", st_title: "Student certificate", dc_title: "Passport / residence card",
     st_state: { none: "Not sent yet", active: (d) => `Valid until ${d}`, expiring: (d) => `Expires ${d}`, expired: (d) => `Expired ${d}`, unknown: "Student · no date" },
@@ -448,8 +452,10 @@ async function renderHome() {
   bar("");
   await refreshMe();
   const t = T(), m = ST.me, w = m.worker;
-  const miss = m.month.missing;
-  const missTxt = miss.slice(0, 4).map(dd).join(", ") + (miss.length > 4 ? ` ${t.miss_more(miss.length - 4)}` : "");
+  // пропущені дні: ще можна заповнити тут (вікно правки) і старіші — лише координатор
+  const ew = m.month.edit || { from: "", to: "" };
+  const miss = m.month.missing.filter((x) => x >= ew.from), missOld = m.month.missing.filter((x) => x < ew.from);
+  const list = (a) => a.slice(0, 4).map(dd).join(", ") + (a.length > 4 ? ` ${t.miss_more(a.length - 4)}` : "");
   const st = m.student || { state: "none" };
   const stTxt = typeof t.st_state[st.state] === "function" ? t.st_state[st.state](ddY(st.valid_until)) : t.st_state[st.state];
   const stCls = { active: "ok", expiring: "warn", expired: "bad" }[st.state] || "";
@@ -469,9 +475,9 @@ async function renderHome() {
     <section class="card">
       <div class="mrow"><span class="muted">${esc(monthTitle(month))}</span><a href="#hours" style="font-size:14px;font-weight:500;text-decoration:none">${esc(t.tabel)}</a></div>
       <div class="big"><b>${esc(fmtH(m.month.total))}</b><span>${esc(t.h_unit)}</span></div>
-      ${miss.length
-        ? `<button class="alert warn" onclick="go('hours')">${I.warn}<span class="t">${esc(t.miss(missTxt))}</span><span class="a">${esc(t.fill)}</span></button>`
-        : `<div class="alert ok">${I.ok}<span class="t">${esc(t.all_filled)}</span></div>`}
+      ${miss.length ? `<button class="alert warn" onclick="go('hours')">${I.warn}<span class="t">${esc(t.miss(list(miss)))}</span><span class="a">${esc(t.fill)}</span></button>` : ""}
+      ${missOld.length ? `<div class="alert warn">${I.info}<span class="t">${esc(t.miss_old(list(missOld.slice().reverse())))}</span></div>` : ""}
+      ${!miss.length && !missOld.length ? `<div class="alert ok">${I.ok}<span class="t">${esc(t.all_filled)}</span></div>` : ""}
     </section>
     <div class="tiles">${tiles.map((x) => `<button class="tile" onclick="go('${x.v}')" ${x.on ? "" : "disabled"}>
       <span class="ib ${x.c}">${x.ic}</span><span>${esc(x.l)}</span></button>`).join("")}</div>
@@ -1412,7 +1418,7 @@ function demoApi(path, o) {
     return wait({
       ok: true, today: t0, lang: ST.lang,
       worker: { id: 1, name: "KOWALENKO OLEKSANDR", login: "10234", facility: "Hydro Łódź SAS", status: "pracuje", dismissed: false },
-      month: { total: monthSum(t0.slice(0, 7)), missing },
+      month: { total: monthSum(t0.slice(0, 7)), missing, edit: { from: addDays(t0, -2), to: addDays(t0, 1) } },
       advance: { enabled: true, amount: 300, pay_date: addDays(t0, [5, 4, 10, 9, 8, 7, 6][dow(t0)]), pending: D.adv.some((x) => x.status === "pending"), history: D.adv },
       dayoff: { enabled: true, horizon: 14, min_days: 3, near: [1, 2, 3].map((n) => addDays(t0, n)), taken, history: D.dof },
       student: st ? { ...st, state: st.valid_until < addDays(t0, 14) ? "expiring" : "active" } : { state: "none" },
@@ -1424,7 +1430,7 @@ function demoApi(path, o) {
     const days = {};
     for (const [k, v] of Object.entries(D.days)) if (k.startsWith(ym)) days[k] = v;
     return wait({ ok: true, today: t0, month: ym, min_month: addMonths(t0.slice(0, 7), -3), days, total: monthSum(ym),
-      periods: [{ from: `${addMonths(t0.slice(0, 7), -2)}-03`, to: null }], edit: { from: `${addMonths(t0.slice(0, 7), -1)}-01`, to: addDays(t0, 1) },
+      periods: [{ from: `${addMonths(t0.slice(0, 7), -2)}-03`, to: null }], edit: { from: addDays(t0, -2), to: addDays(t0, 1) },
       hours_format: "whole", hours_max: 16, codes: CODES });
   }
   if (path === "/hours") { D.days[o.body.date] = o.body.abs ? { abs: o.body.abs } : { h: o.body.hours }; return wait({ ok: true }); }

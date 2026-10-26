@@ -913,6 +913,16 @@
                   </div>
                 </div>
               </div>
+              <div style="position:relative;" id="historyReasonDropWrap">
+                <button onclick="toggleHistoryReasonDrop()"
+                  style="height:34px;padding:0 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;">
+                  <span id="historyReasonLabel">Wszystkie przyczyny</span> ▾
+                </button>
+                <div id="historyReasonDrop"
+                  style="display:none;position:absolute;top:38px;right:0;background:var(--surface2);border:1px solid var(--border);border-radius:8px;z-index:999;min-width:220px;max-height:400px;overflow-y:auto;padding:6px 0;box-shadow:0 8px 24px rgba(0,0,0,.4);">
+                  <div id="historyReasonList"></div>
+                </div>
+              </div>
               <select id="historyPageSize" onchange="changeHistoryPageSize()" style="width:80px">
                 <option value="10">10</option>
                 <option value="20">20</option>
@@ -950,12 +960,13 @@
                   <th>Status</th>
                   <th>BHP</th>
                   <th>Ostatni dzień</th>
+                  <th>Przyczyna</th>
                   <th>Import</th>
                 </tr>
               </thead>
               <tbody id="historyTable">
                 <tr>
-                  <td colspan="6">
+                  <td colspan="7">
                     <div class="loading">
                       <div class="spinner"></div>Ladowanie...
                     </div>

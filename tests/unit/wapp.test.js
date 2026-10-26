@@ -46,6 +46,29 @@ test("pdf.jpegsToPdf: сторінка на фото, xref вказує на о�
   assert.throws(() => pdf.jpegsToPdf([]), /no pages/);
 });
 
+test("pdf: обрізана карта — у реальному розмірі, дві сторони на одному аркуші", () => {
+  const { layout, CARD } = pdf._test;
+  const card = { w: 1460, h: 910, comps: 3 }, page = { w: 1600, h: 2200, comps: 3 }, odd = { w: 1000, h: 1000, comps: 3 };
+  // паспорт + дві сторони карти → 2 аркуші: паспорт окремо, обидві сторони разом
+  const s = layout([{ card: false }, { card: true }, { card: true }], [page, card, card]);
+  assert.equal(s.length, 2);
+  assert.deepEqual(s[1].map((x) => x.i), [1, 2]);
+  const [a, b] = s[1].map((x) => x.r);
+  assert.ok(Math.abs(a.w - CARD.long) < 0.5, "ширина = 85,6 мм");
+  assert.ok(a.y > b.y, "лицьова — вище за зворотну");
+  assert.ok(a.y - (b.y + b.h) >= 39, "між сторонами проміжок");
+  // третя картка — на новий аркуш; квадратне «не-картка» — звичайна сторінка
+  assert.equal(layout([{ card: true }, { card: true }, { card: true }], [card, card, card]).length, 2);
+  assert.equal(layout([{ card: true }], [odd])[0][0].r.w > CARD.long * 2, true);
+  // повернута вертикально картка — вузька коробка
+  const v = layout([{ card: true }], [{ w: 910, h: 1460 }])[0][0].r;
+  assert.ok(Math.abs(v.h - CARD.long) < 0.5);
+  // у PDF: 3 фото → 2 сторінки
+  const out = pdf.jpegsToPdf([fakeJpeg(1600, 2200), { jpg: fakeJpeg(1460, 910), card: true }, { jpg: fakeJpeg(1460, 910), card: true }]).toString("latin1");
+  assert.match(out, /\/Type \/Pages \/Count 2/);
+  assert.match(out, /\/Im1 Do Q\nq .* \/Im2 Do Q/);
+});
+
 test("pdf: фото вписується в A4 з полями й не розтягується", () => {
   const { fit, A4, MARGIN } = pdf._test;
   const r = fit({ w: 4000, h: 1000 });

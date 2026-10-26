@@ -159,7 +159,7 @@ h1 { margin: 0; font-size: 20px; font-weight: 700; line-height: 1.25; }
 .slot { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .slot > span { font-size: 13px; color: var(--hint); }
 .shot { position: relative; height: 112px; border-radius: 10px; overflow: hidden; background: var(--soft); }
-.shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.shot img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .shot .st { position: absolute; left: 6px; top: 6px; }
 .shot .acts { position: absolute; right: 4px; bottom: 4px; display: flex; gap: 4px; }
 .mini { width: 36px; height: 36px; border-radius: 18px; border: 0; background: rgba(17, 20, 24, 0.72); color: #fff; display: flex; align-items: center; justify-content: center; }
@@ -203,3 +203,23 @@ h1 { margin: 0; font-size: 20px; font-weight: 700; line-height: 1.25; }
 .toast.bad { background: #8e2a24; }
 .msg { min-height: 60vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; padding: 0 12px; }
 .msg b { font-size: 18px; } .msg p { margin: 0; color: var(--hint); font-size: 15px; line-height: 1.45; }
+
+/* Рамка документа (вирізання): повний екран, темний фон, кути тягнуться пальцем */
+body.cropping { overflow: hidden; }
+.crop { position: fixed; inset: 0; z-index: 30; background: #111316; color: #fff; display: flex; flex-direction: column; }
+.crop-top { padding: 14px 16px 8px; display: flex; flex-direction: column; gap: 4px; text-align: center; }
+.crop-top b { font-size: 16px; }
+.crop-top span { font-size: 13px; color: #b7bdc6; }
+.crop-top span.warn { color: #f5c38a; }
+.crop-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.crop-wrap { position: relative; touch-action: none; user-select: none; -webkit-user-select: none; }
+.crop-img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; border-radius: 4px; }
+.crop-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.crop-shade { fill: rgba(0, 0, 0, 0.5); }
+.crop-poly { fill: rgba(78, 184, 120, 0.12); stroke: #4eb878; stroke-width: 2.5; stroke-linejoin: round; }
+.crop-h { fill: #fff; stroke: #4eb878; stroke-width: 3; }
+.crop-h.on { fill: #4eb878; stroke: #fff; }
+.crop-loupe { position: absolute; width: 112px; height: 112px; border-radius: 56px; border: 3px solid #fff; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5); pointer-events: none; }
+.crop-bar { display: grid; grid-template-columns: 1fr 1fr 1.3fr; gap: 8px; padding: 10px 16px calc(14px + var(--safe-b)); }
+.crop-bar .btn.ghost { color: #8cc4f2; height: 50px; }
+.crop-bar .btn:not(.ghost) { background: var(--btn); color: var(--btn-t); }

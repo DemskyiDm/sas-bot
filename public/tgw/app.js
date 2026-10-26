@@ -8,6 +8,10 @@ const TGW = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.
 const DEMO = !TGW && /[?&]demo\b/.test(location.search);
 const MAXPX = 2000;           // довша сторона фото перед відправкою
 const JPEG_Q = 0.85;
+const SRC_MAX = 2600;         // джерело, з якого вирізаємо документ (довша сторона)
+// OpenCV.js — лише пошук країв документа; вантажиться на екранах документів, далі — з кешу (jsDelivr, рік)
+const CV_URL = "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js";
+const CV_WAIT_MS = 15000;     // скільки чекати бібліотеку, коли фото вже зроблено
 
 const L = {
   uk: {
@@ -60,6 +64,7 @@ const L = {
     confirm_ok: "Документи чинні, фото чіткі й читабельні", need_kind: "Оберіть документ.", need_all: (k) => `Додайте всі сторінки: ${k}`,
     need_check: "Підтвердьте, що фото чіткі.", pdf_n: (n) => `Буде один PDF · ${n} стор.`, uploading: "Фото ще завантажуються…",
     rotate: "Повернути", remove: "Видалити",
+    crop_t: "Рамка документа", crop_hint: "Перетягніть кути, якщо рамка стала неточно.", crop_find: "Шукаю краї документа…", crop_none: "Краї не знайдено — поставте кути вручну.", crop_nolib: "Автопошук недоступний — поставте кути вручну.", crop_full: "Весь кадр", crop_ok: "Готово", crop_cancel: "Скасувати", crop: "Рамка",
     done_t: "Надіслано в офіс", done_mail: "Офіс отримав лист з PDF.", done_saved: "Документ збережено — офіс побачить його в панелі.",
     to_chat: "Зберегти PDF у чат собі", to_chat_ok: "PDF надіслано вам у чат з ботом",
     // помилки
@@ -122,6 +127,7 @@ const L = {
     confirm_ok: "Документы действительны, фото чёткие и читаемые", need_kind: "Выберите документ.", need_all: (k) => `Добавьте все страницы: ${k}`,
     need_check: "Подтвердите, что фото чёткие.", pdf_n: (n) => `Будет один PDF · ${n} стр.`, uploading: "Фото ещё загружаются…",
     rotate: "Повернуть", remove: "Удалить",
+    crop_t: "Рамка документа", crop_hint: "Перетащите углы, если рамка встала неточно.", crop_find: "Ищу края документа…", crop_none: "Края не найдены — поставьте углы вручную.", crop_nolib: "Автопоиск недоступен — поставьте углы вручную.", crop_full: "Весь кадр", crop_ok: "Готово", crop_cancel: "Отмена", crop: "Рамка",
     done_t: "Отправлено в офис", done_mail: "Офис получил письмо с PDF.", done_saved: "Документ сохранён — офис увидит его в панели.",
     to_chat: "Сохранить PDF в чат себе", to_chat_ok: "PDF отправлен вам в чат с ботом",
     e_title: "Не удалось открыть", e_not_linked: "Сначала войдите в бот: напишите боту свой ID, затем откройте приложение снова.",
@@ -183,6 +189,7 @@ const L = {
     confirm_ok: "Dokumenty są ważne, zdjęcia ostre i czytelne", need_kind: "Wybierz dokument.", need_all: (k) => `Dodaj wszystkie strony: ${k}`,
     need_check: "Potwierdź, że zdjęcia są czytelne.", pdf_n: (n) => `Jeden PDF · ${n} str.`, uploading: "Zdjęcia jeszcze się wysyłają…",
     rotate: "Obróć", remove: "Usuń",
+    crop_t: "Ramka dokumentu", crop_hint: "Przeciągnij rogi, jeśli ramka jest niedokładna.", crop_find: "Szukam krawędzi dokumentu…", crop_none: "Nie znaleziono krawędzi — ustaw rogi ręcznie.", crop_nolib: "Automatyczne wykrywanie niedostępne — ustaw rogi ręcznie.", crop_full: "Cały kadr", crop_ok: "Gotowe", crop_cancel: "Anuluj", crop: "Ramka",
     done_t: "Wysłano do biura", done_mail: "Biuro dostało maila z PDF.", done_saved: "Dokument zapisany — biuro zobaczy go w panelu.",
     to_chat: "Zapisz PDF w czacie", to_chat_ok: "PDF wysłany na czat z botem",
     e_title: "Nie udało się otworzyć", e_not_linked: "Najpierw zaloguj się w bocie: wpisz swój ID, potem otwórz aplikację ponownie.",
@@ -244,6 +251,7 @@ const L = {
     confirm_ok: "Documents are valid, photos are sharp and readable", need_kind: "Choose a document.", need_all: (k) => `Add all pages: ${k}`,
     need_check: "Confirm the photos are readable.", pdf_n: (n) => `One PDF · ${n} p.`, uploading: "Photos are still uploading…",
     rotate: "Rotate", remove: "Remove",
+    crop_t: "Document frame", crop_hint: "Drag the corners if the frame is off.", crop_find: "Looking for document edges…", crop_none: "No edges found — set the corners by hand.", crop_nolib: "Auto-detection unavailable — set the corners by hand.", crop_full: "Whole photo", crop_ok: "Done", crop_cancel: "Cancel", crop: "Frame",
     done_t: "Sent to the office", done_mail: "The office received an e-mail with the PDF.", done_saved: "Document saved — the office will see it in the panel.",
     to_chat: "Save the PDF to my chat", to_chat_ok: "PDF sent to your chat with the bot",
     e_title: "Could not open", e_not_linked: "Log in to the bot first: send your ID to the bot, then open the app again.",
@@ -273,7 +281,7 @@ const ST = {
   dof: { sel: new Set() },
   stud: { pages: [], valid: "", school: "" },
   docs: { kinds: new Set(), pages: { passport: [], karta: [], other: [] }, bw: false, ok: false },
-  done: null, pick: null, busy: false,
+  done: null, pick: null, busy: false, crop: null,
 };
 const T = () => L[ST.lang] || L.uk;
 
@@ -315,6 +323,7 @@ const I = {
   scan: `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/></svg>`,
   file: `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 12v6M9 15l3-3 3 3"/></svg>`,
   rot: `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>`,
+  crop: `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>`,
   x: `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>`,
   sent: `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m7.5 12.5 3 3 6-7"/></svg>`,
 };
@@ -359,6 +368,7 @@ function hashRoute() {
   return raw.replace(/(^|[#&?])tgWebApp[\s\S]*$/, "").split("&")[0] || "";
 }
 function onBack() {
+  if (ST.crop) return cropCancel();
   if (ST.done) { ST.done = null; return go("home"); }
   if (ST.view !== "home") go("home");
 }
@@ -417,7 +427,10 @@ function route() {
   const v = hashRoute();
   const view = ["home", "hours", "adv", "dof", "student", "docs"].includes(v) ? v : "home";
   if (view !== ST.view) ST.done = null;
+  if (ST.crop) closeCrop();
   ST.view = view;
+  // OpenCV — заздалегідь, поки працівник читає екран і наводить камеру (помилка — не страшно, рамка буде вручну)
+  if (view === "docs" || view === "student") loadCv().catch(() => {});
   if (TGW) { try { if (view === "home" && !ST.done) TGW.BackButton.hide(); else TGW.BackButton.show(); } catch (e) { /* старий клієнт */ } }
   window.scrollTo(0, 0);
   if (ST.done) return renderDone();
@@ -719,9 +732,12 @@ async function sendDof() {
 }
 
 // ── Фото сторінок ───────────────────────────────────────────────────────
+// Сторінка: file — оригінал з камери, rot — поворот (0/90/180/270), quad — 4 кути документа в частках [0..1]
+// повернутого фото (null — весь кадр). JPEG щоразу збирається з оригіналу: поворот → вирізання → Ч/Б.
 let PKEY = 0;
+const FULL_QUAD = () => [[0, 0], [1, 0], [1, 1], [0, 1]];
 function newPage(file, kind) {
-  return { key: ++PKEY, file, kind, rot: 0, id: null, state: "up", url: null, type: kind, name: file.name || "", size: file.size || 0 };
+  return { key: ++PKEY, file, kind, rot: 0, quad: null, id: null, state: "up", url: null, type: kind, name: file.name || "", size: file.size || 0 };
 }
 async function loadImage(file) {
   try { return await createImageBitmap(file, { imageOrientation: "from-image" }); } catch (e) { /* нижче — через <img> */ }
@@ -747,9 +763,10 @@ function toBw(g, w, h) {
   for (let i = 0, j = 0; i < px.length; i += 4, j++) { const y = Math.max(0, Math.min(255, (Y[j] - lo) * k)); px[i] = px[i + 1] = px[i + 2] = y; }
   g.putImageData(im, 0, 0);
 }
-async function makeJpeg(file, rot, bw) {
+// Фото → canvas: довша сторона не більше max, з поворотом
+async function sourceCanvas(file, rot, max) {
   const img = await loadImage(file);
-  const k = Math.min(1, MAXPX / Math.max(img.width, img.height));
+  const k = Math.min(1, max / Math.max(img.width, img.height));
   const w = Math.round(img.width * k), h = Math.round(img.height * k);
   const r = ((rot % 360) + 360) % 360;
   const c = document.createElement("canvas");
@@ -762,16 +779,384 @@ async function makeJpeg(file, rot, bw) {
   g.rotate((r * Math.PI) / 180);
   g.drawImage(img, -w / 2, -h / 2, w, h);
   g.setTransform(1, 0, 0, 1, 0, 0);
-  if (bw) toBw(g, c.width, c.height);
+  if (img.close) img.close();
+  return c;
+}
+function scaleCanvas(src, max) {
+  const k = Math.min(1, max / Math.max(src.width, src.height));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(src.width * k));
+  c.height = Math.max(1, Math.round(src.height * k));
+  c.getContext("2d").drawImage(src, 0, 0, c.width, c.height);
+  return c;
+}
+async function makeJpeg(p, bw) {
+  const src = await sourceCanvas(p.file, p.rot, p.quad ? SRC_MAX : MAXPX);
+  const c = p.quad ? warp(src, p.quad.map(([x, y]) => [x * src.width, y * src.height])) : src;
+  if (bw) toBw(c.getContext("2d"), c.width, c.height);
   return new Promise((res) => c.toBlob(res, "image/jpeg", JPEG_Q));
 }
+
+// ── Геометрія: кути документа і вирівнювання перспективи ──────────────────
+// 4 точки → лівий верхній, правий верхній, правий нижній, лівий нижній
+function orderQuad(pts) {
+  const cx = pts.reduce((s, p) => s + p[0], 0) / 4, cy = pts.reduce((s, p) => s + p[1], 0) / 4;
+  const q = pts.slice().sort((a, b) => Math.atan2(a[1] - cy, a[0] - cx) - Math.atan2(b[1] - cy, b[0] - cx));
+  let k = 0;
+  q.forEach((p, i) => { if (p[0] + p[1] < q[k][0] + q[k][1]) k = i; });
+  return q.slice(k).concat(q.slice(0, k));
+}
+const isFullQuad = (q) => !q || q.every((p, i) => Math.abs(p[0] - FULL_QUAD()[i][0]) < 0.005 && Math.abs(p[1] - FULL_QUAD()[i][1]) < 0.005);
+// Гомографія: точки from (прямокутник результату) → to (кути на фото); 8 коефіцієнтів, метод Гауса
+function homography(from, to) {
+  const A = [], B = [];
+  for (let i = 0; i < 4; i++) {
+    const [u, v] = from[i], [x, y] = to[i];
+    A.push([u, v, 1, 0, 0, 0, -u * x, -v * x]); B.push(x);
+    A.push([0, 0, 0, u, v, 1, -u * y, -v * y]); B.push(y);
+  }
+  for (let c = 0; c < 8; c++) {
+    let p = c;
+    for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    [A[c], A[p]] = [A[p], A[c]];
+    [B[c], B[p]] = [B[p], B[c]];
+    if (Math.abs(A[c][c]) < 1e-12) return null;
+    for (let r = 0; r < 8; r++) {
+      if (r === c) continue;
+      const f = A[r][c] / A[c][c];
+      if (!f) continue;
+      for (let k = c; k < 8; k++) A[r][k] -= f * A[c][k];
+      B[r] -= f * B[c];
+    }
+  }
+  return B.map((b, i) => b / A[i][i]);
+}
+// Вирізати чотирикутник q (пікселі src, порядок orderQuad) і вирівняти в прямокутник (білінійна інтерполяція)
+function warp(src, q) {
+  const d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  let W = Math.max(d(q[0], q[1]), d(q[3], q[2])), H = Math.max(d(q[0], q[3]), d(q[1], q[2]));
+  const k = Math.min(1, MAXPX / Math.max(W, H));
+  W = Math.max(8, Math.round(W * k));
+  H = Math.max(8, Math.round(H * k));
+  const h = homography([[0, 0], [W, 0], [W, H], [0, H]], q);
+  if (!h) return src;
+  const sw = src.width, sh = src.height;
+  const sd = src.getContext("2d").getImageData(0, 0, sw, sh).data;
+  const out = document.createElement("canvas");
+  out.width = W;
+  out.height = H;
+  const og = out.getContext("2d");
+  const im = og.createImageData(W, H), od = im.data;
+  for (let v = 0, o = 0; v < H; v++) {
+    const vy = v + 0.5;
+    for (let u = 0; u < W; u++, o += 4) {
+      const ux = u + 0.5;
+      const den = h[6] * ux + h[7] * vy + 1;
+      let x = (h[0] * ux + h[1] * vy + h[2]) / den - 0.5, y = (h[3] * ux + h[4] * vy + h[5]) / den - 0.5;
+      if (x < 0) x = 0; else if (x > sw - 1) x = sw - 1;
+      if (y < 0) y = 0; else if (y > sh - 1) y = sh - 1;
+      const x0 = x | 0, y0 = y | 0, x1 = x0 + 1 < sw ? x0 + 1 : x0, y1 = y0 + 1 < sh ? y0 + 1 : y0;
+      const fx = x - x0, fy = y - y0;
+      const i00 = (y0 * sw + x0) * 4, i10 = (y0 * sw + x1) * 4, i01 = (y1 * sw + x0) * 4, i11 = (y1 * sw + x1) * 4;
+      for (let c = 0; c < 3; c++) {
+        const top = sd[i00 + c] + (sd[i10 + c] - sd[i00 + c]) * fx;
+        const bot = sd[i01 + c] + (sd[i11 + c] - sd[i01 + c]) * fx;
+        od[o + c] = top + (bot - top) * fy;
+      }
+      od[o + 3] = 255;
+    }
+  }
+  og.putImageData(im, 0, 0);
+  return out;
+}
+
+// ── OpenCV.js: пошук країв документа ─────────────────────────────────────
+// Проміс віддає { cv }, а не сам cv: модуль Emscripten має власний .then — проміс, розвʼязаний ним,
+// чекав би його вічно (нескінченний цикл мікрозадач, сторінка зависає)
+let CV = null;
+function loadCv() {
+  if (CV) return CV;
+  CV = new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = CV_URL;
+    s.async = true;
+    s.crossOrigin = "anonymous";
+    s.onload = () => {
+      const c = window.cv;
+      const ok = (m) => res({ cv: m });
+      if (!c) return rej(new Error("no cv"));
+      if (c instanceof Promise) c.then(ok, rej);
+      else if (c.Mat) ok(c);
+      else c.onRuntimeInitialized = () => ok(c);
+    };
+    s.onerror = () => rej(new Error("cv load"));
+    document.head.appendChild(s);
+  });
+  CV.catch(() => { CV = null; });   // не завантажилась — наступна спроба знову
+  return CV;
+}
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
+
+// Зменшене фото (~500 px) → 4 кути документа в частках [0..1] або null.
+// Кандидати — опуклі 4-кутники з контурів: Canny з кількома порогами (після MORPH_CLOSE, що прибирає текст)
+// і поріг Оцу (світлий аркуш на темнішому тлі). Переможець — де документ найсильніше відрізняється
+// яскравістю від смуги тла навколо (× √площі: більший документ важливіший за фото всередині нього).
+function detectQuad(cv, canvas) {
+  const W = canvas.width, H = canvas.height;
+  const minA = W * H * 0.12;
+  const mats = [];
+  const M = (m) => { mats.push(m); return m; };
+  try {
+    const src = M(cv.imread(canvas));
+    const gray = M(new cv.Mat());
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    const k5 = M(cv.Mat.ones(5, 5, cv.CV_8U)), k3 = M(cv.Mat.ones(3, 3, cv.CV_8U));
+    const blurG = M(new cv.Mat());
+    cv.GaussianBlur(gray, blurG, new cv.Size(5, 5), 0);
+    const closed = M(new cv.Mat());
+    cv.morphologyEx(gray, closed, cv.MORPH_CLOSE, k5, new cv.Point(-1, -1), 2);
+    const blur = M(new cv.Mat());
+    cv.GaussianBlur(closed, blur, new cv.Size(5, 5), 0);
+
+    const cands = [];
+    const collect = (bin) => {
+      const contours = M(new cv.MatVector()), hier = M(new cv.Mat());
+      cv.findContours(bin, contours, hier, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+      for (let i = 0; i < contours.size(); i++) {
+        const c = M(contours.get(i));
+        if (cv.contourArea(c) < minA) continue;
+        const hull = M(new cv.Mat());
+        cv.convexHull(c, hull, false, true);
+        const peri = cv.arcLength(hull, true);
+        for (const e of [0.02, 0.035, 0.05, 0.07]) {
+          const ap = M(new cv.Mat());
+          cv.approxPolyDP(hull, ap, e * peri, true);
+          if (ap.rows < 4) break;
+          if (ap.rows === 4) {
+            const a = cv.contourArea(ap);
+            const p = ap.data32S;
+            if (a >= minA) cands.push({ a, pts: [[p[0], p[1]], [p[2], p[3]], [p[4], p[5]], [p[6], p[7]]] });
+            break;
+          }
+        }
+      }
+    };
+    for (const [lo, hi] of [[30, 90], [60, 160], [12, 45]]) {
+      const edges = M(new cv.Mat());
+      cv.Canny(blur, edges, lo, hi);
+      cv.dilate(edges, edges, k3, new cv.Point(-1, -1), 1);
+      collect(edges);
+    }
+    const bin = M(new cv.Mat());
+    cv.threshold(blur, bin, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+    cv.morphologyEx(bin, bin, cv.MORPH_OPEN, k5, new cv.Point(-1, -1), 2);
+    collect(bin);
+    if (!cands.length) return null;
+
+    // Контраст «документ / смуга тла навколо»
+    const r = Math.max(3, Math.round(Math.min(W, H) * 0.03));
+    const kr = M(cv.Mat.ones(2 * r + 1, 2 * r + 1, cv.CV_8U));
+    const score = (pts) => {
+      const mask = M(cv.Mat.zeros(H, W, cv.CV_8U));
+      const poly = M(cv.matFromArray(4, 1, cv.CV_32SC2, [].concat(...pts)));
+      const pv = M(new cv.MatVector());
+      pv.push_back(poly);
+      cv.fillPoly(mask, pv, new cv.Scalar(255));
+      const inner = M(new cv.Mat()), outer = M(new cv.Mat()), ring = M(new cv.Mat());
+      cv.erode(mask, inner, kr);
+      cv.dilate(mask, outer, kr);
+      cv.subtract(outer, mask, ring);
+      const nIn = cv.countNonZero(inner), nRing = cv.countNonZero(ring);
+      if (nIn < 50) return 0;
+      const mIn = cv.mean(blurG, inner)[0];
+      // документ на весь кадр: тла навколо майже немає — помірна оцінка замість випадкової
+      const contrast = nRing < 200 ? 30 : Math.abs(mIn - cv.mean(blurG, ring)[0]);
+      return contrast;
+    };
+    let best = null, bestS = 0;
+    cands.sort((x, y) => y.a - x.a).slice(0, 14).forEach((c) => {
+      const contrast = score(c.pts);
+      if (contrast < 12) return;
+      const s = contrast * Math.sqrt(c.a / (W * H));
+      if (s > bestS) { bestS = s; best = c; }
+    });
+    return best ? orderQuad(best.pts.map(([x, y]) => [x / W, y / H])) : null;
+  } finally {
+    for (const m of mats) { try { m.delete(); } catch (e) { /* уже звільнено */ } }
+  }
+}
+
+// ── Рамка документа: автопошук + ручна правка кутів ───────────────────────
+// onDone(page) — рамку підтверджено (page.quad уже записано), onCancel — фото відкинуто
+async function openCrop(page, onDone, onCancel) {
+  if (ST.crop) return;
+  ST.crop = { page, onDone, onCancel, quad: page.quad ? page.quad.map((p) => p.slice()) : FULL_QUAD(), status: page.quad ? "hint" : "find", drag: -1, prev: null };
+  try { if (TGW && TGW.disableVerticalSwipes) TGW.disableVerticalSwipes(); } catch (e) { /* старий клієнт */ }
+  if (TGW) { try { TGW.BackButton.show(); } catch (e) { /* старий клієнт */ } }
+  drawCrop();
+  const cr = ST.crop;
+  try {
+    cr.prev = await sourceCanvas(page.file, page.rot, 1200);
+  } catch (e) {
+    closeCrop();
+    toast(errText("bad_type"), true);
+    if (onCancel) onCancel();
+    return;
+  }
+  if (ST.crop !== cr) return;
+  drawCrop();
+  if (page.quad) return;
+  try {
+    const { cv } = await withTimeout(loadCv(), CV_WAIT_MS);
+    const q = detectQuad(cv, scaleCanvas(cr.prev, 500));
+    if (ST.crop !== cr || cr.drag >= 0) return;
+    if (q) { cr.quad = q; cr.status = "hint"; } else cr.status = "none";
+  } catch (e) {
+    if (ST.crop !== cr) return;
+    cr.status = "nolib";
+  }
+  drawCrop();
+}
+function closeCrop() {
+  ST.crop = null;
+  $("crop").hidden = true;
+  $("crop").innerHTML = "";
+  document.body.classList.remove("cropping");
+  try { if (TGW && TGW.enableVerticalSwipes) TGW.enableVerticalSwipes(); } catch (e) { /* старий клієнт */ }
+  if (TGW) { try { if (ST.view === "home" && !ST.done) TGW.BackButton.hide(); } catch (e) { /* старий клієнт */ } }
+}
+function cropCancel() {
+  const cr = ST.crop;
+  if (!cr) return;
+  closeCrop();
+  if (cr.onCancel) cr.onCancel();
+}
+function cropDone() {
+  const cr = ST.crop;
+  if (!cr || !cr.prev) return;
+  closeCrop();
+  cr.page.quad = isFullQuad(cr.quad) ? null : orderQuad(cr.quad);
+  cr.onDone(cr.page);
+}
+function cropFull() {
+  const cr = ST.crop;
+  if (!cr) return;
+  cr.quad = FULL_QUAD();
+  cr.status = "hint";
+  drawCrop();
+}
+// Розмір картинки на екрані: вписати попередній перегляд у сцену
+function cropBox() {
+  const cr = ST.crop, st = $("cropStage");
+  const sw = st.clientWidth - 32, sh = st.clientHeight - 32;
+  const k = Math.min(sw / cr.prev.width, sh / cr.prev.height);
+  return { w: Math.round(cr.prev.width * k), h: Math.round(cr.prev.height * k) };
+}
+function drawCrop() {
+  const t = T(), cr = ST.crop, el = $("crop");
+  if (!cr) return;
+  el.hidden = false;
+  document.body.classList.add("cropping");
+  const msg = { find: t.crop_find, hint: t.crop_hint, none: t.crop_none, nolib: t.crop_nolib }[cr.status];
+  el.innerHTML = `
+    <div class="crop-top"><b>${esc(t.crop_t)}</b><span class="${cr.status === "none" || cr.status === "nolib" ? "warn" : ""}">
+      ${cr.status === "find" ? `<span class="spin" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:-2px;margin-right:6px"></span>` : ""}${esc(msg)}</span></div>
+    <div id="cropStage" class="crop-stage">${cr.prev ? `<div id="cropWrap" class="crop-wrap"></div>` : `<div class="spin"></div>`}</div>
+    <div class="crop-bar">
+      <button class="btn ghost" onclick="cropFull()" ${cr.prev ? "" : "disabled"}>${esc(t.crop_full)}</button>
+      <button class="btn ghost" onclick="cropCancel()">${esc(t.crop_cancel)}</button>
+      <button class="btn" onclick="cropDone()" ${cr.prev ? "" : "disabled"}>${esc(t.crop_ok)}</button>
+    </div>`;
+  if (!cr.prev) return;
+  const box = cropBox();
+  const wrap = $("cropWrap");
+  wrap.style.width = box.w + "px";
+  wrap.style.height = box.h + "px";
+  cr.prev.className = "crop-img";
+  wrap.appendChild(cr.prev);
+  wrap.insertAdjacentHTML("beforeend", `<svg class="crop-svg" viewBox="0 0 ${box.w} ${box.h}" aria-hidden="true">
+      <path id="cropShade" class="crop-shade" fill-rule="evenodd"></path><polygon id="cropPoly" class="crop-poly"></polygon>
+      ${[0, 1, 2, 3].map((i) => `<circle id="cropH${i}" class="crop-h" r="13"></circle>`).join("")}</svg>
+    <canvas id="cropLoupe" class="crop-loupe" width="112" height="112" hidden></canvas>`);
+  wrap.onpointerdown = cropDown;
+  wrap.onpointermove = cropMove;
+  wrap.onpointerup = wrap.onpointercancel = cropUp;
+  cr.box = box;
+  cropPaint();
+}
+// Поворот екрана / зміна розміру вікна — перемалювати рамку під новий розмір
+window.addEventListener("resize", () => { if (ST.crop && ST.crop.prev && ST.crop.drag < 0) drawCrop(); });
+function cropPaint() {
+  const cr = ST.crop, b = cr.box;
+  const pts = cr.quad.map(([x, y]) => [x * b.w, y * b.h]);
+  $("cropPoly").setAttribute("points", pts.map((p) => p.join(",")).join(" "));
+  $("cropShade").setAttribute("d", `M0 0H${b.w}V${b.h}H0Z M${pts.map((p) => p.join(" ")).join(" L")}Z`);
+  pts.forEach((p, i) => { const c = $("cropH" + i); c.setAttribute("cx", p[0]); c.setAttribute("cy", p[1]); c.classList.toggle("on", cr.drag === i); });
+}
+function cropPos(e) {
+  const r = $("cropWrap").getBoundingClientRect();
+  return [e.clientX - r.left, e.clientY - r.top];
+}
+function cropDown(e) {
+  const cr = ST.crop, b = cr.box;
+  const [x, y] = cropPos(e);
+  let best = -1, bd = 48;
+  cr.quad.forEach(([qx, qy], i) => { const d = Math.hypot(qx * b.w - x, qy * b.h - y); if (d < bd) { bd = d; best = i; } });
+  if (best < 0) return;
+  e.preventDefault();
+  cr.drag = best;
+  cr.grab = [cr.quad[best][0] * b.w - x, cr.quad[best][1] * b.h - y];   // кут не стрибає під палець
+  try { $("cropWrap").setPointerCapture(e.pointerId); } catch (e2) { /* без захоплення */ }
+  if (cr.status === "find") cr.status = "hint";
+  cropMove(e);
+}
+function cropMove(e) {
+  const cr = ST.crop;
+  if (!cr || cr.drag < 0) return;
+  e.preventDefault();
+  const b = cr.box;
+  const [x0, y0] = cropPos(e);
+  const x = Math.max(0, Math.min(b.w, x0 + cr.grab[0])), y = Math.max(0, Math.min(b.h, y0 + cr.grab[1]));
+  cr.quad[cr.drag] = [x / b.w, y / b.h];
+  cropPaint();
+  cropLoupe(x, y);
+}
+function cropUp() {
+  const cr = ST.crop;
+  if (!cr || cr.drag < 0) return;
+  cr.drag = -1;
+  $("cropLoupe").hidden = true;
+  cropPaint();
+}
+// Лупа над пальцем: збільшений шматок фото навколо кута
+function cropLoupe(x, y) {
+  const cr = ST.crop, b = cr.box, L = $("cropLoupe");
+  const z = 2.5, size = 112;
+  const k = cr.prev.width / b.w;
+  const r = (size / 2 / z) * k;
+  const g = L.getContext("2d");
+  g.fillStyle = "#000";
+  g.fillRect(0, 0, size, size);
+  g.drawImage(cr.prev, x * k - r, y * k - r, 2 * r, 2 * r, 0, 0, size, size);
+  g.strokeStyle = "#4eb878";
+  g.lineWidth = 1.5;
+  g.beginPath();
+  g.moveTo(size / 2, size / 2 - 14); g.lineTo(size / 2, size / 2 + 14);
+  g.moveTo(size / 2 - 14, size / 2); g.lineTo(size / 2 + 14, size / 2);
+  g.stroke();
+  L.hidden = false;
+  L.style.left = Math.max(0, Math.min(b.w - size, x - size / 2)) + "px";
+  L.style.top = (y > size + 40 ? y - size - 36 : y + 36) + "px";
+}
+
 async function uploadPage(p, bw) {
   p.state = "up";
   p.id = null;
   try {
     let blob = p.file, type = "application/pdf";
     if (p.type !== "pdf") {
-      blob = await makeJpeg(p.file, p.rot, bw);
+      redraw();
+      blob = await makeJpeg(p, bw);
       type = "image/jpeg";
       if (p.url) URL.revokeObjectURL(p.url);
       p.url = URL.createObjectURL(blob);
@@ -786,7 +1171,7 @@ async function uploadPage(p, bw) {
   }
   redraw();
 }
-const redraw = () => { if (ST.view === "student" && !ST.done) renderStudent(); else if (ST.view === "docs" && !ST.done) renderDocs(); };
+const redraw = () => { if (ST.crop) return; if (ST.view === "student" && !ST.done) renderStudent(); else if (ST.view === "docs" && !ST.done) renderDocs(); };
 
 // Куди піде наступне фото: { where: "student" } або { where: "docs", kind, idx }
 function pick(where, kind, idx, fromFile) {
@@ -803,19 +1188,22 @@ function onFiles(input) {
   const f = files[0];
   const isPdf = f.type === "application/pdf" || /\.pdf$/i.test(f.name || "");
   if (f.size > 12 * 1024 * 1024 && isPdf) return toast(errText("too_big"), true);
+  if (isPdf && p0.where !== "student") return toast(errText("bad_type"), true);
   const p = newPage(f, isPdf ? "pdf" : "jpg");
-  if (p0.where === "student") {
-    // PDF — лише один, без фото; фото — до 10 сторінок
-    if (isPdf) ST.stud.pages = [p];
-    else { ST.stud.pages = ST.stud.pages.filter((x) => x.type !== "pdf"); ST.stud.pages.push(p); }
-    uploadPage(p, false);
-  } else {
-    if (isPdf) return toast(errText("bad_type"), true);
-    const arr = ST.docs.pages[p0.kind];
-    if (p0.idx < arr.length) arr[p0.idx] = p; else arr.push(p);
-    uploadPage(p, ST.docs.bw);
-  }
-  renderView();
+  const place = () => {
+    if (p0.where === "student") {
+      // PDF — лише один, без фото; фото — кілька сторінок
+      if (isPdf) ST.stud.pages = [p];
+      else { ST.stud.pages = ST.stud.pages.filter((x) => x.type !== "pdf"); ST.stud.pages.push(p); }
+    } else {
+      const arr = ST.docs.pages[p0.kind];
+      if (p0.idx < arr.length) arr[p0.idx] = p; else arr.push(p);
+    }
+    uploadPage(p, p0.where === "docs" && ST.docs.bw);
+    renderView();
+  };
+  if (isPdf) return place();
+  openCrop(p, place, null);   // фото — спершу рамка документа
 }
 const renderView = () => (ST.view === "student" ? renderStudent() : renderDocs());
 function pageOf(where, kind, idx) { return where === "student" ? ST.stud.pages[idx] : ST.docs.pages[kind][idx]; }
@@ -823,7 +1211,14 @@ function rotatePage(where, kind, idx) {
   const p = pageOf(where, kind, idx);
   if (!p || p.type === "pdf" || p.state === "up") return;
   p.rot = (p.rot + 90) % 360;
+  // кути рамки повертаються разом із фото (за годинниковою: x' = 1 − y, y' = x)
+  if (p.quad) p.quad = orderQuad(p.quad.map(([x, y]) => [1 - y, x]));
   uploadPage(p, where === "docs" && ST.docs.bw);
+}
+function cropPage(where, kind, idx) {
+  const p = pageOf(where, kind, idx);
+  if (!p || p.type === "pdf" || p.state === "up") return;
+  openCrop(p, () => { uploadPage(p, where === "docs" && ST.docs.bw); renderView(); }, null);
 }
 function removePage(where, kind, idx) {
   const arr = where === "student" ? ST.stud.pages : ST.docs.pages[kind];
@@ -842,7 +1237,8 @@ function shotHtml(p, where, kind, idx, label) {
   const badge = p.state === "up" ? `<span class="st"><span class="spin" style="width:20px;height:20px;border-width:2px"></span></span>`
     : p.state === "err" ? `<span class="st pill rejected">!</span>` : "";
   return `<div class="slot">${label ? `<span>${esc(label)}</span>` : ""}<div class="shot">${p.url ? `<img src="${p.url}" alt="${esc(label || "")}" />` : ""}${badge}
-    <span class="acts"><button class="mini" onclick="rotatePage(${args})" aria-label="${esc(t.rotate)}">${I.rot}</button>
+    <span class="acts"><button class="mini" onclick="cropPage(${args})" aria-label="${esc(t.crop)}">${I.crop}</button>
+    <button class="mini" onclick="rotatePage(${args})" aria-label="${esc(t.rotate)}">${I.rot}</button>
     <button class="mini" onclick="removePage(${args})" aria-label="${esc(t.remove)}">${I.x}</button></span></div></div>`;
 }
 function addHtml(where, kind, idx, label, text) {
@@ -966,7 +1362,9 @@ async function sendDocs() {
   if (pages.some((p) => p.state !== "ok")) return toast(T().uploading, true);
   ST.busy = true;
   drawDocsBar();
-  const r = await api("/docs", { body: { kinds, pages: pages.map((p) => p.id) } });
+  // обрізані сторони карти побиту — у PDF у реальному розмірі, обидві на одному аркуші
+  const cards = d.kinds.has("karta") ? d.pages.karta.filter((p) => p.quad).map((p) => p.id) : [];
+  const r = await api("/docs", { body: { kinds, pages: pages.map((p) => p.id), cards } });
   ST.busy = false;
   if (!r.ok) { drawDocsBar(); return toast(errText(r.error), true); }
   ST.docs = { kinds: new Set(), pages: { passport: [], karta: [], other: [] }, bw: d.bw, ok: false };

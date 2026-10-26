@@ -11,7 +11,8 @@
 //   POST /api/wapp/advance         заявка на аванс
 //   POST /api/wapp/dayoff          { dates: [YYYY-MM-DD] }
 //   POST /api/wapp/pages           тіло — JPEG (image/jpeg) або PDF (application/pdf), до 12 МБ → { id } (тимчасово, 24 год)
-//   POST /api/wapp/docs            { kinds, pages: [id], valid_until?, school? } → PDF в офіс (WORKER_DOCS_EMAIL) + статус студента
+//   POST /api/wapp/docs            { kinds, pages: [id], cards?: [id], valid_until?, school? } → PDF в офіс (WORKER_DOCS_EMAIL) + статус студента
+//                                  cards — обрізані сторони карти побиту: у PDF у реальному розмірі, дві на аркуш
 //   POST /api/wapp/docs/:id/chat   надіслати PDF працівнику в чат з ботом
 //   — панель (сесія x-session) —
 //   GET  /api/wapp/panel/docs?worker_id=   документи працівника
@@ -357,7 +358,10 @@ router.post("/docs", auth, async (req, res) => {
     // PDF з телефона — лише один файл (злити кілька PDF без бібліотеки не можемо), інакше — фото
     if (files.some((x) => x.pdf) && files.length > 1) return res.status(400).json({ ok: false, error: "one_pdf" });
     const title = `${w.login} ${kinds.map((k) => KIND_PL[k]).join(", ")}`;
-    const buf = files[0].pdf ? fs.readFileSync(files[0].p) : pdf.jpegsToPdf(files.map((x) => fs.readFileSync(x.p)), title);
+    // обрізані сторони карти побиту — у реальному розмірі, дві на аркуш (bot/pdf.js)
+    const cards = new Set(kinds.includes("karta") && Array.isArray(b.cards) ? b.cards.map(String) : []);
+    const buf = files[0].pdf ? fs.readFileSync(files[0].p)
+      : pdf.jpegsToPdf(files.map((x) => ({ jpg: fs.readFileSync(x.p), card: cards.has(x.id) })), title);
     const pages = files[0].pdf ? 1 : files.length;
     const outDir = path.join(DOCS, safeName(w.login));
     fs.mkdirSync(outDir, { recursive: true });

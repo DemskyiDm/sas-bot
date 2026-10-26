@@ -10,7 +10,8 @@
 const path = require("path");
 const db = require("../db");
 
-const SHEET_ID = (process.env.FINES_SHEET_ID || "15PalqM2g6Q0IhXmyTUSK8gE76VwppFLnbGo-p0U65ug").trim();
+//const SHEET_ID = (process.env.FINES_SHEET_ID || "15PalqM2g6Q0IhXmyTUSK8gE76VwppFLnbGo-p0U65ug").trim();
+const SHEET_ID = (process.env.FINES_SHEET_ID || "19f6wbpd0yNi9HFBplJELCbwkf9VZfYV6qSoBVcjtBSU").trim();
 const SHEET_TAB = (process.env.FINES_SHEET_TAB || "штрафы").trim();
 const RETRY_MS = 10 * 60 * 1000;
 // Агентство — з назви закладу (як у колонці «Фирма» таблиці)

@@ -64,4 +64,17 @@ async function ensureMenuButton(chatId, session) {
   return true;
 }
 
-module.exports = { CFG, enabledFor, link, keyboardRow, ensureMenuButton, tg };
+// /camtest — кнопка тесту камери в застосунку (#camtest): будь-хто в особистому чаті, без входу працівника і без пілоту.
+// Перевірка, чи Telegram на телефоні дає камеру всередині застосунку (живий пошук країв документа). Тимчасово.
+const CAMTEST = { uk: ["Тест камери: відкрийте, дозвольте камеру, наведіть на документ і натисніть «Надіслати звіт».", "📷 Тест камери"],
+  ru: ["Тест камеры: откройте, разрешите камеру, наведите на документ и нажмите «Отправить отчёт».", "📷 Тест камеры"] };
+async function onUpdate(u) {
+  const m = u && u.message;
+  if (!m || !m.chat || m.chat.type !== "private" || typeof m.text !== "string" || !CFG.url) return false;
+  if (!/^\/camtest(@\w+)?$/i.test(m.text.trim())) return false;
+  const tx = CAMTEST[/^ru/i.test((m.from && m.from.language_code) || "") ? "ru" : "uk"];
+  await tg("sendMessage", { chat_id: m.chat.id, text: tx[0], reply_markup: { inline_keyboard: [[{ text: tx[1], web_app: { url: link("#camtest") } }]] } });
+  return true;
+}
+
+module.exports = { CFG, enabledFor, link, keyboardRow, ensureMenuButton, tg, onUpdate };

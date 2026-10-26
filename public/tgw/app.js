@@ -397,6 +397,8 @@ async function boot() {
     if (m) ST.lang = m[1];
   }
   document.documentElement.dataset.theme = dark ? "dark" : "light";
+  // тест камери — без входу працівника (кнопка з команди /camtest у боті)
+  if (first === "camtest") { ST.view = "camtest"; document.documentElement.lang = ST.lang === "ru" ? "ru" : "uk"; return renderCamTest(); }
   if (!TGW && !DEMO) return showError("outside");
   const r = await api("/me");
   if (!r.ok) return showError(r.error);
@@ -1391,6 +1393,177 @@ async function toChat(id) {
   const r = await api(`/docs/${id}/chat`, { body: {} });
   if (!r.ok) return toast(errText(r.error), true);
   toast(T().to_chat_ok);
+}
+
+// ── Тест камери (#camtest, команда /camtest у боті) ──────────────────────
+// Чи дає Telegram на цьому телефоні камеру всередині застосунку, яка роздільність, як швидко шукаються краї
+// в живому відео. Без входу працівника. Звіт — POST /api/wapp/camtest → лог сервера. Тимчасово.
+const CTX = {
+  uk: {
+    title: "Тест камери", intro: "Перевіримо, чи працює камера всередині Telegram на цьому телефоні і чи встигає рамка ловити краї документа.",
+    start: "Увімкнути камеру", aim: "Наведіть на документ — зелена рамка має ловити краї.", lib: "Завантаження бібліотеки пошуку країв…",
+    cam: "Камера", lib_t: "Бібліотека", det: "Пошук країв", found: "Знайдено в кадрах", shot: "Зробити знімок", torch: "Ліхтарик", send: "Надіслати звіт",
+    sent: "Звіт надіслано. Дякуємо!", err: "Камера недоступна", no_md: "Цей Telegram не дає застосунку доступу до камери.",
+    photo: "Знімок", frame: "Кадр з відео", lib_err: "Бібліотека не завантажилась",
+  },
+  ru: {
+    title: "Тест камеры", intro: "Проверим, работает ли камера внутри Telegram на этом телефоне и успевает ли рамка ловить края документа.",
+    start: "Включить камеру", aim: "Наведите на документ — зелёная рамка должна ловить края.", lib: "Загрузка библиотеки поиска краёв…",
+    cam: "Камера", lib_t: "Библиотека", det: "Поиск краёв", found: "Найдено в кадрах", shot: "Сделать снимок", torch: "Фонарик", send: "Отправить отчёт",
+    sent: "Отчёт отправлен. Спасибо!", err: "Камера недоступна", no_md: "Этот Telegram не даёт приложению доступа к камере.",
+    photo: "Снимок", frame: "Кадр из видео", lib_err: "Библиотека не загрузилась",
+  },
+};
+const CT = { stream: null, track: null, run: false, det: [], frames: 0, found: 0, info: {}, cv: null, quad: null, torch: false, lastPaint: 0 };
+const ctT = () => CTX[ST.lang] || CTX.uk;
+
+function renderCamTest() {
+  const t = ctT();
+  bar("");
+  if (TGW) { try { TGW.BackButton.hide(); } catch (e) { /* старий клієнт */ } }
+  $("view").innerHTML = `
+    <h1>${esc(t.title)}</h1>
+    <p class="lead">${esc(t.intro)}</p>
+    <section class="card" id="ctBox">
+      <button class="btn" onclick="camStart()">${esc(t.start)}</button>
+    </section>
+    <section class="card" id="ctStats" hidden></section>`;
+  CT.info = {
+    ua: navigator.userAgent, secure: window.isSecureContext,
+    tg: TGW ? { platform: TGW.platform, version: TGW.version } : null,
+    md: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+    imageCapture: typeof window.ImageCapture !== "undefined",
+  };
+  // бібліотеку — одразу, поки людина читає
+  const t0 = performance.now();
+  loadCv().then(({ cv }) => { CT.cv = cv; CT.info.cvMs = Math.round(performance.now() - t0); ctStats(); },
+    () => { CT.info.cvError = true; ctStats(); });
+}
+async function camStart() {
+  const t = ctT(), box = $("ctBox");
+  if (!CT.info.md) { CT.info.error = "no mediaDevices"; box.innerHTML = `<div class="banner bad">${I.warn}<span class="l"><b>${esc(t.no_md)}</b></span></div>`; return ctFinish(); }
+  try {
+    CT.stream = await navigator.mediaDevices.getUserMedia({
+      audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 3840 }, height: { ideal: 2160 } },
+    });
+  } catch (e) {
+    CT.info.error = `${e.name}: ${e.message}`;
+    box.innerHTML = `<div class="banner bad">${I.warn}<span class="l"><b>${esc(t.err)}</b><span>${esc(CT.info.error)}</span></span></div>`;
+    return ctFinish();
+  }
+  CT.track = CT.stream.getVideoTracks()[0];
+  try {
+    const s = CT.track.getSettings ? CT.track.getSettings() : {};
+    CT.info.settings = { w: s.width, h: s.height, fps: s.frameRate, facing: s.facingMode };
+    const c = CT.track.getCapabilities ? CT.track.getCapabilities() : null;
+    if (c) CT.info.caps = { maxW: c.width && c.width.max, maxH: c.height && c.height.max, torch: !!c.torch, focus: c.focusMode || null, zoom: c.zoom ? [c.zoom.min, c.zoom.max] : null };
+  } catch (e) { CT.info.capsError = e.message; }
+  box.innerHTML = `
+    <div id="ctWrap" style="position:relative;width:100%;border-radius:12px;overflow:hidden;background:#000">
+      <video id="ctVideo" playsinline muted autoplay style="display:block;width:100%;height:auto"></video>
+      <svg id="ctSvg" style="position:absolute;inset:0;width:100%;height:100%" aria-hidden="true"><polygon id="ctPoly" class="crop-poly" points=""></polygon></svg>
+    </div>
+    <span class="muted">${esc(CT.cv ? t.aim : t.lib)}</span>
+    <div class="grid2">
+      <button class="btn sec" onclick="camShot()">${esc(t.shot)}</button>
+      <button class="btn sec" onclick="camTorch()" ${CT.info.caps && CT.info.caps.torch ? "" : "disabled"}>${esc(t.torch)}</button>
+    </div>`;
+  const v = $("ctVideo");
+  v.srcObject = CT.stream;
+  try { await v.play(); } catch (e) { CT.info.playError = e.message; }
+  CT.run = true;
+  CT.t0 = performance.now();
+  camLoop();
+  ctFinish();
+}
+function camLoop() {
+  if (!CT.run) return;
+  const v = $("ctVideo");
+  if (!v) { camStop(); return; }
+  if (v.readyState >= 2 && v.videoWidth && CT.cv) {
+    const k = 500 / Math.max(v.videoWidth, v.videoHeight);
+    const small = CT.small || (CT.small = document.createElement("canvas"));
+    small.width = Math.round(v.videoWidth * k);
+    small.height = Math.round(v.videoHeight * k);
+    small.getContext("2d").drawImage(v, 0, 0, small.width, small.height);
+    const t = performance.now();
+    let q = null;
+    try { q = detectQuad(CT.cv, small); } catch (e) { CT.info.detError = e.message; }
+    CT.det.push(performance.now() - t);
+    if (CT.det.length > 40) CT.det.shift();
+    CT.frames++;
+    if (q) CT.found++;
+    CT.quad = q;
+    const svg = $("ctSvg"), poly = $("ctPoly");
+    const W = svg.clientWidth, H = svg.clientHeight;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    poly.setAttribute("points", q ? q.map(([x, y]) => `${x * W},${y * H}`).join(" ") : "");
+    if (performance.now() - CT.lastPaint > 500) { CT.lastPaint = performance.now(); ctStats(); }
+  }
+  setTimeout(camLoop, 15);   // таймер, не requestAnimationFrame: кадр розпізнаємо, щойно готовий попередній
+}
+function camStop() {
+  CT.run = false;
+  if (CT.stream) CT.stream.getTracks().forEach((x) => x.stop());
+  CT.stream = null;
+}
+async function camShot() {
+  const v = $("ctVideo");
+  if (!v || !v.videoWidth) return;
+  CT.info.frame = { w: v.videoWidth, h: v.videoHeight };
+  // знімок фото-API (Android Chrome) — може бути більшим за кадр відео
+  if (CT.info.imageCapture && CT.track) {
+    try {
+      const blob = await new window.ImageCapture(CT.track).takePhoto();
+      const bmp = await createImageBitmap(blob);
+      CT.info.photo = { w: bmp.width, h: bmp.height, kb: Math.round(blob.size / 1024) };
+    } catch (e) { CT.info.photo = { error: `${e.name}: ${e.message}` }; }
+  }
+  haptic("success");
+  ctStats();
+}
+async function camTorch() {
+  if (!CT.track) return;
+  CT.torch = !CT.torch;
+  try { await CT.track.applyConstraints({ advanced: [{ torch: CT.torch }] }); CT.info.torchOk = true; } catch (e) { CT.info.torchError = e.message; }
+  ctStats();
+}
+function ctSummary() {
+  const avg = CT.det.length ? CT.det.reduce((s, x) => s + x, 0) / CT.det.length : null;
+  const secs = CT.t0 ? (performance.now() - CT.t0) / 1000 : 0;
+  return {
+    ...CT.info, detMs: avg == null ? null : Math.round(avg), fps: secs > 1 ? Math.round((CT.frames / secs) * 10) / 10 : null,
+    foundPct: CT.frames ? Math.round((CT.found / CT.frames) * 100) : null, frames: CT.frames,
+  };
+}
+function ctStats() {
+  const t = ctT(), el = $("ctStats");
+  if (!el) return;
+  const s = ctSummary();
+  const row = (k, v) => `<div class="row" style="min-height:32px;font-size:14px"><span class="muted">${esc(k)}</span><b style="text-align:right">${esc(v)}</b></div>`;
+  el.hidden = false;
+  el.innerHTML = [
+    s.settings ? row(t.cam, `${s.settings.w}×${s.settings.h}${s.settings.fps ? ` · ${Math.round(s.settings.fps)} fps` : ""}${s.caps && s.caps.maxW ? ` (max ${s.caps.maxW}×${s.caps.maxH})` : ""}`) : "",
+    row(t.lib_t, s.cvError ? t.lib_err : s.cvMs == null ? "…" : `${s.cvMs} ms`),
+    s.detMs != null ? row(t.det, `${s.detMs} ms · ${s.fps || "…"}/s`) : "",
+    s.frames ? row(t.found, `${s.foundPct}% (${s.frames})`) : "",
+    s.frame ? row(t.frame, `${s.frame.w}×${s.frame.h}`) : "",
+    s.photo ? row(t.photo, s.photo.error ? s.photo.error : `${s.photo.w}×${s.photo.h} · ${s.photo.kb} KB`) : "",
+    s.tg ? row("Telegram", `${s.tg.platform} ${s.tg.version}`) : "",
+  ].join("");
+}
+function ctFinish() {
+  const t = ctT();
+  bar(`<button class="btn" onclick="camReport()">${esc(t.send)}</button>`);
+}
+async function camReport() {
+  const report = ctSummary();
+  if (DEMO) { toast(ctT().sent); return; }
+  try {
+    const r = await fetch("/api/wapp/camtest", { method: "POST", headers: { "Content-Type": "application/json", "x-tg-init": TGW ? TGW.initData : "" }, body: JSON.stringify({ report }) });
+    const j = await r.json().catch(() => ({ ok: false }));
+    toast(j.ok ? ctT().sent : errText(j.error || "server"), !j.ok);
+  } catch (e) { toast(errText("net"), true); }
 }
 
 // ── Демо (відкрито не з Telegram, ?demo): тестові дані без сервера ─────────

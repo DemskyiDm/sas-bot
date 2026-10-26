@@ -14,6 +14,7 @@
 //   POST /api/wapp/docs            { kinds, pages: [id], cards?: [id], valid_until?, school? } → PDF в офіс (WORKER_DOCS_EMAIL) + статус студента
 //                                  cards — обрізані сторони карти побиту: у PDF у реальному розмірі, дві на аркуш
 //   POST /api/wapp/docs/:id/chat   надіслати PDF працівнику в чат з ботом
+//   POST /api/wapp/camtest         звіт тесту камери (тимчасово) → лог сервера
 //   — панель (сесія x-session) —
 //   GET  /api/wapp/panel/docs?worker_id=   документи працівника
 //   GET  /api/wapp/panel/docs/:id/file     PDF
@@ -396,6 +397,16 @@ router.post("/docs/:id/chat", auth, async (req, res) => {
     if (!j.ok) return res.status(502).json({ ok: false, error: "send_failed" });
     res.json({ ok: true });
   } catch (e) { fail(res, e); }
+});
+
+// ── Тест камери (#camtest, команда /camtest у боті): звіт з телефона — один рядок у лог сервера ──
+// Без входу працівника: лише підпис Telegram. Тимчасово — поки вирішуємо, чи робити живий видошукач.
+router.post("/camtest", (req, res) => {
+  const v = verifyInitData(req.headers["x-tg-init"], process.env.BOT_TOKEN);
+  if (!v) return res.status(401).json({ ok: false, error: "bad_init" });
+  const r = (req.body && req.body.report) || {};
+  console.log(`[camtest] ${v.user.id} ${String(v.user.first_name || "").slice(0, 40)}: ${JSON.stringify(r).slice(0, 3000)}`);
+  res.json({ ok: true });
 });
 
 // ── Панель: документи працівника ──────────────────────────────────────

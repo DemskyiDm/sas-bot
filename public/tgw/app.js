@@ -905,28 +905,33 @@ function loadCv() {
 }
 const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
 
-// Зменшене фото (~500 px) → 4 кути документа в частках [0..1] або null.
-// Кандидати — опуклі 4-кутники з контурів: Canny з кількома порогами (після MORPH_CLOSE, що прибирає текст)
-// і поріг Оцу (світлий аркуш на темнішому тлі). Переможець — де документ найсильніше відрізняється
-// яскравістю від смуги тла навколо (× √площі: більший документ важливіший за фото всередині нього).
-function detectQuad(cv, canvas) {
+// Зменшене фото (~500 px; у видошукачі ~360 px) → 4 кути документа в частках [0..1] або null.
+// Кандидати — опуклі 4-кутники з контурів у двох каналах: яскравість (L з Lab) і насиченість (S з HSV).
+// Насиченість рятує, коли аркуш і стіл однакові за яскравістю, але різні за кольором (білий папір на світлому дереві).
+// Кожен канал розтягнуто на весь діапазон (слабкий контраст стає сильним), MORPH_CLOSE прибирає текст,
+// далі Canny з двома порогами і поріг Оцу. Переможець — найбільша різниця кольору (ΔE у Lab) між документом
+// і смугою тла навколо, × √площі (більший документ важливіший за фото всередині нього).
+function detectQuad(cv, canvas, dbg) {
   const W = canvas.width, H = canvas.height;
   const minA = W * H * 0.12;
   const mats = [];
   const M = (m) => { mats.push(m); return m; };
   try {
-    const src = M(cv.imread(canvas));
-    const gray = M(new cv.Mat());
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    const rgba = M(cv.imread(canvas));
+    const rgb = M(new cv.Mat());
+    cv.cvtColor(rgba, rgb, cv.COLOR_RGBA2RGB);
+    const lab = M(new cv.Mat()), hsv = M(new cv.Mat());
+    cv.cvtColor(rgb, lab, cv.COLOR_RGB2Lab);
+    cv.cvtColor(rgb, hsv, cv.COLOR_RGB2HSV);
+    const labCh = M(new cv.MatVector()), hsvCh = M(new cv.MatVector());
+    cv.split(lab, labCh);
+    cv.split(hsv, hsvCh);
+    const L = M(labCh.get(0)), S = M(hsvCh.get(1));
     const k5 = M(cv.Mat.ones(5, 5, cv.CV_8U)), k3 = M(cv.Mat.ones(3, 3, cv.CV_8U));
-    const blurG = M(new cv.Mat());
-    cv.GaussianBlur(gray, blurG, new cv.Size(5, 5), 0);
-    const closed = M(new cv.Mat());
-    cv.morphologyEx(gray, closed, cv.MORPH_CLOSE, k5, new cv.Point(-1, -1), 2);
-    const blur = M(new cv.Mat());
-    cv.GaussianBlur(closed, blur, new cv.Size(5, 5), 0);
+    const anchor = new cv.Point(-1, -1);
 
     const cands = [];
+    const allEdges = M(cv.Mat.zeros(H, W, cv.CV_8U));   // усі краї Canny разом — для перевірки периметра
     const collect = (bin) => {
       const contours = M(new cv.MatVector()), hier = M(new cv.Mat());
       cv.findContours(bin, contours, hier, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
@@ -949,19 +954,37 @@ function detectQuad(cv, canvas) {
         }
       }
     };
-    for (const [lo, hi] of [[30, 90], [60, 160], [12, 45]]) {
-      const edges = M(new cv.Mat());
-      cv.Canny(blur, edges, lo, hi);
-      cv.dilate(edges, edges, k3, new cv.Point(-1, -1), 1);
-      collect(edges);
+    // розтягнути канал між 1-м і 99-м процентилями (крайні значення — шум і відблиски, за ними не тягнемо)
+    const stretch = (ch, dst) => {
+      const d = ch.data, h = new Uint32Array(256);
+      for (let i = 0; i < d.length; i++) h[d[i]]++;
+      const q = (f) => { let acc = 0; for (let v = 0; v < 256; v++) { acc += h[v]; if (acc >= d.length * f) return v; } return 255; };
+      const lo = q(0.01), hi = Math.max(lo + 8, q(0.99));
+      ch.convertTo(dst, -1, 255 / (hi - lo), (-lo * 255) / (hi - lo));
+    };
+    for (const [ch, thr] of [[L, [[30, 90], [12, 40]]], [S, [[30, 90], [12, 40]]]]) {
+      const norm = M(new cv.Mat()), closed = M(new cv.Mat()), blur = M(new cv.Mat());
+      stretch(ch, norm);
+      cv.morphologyEx(norm, closed, cv.MORPH_CLOSE, k5, anchor, 2);
+      cv.GaussianBlur(closed, blur, new cv.Size(5, 5), 0);
+      for (const [lo, hi] of thr) {
+        const edges = M(new cv.Mat());
+        cv.Canny(blur, edges, lo, hi);
+        cv.dilate(edges, edges, k3, anchor, 1);
+        cv.bitwise_or(allEdges, edges, allEdges);
+        collect(edges);
+      }
+      const bin = M(new cv.Mat());
+      cv.threshold(blur, bin, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+      cv.morphologyEx(bin, bin, cv.MORPH_OPEN, k5, anchor, 2);
+      collect(bin);
     }
-    const bin = M(new cv.Mat());
-    cv.threshold(blur, bin, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-    cv.morphologyEx(bin, bin, cv.MORPH_OPEN, k5, new cv.Point(-1, -1), 2);
-    collect(bin);
+    if (dbg) dbg.n = cands.length;
     if (!cands.length) return null;
 
-    // Контраст «документ / смуга тла навколо»
+    // Різниця кольору «документ / смуга тла навколо» (ΔE у 8-бітному Lab OpenCV)
+    const labBlur = M(new cv.Mat());
+    cv.GaussianBlur(lab, labBlur, new cv.Size(5, 5), 0);
     const r = Math.max(3, Math.round(Math.min(W, H) * 0.03));
     const kr = M(cv.Mat.ones(2 * r + 1, 2 * r + 1, cv.CV_8U));
     const score = (pts) => {
@@ -974,24 +997,87 @@ function detectQuad(cv, canvas) {
       cv.erode(mask, inner, kr);
       cv.dilate(mask, outer, kr);
       cv.subtract(outer, mask, ring);
-      const nIn = cv.countNonZero(inner), nRing = cv.countNonZero(ring);
-      if (nIn < 50) return 0;
-      const mIn = cv.mean(blurG, inner)[0];
+      if (cv.countNonZero(inner) < 50) return 0;
       // документ на весь кадр: тла навколо майже немає — помірна оцінка замість випадкової
-      const contrast = nRing < 200 ? 30 : Math.abs(mIn - cv.mean(blurG, ring)[0]);
-      return contrast;
+      if (cv.countNonZero(ring) < 200) return 30;
+      const a = cv.mean(labBlur, inner), b = cv.mean(labBlur, ring);
+      return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
     };
+    // Частка периметра, що лежить на краях (кути з запасом 8% — вони бувають заокруглені)
+    const ed = allEdges.data;
+    const support = (pts) => {
+      let hit = 0, n = 0;
+      for (let i = 0; i < 4; i++) {
+        const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % 4];
+        for (let t = 0.08; t <= 0.92; t += 0.02) {
+          const x = Math.round(ax + (bx - ax) * t), y = Math.round(ay + (by - ay) * t);
+          if (x < 0 || y < 0 || x >= W || y >= H) continue;
+          n++;
+          if (ed[y * W + x]) hit++;
+        }
+      }
+      return n ? hit / n : 0;
+    };
+    // однакові кандидати з різних каналів — оцінюємо один раз
+    // і не рамка самого кадру (поріг Оцу інколи бере тло за «документ»: 4 кути — в кутах зображення)
+    const edge = Math.min(W, H) * 0.02;
+    const isFrame = (pts) => orderQuad(pts).every((p, i) => Math.hypot(p[0] - [0, W - 1, W - 1, 0][i], p[1] - [0, 0, H - 1, H - 1][i]) < edge);
+    const seen = [];
     let best = null, bestS = 0;
-    cands.sort((x, y) => y.a - x.a).slice(0, 14).forEach((c) => {
-      const contrast = score(c.pts);
-      if (contrast < 12) return;
-      const s = contrast * Math.sqrt(c.a / (W * H));
+    cands.sort((x, y) => y.a - x.a).forEach((c) => {
+      if (seen.length >= 14 || isFrame(c.pts)) return;
+      const tol = Math.min(W, H) * 0.02;
+      if (seen.some((s) => s.every((p, i) => Math.hypot(p[0] - c.pts[i][0], p[1] - c.pts[i][1]) < tol))) return;
+      seen.push(c.pts);
+      const dE = score(c.pts), sup = support(c.pts);
+      if (dbg) dbg.push({ a: Math.round((c.a / (W * H)) * 100), dE: Math.round(dE), sup: Math.round(sup * 100), pts: c.pts });
+      // слабка різниця кольору — лише якщо краї підтверджують увесь контур
+      if (dE < 10 && !(dE >= 2.5 && sup >= 0.7)) return;
+      const s = Math.max(dE, 10) * Math.sqrt(c.a / (W * H)) * (0.5 + sup);
       if (s > bestS) { bestS = s; best = c; }
     });
     return best ? orderQuad(best.pts.map(([x, y]) => [x / W, y / H])) : null;
   } finally {
     for (const m of mats) { try { m.delete(); } catch (e) { /* уже звільнено */ } }
   }
+}
+
+// Стабілізатор рамки для живого відео: кути плавно підтягуються до нового положення (EMA),
+// стрибок в інше місце приймається лише після кількох однакових кадрів поспіль, короткий пропуск рамку не гасить.
+// still — скільки мс рамка майже не рухається (для автознімка).
+const TRACK = { smooth: 0.35, near: 0.06, same: 0.04, show: 2, jump: 3, holdMs: 600, stillMove: 0.012 };
+function makeTracker() {
+  return { q: null, cand: null, candN: 0, seen: 0, still: 0, t: 0 };
+}
+function trackQuad(tr, q, now) {
+  const dist = (a, b) => Math.max(...a.map((p, i) => Math.hypot(p[0] - b[i][0], p[1] - b[i][1])));
+  const dt = tr.t ? now - tr.t : 0;
+  tr.t = now;
+  if (!q) {
+    if (tr.q && now - tr.seen > TRACK.holdMs) tr.q = null;
+    tr.still = 0;
+    return tr.q;
+  }
+  tr.seen = now;
+  const pend = (need) => {
+    if (tr.cand && dist(q, tr.cand) < TRACK.same) tr.candN++;
+    else { tr.cand = q; tr.candN = 1; }
+    if (tr.candN < need) return false;
+    tr.q = q;
+    tr.cand = null;
+    tr.still = 0;
+    return true;
+  };
+  if (!tr.q) { pend(TRACK.show); return tr.q; }
+  const d = dist(q, tr.q);
+  if (d < TRACK.near) {
+    tr.q = tr.q.map((p, i) => [p[0] + (q[i][0] - p[0]) * TRACK.smooth, p[1] + (q[i][1] - p[1]) * TRACK.smooth]);
+    tr.cand = null;
+    tr.still = d < TRACK.stillMove ? tr.still + dt : 0;
+  } else {
+    pend(TRACK.jump);
+  }
+  return tr.q;
 }
 
 // ── Рамка документа: автопошук + ручна правка кутів ───────────────────────
@@ -1405,6 +1491,8 @@ const CTX = {
     cam: "Камера", lib_t: "Бібліотека", det: "Пошук країв", found: "Знайдено в кадрах", shot: "Зробити знімок", torch: "Ліхтарик", send: "Надіслати звіт",
     sent: "Звіт надіслано. Дякуємо!", err: "Камера недоступна", no_md: "Цей Telegram не дає застосунку доступу до камери.",
     photo: "Знімок", frame: "Кадр з відео", lib_err: "Бібліотека не завантажилась",
+    stable: "Рамка стоїть — тут буде автознімок", hint_bg: "Не бачу документа — покладіть його на однотонну поверхню, без відблисків.",
+    jitter: "Тремтіння рамки (сире → згладжене)",
   },
   ru: {
     title: "Тест камеры", intro: "Проверим, работает ли камера внутри Telegram на этом телефоне и успевает ли рамка ловить края документа.",
@@ -1412,9 +1500,13 @@ const CTX = {
     cam: "Камера", lib_t: "Библиотека", det: "Поиск краёв", found: "Найдено в кадрах", shot: "Сделать снимок", torch: "Фонарик", send: "Отправить отчёт",
     sent: "Отчёт отправлен. Спасибо!", err: "Камера недоступна", no_md: "Этот Telegram не даёт приложению доступа к камере.",
     photo: "Снимок", frame: "Кадр из видео", lib_err: "Библиотека не загрузилась",
+    stable: "Рамка стоит — здесь будет автоснимок", hint_bg: "Не вижу документа — положите его на однотонную поверхность, без бликов.",
+    jitter: "Дрожание рамки (сырое → сглаженное)",
   },
 };
-const CT = { stream: null, track: null, run: false, det: [], frames: 0, found: 0, info: {}, cv: null, quad: null, torch: false, lastPaint: 0 };
+const CT = { stream: null, track: null, run: false, det: [], frames: 0, found: 0, info: {}, cv: null, quad: null, torch: false, lastPaint: 0,
+  tr: null, rawPrev: null, shownPrev: null, jRaw: [], jShown: [], stableMs: 0 };
+const LIVE_PX = 360;          // кадр для пошуку країв у живому відео (довша сторона)
 const ctT = () => CTX[ST.lang] || CTX.uk;
 
 function renderCamTest() {
@@ -1463,7 +1555,7 @@ async function camStart() {
       <video id="ctVideo" playsinline muted autoplay style="display:block;width:100%;height:auto"></video>
       <svg id="ctSvg" style="position:absolute;inset:0;width:100%;height:100%" aria-hidden="true"><polygon id="ctPoly" class="crop-poly" points=""></polygon></svg>
     </div>
-    <span class="muted">${esc(CT.cv ? t.aim : t.lib)}</span>
+    <span class="muted" id="ctHint">${esc(CT.cv ? t.aim : t.lib)}</span>
     <div class="grid2">
       <button class="btn sec" onclick="camShot()">${esc(t.shot)}</button>
       <button class="btn sec" onclick="camTorch()" ${CT.info.caps && CT.info.caps.torch ? "" : "disabled"}>${esc(t.torch)}</button>
@@ -1473,6 +1565,7 @@ async function camStart() {
   try { await v.play(); } catch (e) { CT.info.playError = e.message; }
   CT.run = true;
   CT.t0 = performance.now();
+  CT.tr = makeTracker();
   camLoop();
   ctFinish();
 }
@@ -1481,7 +1574,7 @@ function camLoop() {
   const v = $("ctVideo");
   if (!v) { camStop(); return; }
   if (v.readyState >= 2 && v.videoWidth && CT.cv) {
-    const k = 500 / Math.max(v.videoWidth, v.videoHeight);
+    const k = LIVE_PX / Math.max(v.videoWidth, v.videoHeight);
     const small = CT.small || (CT.small = document.createElement("canvas"));
     small.width = Math.round(v.videoWidth * k);
     small.height = Math.round(v.videoHeight * k);
@@ -1493,11 +1586,24 @@ function camLoop() {
     if (CT.det.length > 40) CT.det.shift();
     CT.frames++;
     if (q) CT.found++;
-    CT.quad = q;
+    const now = performance.now();
+    const shown = trackQuad(CT.tr, q, now);
+    // тремтіння: середній зсув кутів між сусідніми кадрами, ‰ від кадру — сире і після стабілізатора
+    const move = (a, b) => a.reduce((sum, p, i) => sum + Math.hypot(p[0] - b[i][0], p[1] - b[i][1]), 0) / 4 * 1000;
+    if (q && CT.rawPrev) { CT.jRaw.push(move(q, CT.rawPrev)); if (CT.jRaw.length > 60) CT.jRaw.shift(); }
+    if (shown && CT.shownPrev) { CT.jShown.push(move(shown, CT.shownPrev)); if (CT.jShown.length > 60) CT.jShown.shift(); }
+    CT.rawPrev = q;
+    CT.shownPrev = shown ? shown.map((p) => p.slice()) : null;
+    CT.quad = shown;
+    const stable = !!shown && CT.tr.still > 800;
+    if (stable) CT.stableMs += 1;
     const svg = $("ctSvg"), poly = $("ctPoly");
     const W = svg.clientWidth, H = svg.clientHeight;
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    poly.setAttribute("points", q ? q.map(([x, y]) => `${x * W},${y * H}`).join(" ") : "");
+    poly.setAttribute("points", shown ? shown.map(([x, y]) => `${x * W},${y * H}`).join(" ") : "");
+    poly.style.fill = stable ? "rgba(78, 184, 120, 0.35)" : "";
+    const hint = $("ctHint"), tx = ctT();
+    if (hint) hint.textContent = stable ? tx.stable : !shown && now - Math.max(CT.t0, CT.tr.seen || 0) > 2500 ? tx.hint_bg : tx.aim;
     if (performance.now() - CT.lastPaint > 500) { CT.lastPaint = performance.now(); ctStats(); }
   }
   setTimeout(camLoop, 15);   // таймер, не requestAnimationFrame: кадр розпізнаємо, щойно готовий попередній
@@ -1531,9 +1637,11 @@ async function camTorch() {
 function ctSummary() {
   const avg = CT.det.length ? CT.det.reduce((s, x) => s + x, 0) / CT.det.length : null;
   const secs = CT.t0 ? (performance.now() - CT.t0) / 1000 : 0;
+  const mean = (a) => (a.length ? Math.round((a.reduce((x, y) => x + y, 0) / a.length) * 10) / 10 : null);
   return {
-    ...CT.info, detMs: avg == null ? null : Math.round(avg), fps: secs > 1 ? Math.round((CT.frames / secs) * 10) / 10 : null,
+    ...CT.info, live: LIVE_PX, detMs: avg == null ? null : Math.round(avg), fps: secs > 1 ? Math.round((CT.frames / secs) * 10) / 10 : null,
     foundPct: CT.frames ? Math.round((CT.found / CT.frames) * 100) : null, frames: CT.frames,
+    jitterRaw: mean(CT.jRaw), jitterShown: mean(CT.jShown), stableFrames: CT.stableMs,
   };
 }
 function ctStats() {
@@ -1547,6 +1655,7 @@ function ctStats() {
     row(t.lib_t, s.cvError ? t.lib_err : s.cvMs == null ? "…" : `${s.cvMs} ms`),
     s.detMs != null ? row(t.det, `${s.detMs} ms · ${s.fps || "…"}/s`) : "",
     s.frames ? row(t.found, `${s.foundPct}% (${s.frames})`) : "",
+    s.jitterRaw != null ? row(t.jitter, `${s.jitterRaw}‰ → ${s.jitterShown == null ? "…" : s.jitterShown + "‰"}`) : "",
     s.frame ? row(t.frame, `${s.frame.w}×${s.frame.h}`) : "",
     s.photo ? row(t.photo, s.photo.error ? s.photo.error : `${s.photo.w}×${s.photo.h} · ${s.photo.kb} KB`) : "",
     s.tg ? row("Telegram", `${s.tg.platform} ${s.tg.version}`) : "",

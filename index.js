@@ -92,6 +92,7 @@ app.post("/webhook", async (req, res) => {
     // групи Telegram: запам'ятати чат для зведень «Wyjazdy / przyjazdy», боту працівників там робити нічого
     if (await flow.onUpdate(req.body)) return;
     if (await referral.onUpdate(bot, req.body)) return;
+    if (await require("./bot/worker_app").onUpdate(req.body)) return;   // /camtest — тест камери в застосунку працівника
     if (await require("./bot/coord").onUpdate(bot, req.body)) return;
     await handleUpdate(bot, req.body);
   } catch (err) {

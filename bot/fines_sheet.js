@@ -19,6 +19,86 @@ const RETRY_MS = 10 * 60 * 1000;
 const AGENCY = [[/\bSAS\b/i, "SAS LOGISTIC"], [/\bAPT\b/i, "APT EAST STAFF"], [/\bWELL\b/i, "WELL DONE"], [/\bDIPICO\b/i, "DIPICO"],
   [/\bOLDAR\b/i, "WORK PLACES"], [/\bTRZCIANKA\b/i, "SAS LOGISTIC"]];
 const agencyOf = (facility) => (AGENCY.find(([re]) => re.test(String(facility || ""))) || [null, ""])[1];
+// «Предприятие» — як у списку офісу, а не як у базі: назва в таблиці → назви закладів у базі (регістр і пробіли не важливі).
+// Закладу тут немає — пишемо назву з бази й попереджаємо в Telegram (FINES_SHEET_ALERT_CHAT_ID, інакше GAP_ADMIN_CHAT_ID) — додайте його сюди.
+const SHEET_FACILITY = {
+  "ACTION Wypędy": ["Action Wypędy SAS"],
+  "ACTION Wypędy Produkcja": ["Action Production SAS"],
+  "ACTION Zamienie": ["Action Zamienie SAS", "Action Zamienie Przejęcie SAS", "Action Zamienie SAS EAST BRIDGE"],
+  "Anpacars": ["Anpacars Sosnowiec SAS"],
+  "Anpacars Bedzin": ["ANPACARS BĘDZIN SAS"],
+  "ATS DISPLAY": ["ATS Display APT"],
+  "BLACHY PRUSZYŃSKI": ["Blachy Pruszyński APT", "Punto Pruszyński APT"],
+  "Cainiao": ["CAINIAO APT", "CAINIAO Dipico"],
+  "Cainiao 2": ["CAINIAO APT 2", "CAINIAO Dipico 2"],
+  "Cerrad": ["Cerrad Sas"],
+  "Ceva Łozienica": ["CEVA APT", "CEVA Dipico"],
+  "Ceva Krężoly": ["Ceva Krężoły APT"],
+  "Ceva Nowy Świat": ["Ceva Nowy Świat APT", "Ceva Nowy Świat Well"],
+  "Ceva Swiebodzin": ["CEVA ŚWIEBODZIN APT"],
+  "Domel": ["Domel SAS"],
+  "DPD Lucmież": ["DPD Lućmierz SAS"],
+  "DSV": ["DSV Dipico"],
+  "EKO OKNA": ["EkoOkna SAS", "EkoOkna Well"],
+  "FIEGE GOLENIÓW": ["Fiege Goleniów Well"],
+  "FIEGE NDM": ["Fiege NDM Well"],
+  "FIEGE Stanowice": ["Fiege Logistics Stanowice Well"],
+  "FIEGE ZIELONA GÓRA": ["Fiege ZG Well"],
+  "G&G": ["G&G APT", "G&G Well"],
+  "GERDA Sokołów": ["Gerda Sokołów APT"],
+  "GERDA Starachowice": ["Gerda Starachowice APT"],
+  "HULTAFORS": ["HULTAFORS WELL"],
+  "Hydro Chrzanów": ["Hydro Chrzanów SAS"],
+  "HYDRO ŁÓDŹ": ["Hydro Łódź SAS", "Hydro Łódź SAS (stary)", "Hydro Łódź Well"],
+  "HYDRO TRZCIANKA": ["Hydro Trzcianka", "Hydro Trzcianka Well"],
+  "ID Konin Żagański": ["ID Konin Żagański SAS", "ID Konin Żagański Well"],
+  "IDL Krajków": ["ID Krajków SAS"],
+  "IDL Pietrzykowice": ["Id Logistics Wro APT", "Id Logistics Wro SAS", "Id Logistics Wro Well"],
+  "IDL Psary": ["ID Psary APT", "ID Psary SAS", "ID Psary WELL"],
+  "IDL Rokitno": ["Id Log Rokitno APT", "Id Log Rokitno SAS", "Id Log Rokitno Well"],
+  "IDL Świecko": ["ID Słubice SAS"],
+  "IDL Tyniec Mały": ["Id Logistics Tyniec APT", "Id Logistics Tyniec WELL"],
+  "IGP Operations": ["IGP Operations PL APT", "IGP Operations PL SAS"],
+  "ILS Błonie": ["ILS Błonie SAS"],
+  "INTERCARS UoP": ["Inter Cars SAS"],
+  "INTERCARS UZ": ["ILS UZ SAS"],
+  "Klimor": ["Klimor APT"],
+  "Ligentia": ["Ligentia APT", "Ligentia Well"],
+  "LUCKY UNION": ["Lucky Union APT"],
+  "Marc-Th": ["Marc Sas"],
+  "Maropak": ["MAROPAK SAS"],
+  "Metler": ["METLER Dipico"],
+  "Mieszko": ["Mieszko APT", "Mieszko SAS"],
+  "Mieszko Services": ["MIESZKO SERVICES APT", "MIESZKO Services SAS"],
+  "Notino": ["Notino Well"],
+  "OLDAR": ["Oldar Agencja Work", "Aleksandra Dębska Oldar WP"],
+  "Partners": ["Partners Lowicz SAS", "Rawa Mazowiecka SAS"],
+  "POLMLEK": ["PolMlek SAS"],
+  "RHENUS GOLENIÓW": ["Rhenus Gol WELL"],
+  "SGB JAROSZOWIEC": ["SGB JAROSZOWIEC SAS"],
+  "SGB PRUSZKÓW": ["SGB Pruszków SAS"],
+  "SGB SZCZECIN": ["Saint-Gobain SAS"],
+  "Trans-Tok": ["Trans-Tok APT"],
+  "VERSAL": ["Versal APT"],
+  "Wsip": ["Wsip Dipico"],
+};
+const facKey = (s) => String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
+const SHEET_FACILITY_BY_DB = new Map(Object.entries(SHEET_FACILITY).flatMap(([sheet, names]) => names.map((n) => [facKey(n), sheet])));
+const knownFacility = (facility) => !facility || SHEET_FACILITY_BY_DB.has(facKey(facility));
+const sheetFacilityOf = (facility) => (facility ? SHEET_FACILITY_BY_DB.get(facKey(facility)) || facility : "");
+const alertChats = () => String(process.env.FINES_SHEET_ALERT_CHAT_ID || process.env.GAP_ADMIN_CHAT_ID || "")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+let BOT = null;
+async function alertUnknown(names) {
+  console.warn(`[fines sheet] заклади не зі списку таблиці (записано як у базі): ${names.join(", ")}`);
+  if (!BOT || !alertChats().length) return;
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const text = `⚠️ Штрафи → Google-таблиця: заклад не зі списку, «Предприятие» записано як у базі:\n`
+    + names.map((n) => `• <b>${esc(n)}</b>`).join("\n") + `\nДодайте відповідність у bot/fines_sheet.js (SHEET_FACILITY).`;
+  for (const chat of alertChats()) {
+    await BOT.telegram.sendMessage(chat, text, { parse_mode: "HTML" }).catch((e) => console.error("[fines sheet] alert:", e.message));
+  }
+}
 // «Прогул» → «прогул», як у таблиці; латиниця (RCP, Bonifikata…) — без змін
 const reasonOf = (x) => {
   const s = String(x.name_ru || x.type_name || "").trim();
@@ -78,7 +158,7 @@ async function doFlush() {
   if (!rows.length) return { state: "done", count: 0 };
   const values = rows.map((x) => {
     const n = office().splitName(x);
-    return [dmy(x.fine_date), n.last, n.first, x.facility || "", agencyOf(x.facility), Number(x.amount), reasonOf(x), "", "", x.note || ""];
+    return [dmy(x.fine_date), n.last, n.first, sheetFacilityOf(x.facility), agencyOf(x.facility), Number(x.amount), reasonOf(x), "", "", x.note || ""];
   });
   const ids = rows.map((x) => x.id);
   try {
@@ -97,6 +177,8 @@ async function doFlush() {
     });
     await db.query(`UPDATE fin.fines SET sheet_state = 'done', sheet_at = now(), sheet_error = NULL WHERE id = ANY($1::bigint[])`, [ids]);
     console.log(`[fines sheet] записано ${values.length} рядк. (${from}–${to})`);
+    const unknown = [...new Set(rows.filter((x) => !knownFacility(x.facility)).map((x) => x.facility))];
+    if (unknown.length) await alertUnknown(unknown);
     return { state: "done", count: values.length, from, to };
   } catch (e) {
     const msg = String((e.response && e.response.data && e.response.data.error && e.response.data.error.message) || e.message).slice(0, 300);
@@ -106,8 +188,9 @@ async function doFlush() {
   }
 }
 
-function schedule() {
+function schedule(bot) {
+  BOT = bot || null;
   setInterval(() => { flush().catch((e) => console.error("[fines sheet]", e.message)); }, RETRY_MS);
 }
 
-module.exports = { afterSend, flush, schedule, agencyOf, reasonOf, SHEET_ID, SHEET_TAB };
+module.exports = { afterSend, flush, schedule, agencyOf, sheetFacilityOf, reasonOf, SHEET_ID, SHEET_TAB };

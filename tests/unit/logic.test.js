@@ -28,6 +28,14 @@ test("fines_sheet.agencyOf: агентство з назви закладу", ()
   for (const [fac, want] of Object.entries(cases)) assert.equal(sheet.agencyOf(fac), want, fac);
 });
 
+test("fines_sheet.sheetFacilityOf: «Предприятие» як у списку таблиці", () => {
+  const cases = {
+    "CEVA Dipico": "Ceva Łozienica", "Rawa Mazowiecka SAS": "Partners", "Partners Lowicz SAS ": "Partners",
+    "id logistics wro  sas": "IDL Pietrzykowice", "ILS Błonie SAS": "ILS Błonie", "Nieznany SAS": "Nieznany SAS", "": "",
+  };
+  for (const [fac, want] of Object.entries(cases)) assert.equal(sheet.sheetFacilityOf(fac), want, fac);
+});
+
 test("fines_sheet.reasonOf: кирилиця з малої, латиниця без змін", () => {
   assert.equal(sheet.reasonOf({ name_ru: "Прогул" }), "прогул");
   assert.equal(sheet.reasonOf({ name_ru: "Обучение UDT" }), "обучение UDT");

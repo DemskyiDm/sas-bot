@@ -659,6 +659,16 @@ router.get("/workers", requireAuth, async (req, res) => {
     `;
 
     const workers = await db.query(query, params);
+    // Архівні обʼєкти (Region → Archiwum): у місяцях після місяця архівування їх не показуємо;
+    // у самому місяці архівування — ще видно
+    const archived = await db.query(
+      `SELECT f.id AS facility_id
+         FROM facilities f
+         JOIN reg.site_archive a ON a.site_key = reg.site_key(f.group_name, f.name)
+        WHERE date_trunc('month', a.archived_at AT TIME ZONE 'Europe/Warsaw') < $1::date`,
+      [monthStart],
+    ).catch(() => ({ rows: [] }));   // без модуля регіонів
+    const archivedFac = new Set(archived.rows.map((x) => x.facility_id));
     // регіон і головний координатор обʼєкта (Region → Przypisania) — для порядку регіон → координатор → обʼєкт
     const siteMeta = await db.query(
       `SELECT f.id AS facility_id, rg.name AS region_name, c.full_name AS coordinator_name
@@ -683,7 +693,7 @@ router.get("/workers", requireAuth, async (req, res) => {
       hoursMap[h.worker_id].push(h);
     });
 
-    const result = workers.rows.map((w) => {
+    const result = workers.rows.filter((w) => !archivedFac.has(w.facility_id)).map((w) => {
       const allHours = hoursMap[w.id] || [];
       const bhp = w.bhp_date ? new Date(w.bhp_date) : null;
       const last = w.last_work_date ? new Date(w.last_work_date) : null;

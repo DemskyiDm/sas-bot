@@ -425,6 +425,7 @@ async function openHistoryModal(workerId, workerName) {
         <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3);font-family:var(--mono);font-size:10px">STATUS</th>
         <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3);font-family:var(--mono);font-size:10px">BHP</th>
         <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3);font-family:var(--mono);font-size:10px">OSTATNI DZIEŃ</th>
+        <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3);font-family:var(--mono);font-size:10px">PRZYCZYNA</th>
         <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3);font-family:var(--mono);font-size:10px">IMPORT</th>
       </tr></thead>
       <tbody>${res.data.map((h) => `
@@ -433,6 +434,7 @@ async function openHistoryModal(workerId, workerName) {
           <td style="padding:8px 12px"><span class="badge ${statusColor[h.status] || "badge-blue"}">${h.status}</span></td>
           <td style="padding:8px 12px;font-family:var(--mono);font-size:11px;color:var(--text2)">${h.bhp_date ? new Date(h.bhp_date).toLocaleDateString("pl") : "—"}</td>
           <td style="padding:8px 12px;font-family:var(--mono);font-size:11px;color:var(--text2)">${h.last_work_date ? new Date(h.last_work_date).toLocaleDateString("pl") : "—"}</td>
+          <td style="padding:8px 12px;font-size:11px;color:var(--text2)">${escStan(h.przyczyna_zwolnienia)}</td>
           <td style="padding:8px 12px;font-size:11px;color:var(--text3)">${new Date(h.imported_at).toLocaleDateString("pl")}</td>
         </tr>`).join("")}
       </tbody>

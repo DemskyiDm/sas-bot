@@ -8,7 +8,8 @@
 // Причина належить періоду zwolniony, якщо змінилася після BHP і не пізніше 10 днів після останнього дня
 // (і до BHP наступного періоду). Записуємо перше значення й більше не чіпаємо.
 // przeniesiony → «przeniesienie» (auto); якщо статус потім виправили на zwolniony — auto замінюється причиною з HRappka.
-// Старі звільнення (до початку журналу + 35 днів) — поточне значення, якщо в HRappka людина звільнена і в нас це останній період.
+// Старі звільнення (до початку журналу) — поточне значення HRappka: це причина останнього звільнення людини
+// (при поверненні HRappka її не стирає), тож вона йде в останній період zwolniony.
 // Не вдалося → przyczyna_problem і рядок у Telegram (HR_REASON_CHAT_ID у .env, через кому; інакше GAP_ADMIN_CHAT_ID).
 // Вручну: node bot/hr_reason.js [--full] [--dry] [--send]   (--dry — усе в транзакції з ROLLBACK, нічого не пишемо)
 // Таблиці: db/migration_dismissal_reason.sql. Доступ до HRappka — ті самі змінні .env, що й у bot/hr_sign.js.
@@ -87,7 +88,7 @@ async function snapshot(client, rows) {
 }
 
 // ── Рішення для одного періоду (без БД) ───────────────────────────────
-// p: { status, bhp, lwd, next_bhp } (дати YYYY-MM-DD); emp: { state, reason } з HRappka або null;
+// p: { status, bhp, lwd, next_bhp, later_dis } (дати YYYY-MM-DD; later_dis — є пізніший період zwolniony); emp: { state, reason } з HRappka або null;
 // log: зміни причини цього працівника [{ reason, baseline, d }] за часом; today, jstart — YYYY-MM-DD.
 // → { value, source } | { wait: true } | { problem }
 function decide(p, emp, log, { today, jstart }) {
@@ -99,10 +100,14 @@ function decide(p, emp, log, { today, jstart }) {
   // причину внесли / змінили під час цього періоду (можна й за кілька тижнів до звільнення) — перше значення
   const hit = log.find((x) => !x.baseline && x.reason && x.d > from && x.d <= to);
   if (hit) return { value: hit.reason, source: "hrappka" };
-  // старе звільнення: коли внесли причину — невідомо (значення з першого знімка), беремо поточне,
-  // якщо в HRappka людина звільнена, у нас це останній період і після BHP причина не мінялась
-  if (!p.next_bhp && emp.reason && DISMISSED.test(emp.state || "") && p.lwd < addDays(jstart, FALLBACK_DAYS)
-      && !log.some((x) => !x.baseline && x.d > from)) return { value: emp.reason, source: "hrappka" };
+  // значення з першого знімка (коли внесли — невідомо), після BHP причина не мінялась:
+  //  • звільнення до початку журналу — HRappka не стирає причину при поверненні, тож це причина ОСТАННЬОГО
+  //    звільнення людини: беремо, якщо пізніших періодів zwolniony немає (статус у HRappka не важливий);
+  //  • звільнення в перші 35 днів журналу — якщо в HRappka людина звільнена і в нас це останній період.
+  if (emp.reason && !p.later_dis && !log.some((x) => !x.baseline && x.d > from)
+      && (p.lwd < jstart || !p.next_bhp && DISMISSED.test(emp.state || "") && p.lwd < addDays(jstart, FALLBACK_DAYS))) {
+    return { value: emp.reason, source: "hrappka" };
+  }
   if (today <= to) return { wait: true };
   if (p.next_bhp && p.next_bhp <= end) return { problem: "next_period" };
   return { problem: emp.reason ? "stale" : "empty" };
@@ -120,7 +125,10 @@ async function assign(client, { full, today }) {
   const per = await client.query(
     `SELECT h.id, h.worker_id, h.status::text AS status, h.przyczyna_zwolnienia AS cur, h.przyczyna_zrodlo AS src, h.przyczyna_problem AS problem,
             to_char(h.bhp_date, 'YYYY-MM-DD') AS bhp, to_char(h.last_work_date, 'YYYY-MM-DD') AS lwd,
-            to_char(nx.bhp, 'YYYY-MM-DD') AS next_bhp, w.login, w.pesel, w.full_name, f.name AS facility
+            to_char(nx.bhp, 'YYYY-MM-DD') AS next_bhp, w.login, w.pesel, w.full_name, f.name AS facility,
+            EXISTS (SELECT 1 FROM public.worker_facility_history z
+                     WHERE z.worker_id = h.worker_id AND z.id <> h.id AND z.status = 'zwolniony'
+                       AND z.last_work_date > h.last_work_date) AS later_dis
        FROM public.worker_facility_history h
        JOIN public.workers w ON w.id = h.worker_id
        LEFT JOIN public.facilities f ON f.id = h.facility_id

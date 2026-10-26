@@ -1314,10 +1314,11 @@ function recCells(f, p, pace) {
   if (p == null) return [{ v: f ? `${f} / —` : "", tone: "muted" }, null, false];   // ні набору, ні плану — порожньо
   return [`${f} / ${p}`, Number(p) > 0 ? `${Math.round((f / p) * 100)}%` : null, isLagging(f, p, pace)];
 }
-// Рядки: регіон (заголовком) → координатор → обʼєкт; відставання підсвічене червоним
-function moveRows(items, own, pace, noReg) {
+// Рядки: регіон (заголовком) → координатор → обʼєкт; відставання підсвічене червоним.
+// regionTotal(назва регіону) → підсумок регіону (як moveTotal) у рядку регіону; без нього — лише назва
+function moveRows(items, own, pace, noReg, regionTotal) {
   return withRegions(items, (x) => x.site, (r) => ({ section: r }), noReg).map((x) => {
-    if (x.section) return x;
+    if (x.section) return regionTotal ? { section: x.section, cells: moveTotal({ total: "" }, own, regionTotal(x.section), pace).cells } : x;
     const [rec, pct, lag] = recCells(x.f, x.p, pace);
     const cells = [x.site];
     if (!own) cells.push(x.coord || "—");
@@ -1387,7 +1388,10 @@ function weekTableSpec(weekRows, ts, target, o) {
     }));
   return {
     title: o.title, sub: o.sub, ...moveCols(it, own, o.groups),
-    rows: moveRows(items, own, o.pace, it.noReg), total: moveTotal(it, own, weekTotalItem(wr), o.pace), totalTop: true,
+    // o.regionSums — у рядку регіону підсумок по всіх його обʼєктах (як «Разом»; сума регіонів = «Разом»)
+    rows: moveRows(items, own, o.pace, it.noReg,
+      o.regionSums ? (rg) => weekTotalItem(wr.filter((x) => (metaOf(x.site_key).region_name || it.noReg) === rg)) : null),
+    total: moveTotal(it, own, weekTotalItem(wr), o.pace), totalTop: true,
     empty: o.empty, legend: [{ tone: "red", text: o.legend }], note: it.note, footRight: stamp(o.day),
   };
 }
@@ -1411,16 +1415,17 @@ function ordersSpec(od, ts, target, today) {
   if (!own) cols.push({ label: it.coord, kind: "muted", align: "left" });
   od.weeks.forEach((w, i) => cols.push({ label: dd(w), kind: "num", sep: i === 0 }));
   cols.push({ label: it.oStatus, kind: "status", align: "left", sep: true });
+  const weekSums = (list) => od.weeks.map((_, i) => list.reduce((a, x) => a + (x.q[i] || 0), 0));
   const mk = (x) => {
-    if (x.section) return x;
+    // підсумок регіону — по всіх його обʼєктах (як «Разом»), а не лише показаних
+    if (x.section) return { section: x.section, cells: ["", ...(own ? [] : [""]), ...weekSums(od.rows.filter((y) => (metaOf(y.site_key).region_name || it.noReg) === x.section)), ""] };
     const cells = [x.site_key];
     if (!own) cells.push(x.coordinator_name || "—");
     x.q.forEach((v) => cells.push(v));
     cells.push(label[x.status]);
     return { cells, tone: x.status === "miss" ? "red" : x.status === "unc" ? "amber" : null };
   };
-  const sums = od.weeks.map((_, i) => od.rows.reduce((a, x) => a + (x.q[i] || 0), 0));
-  const total = { cells: [it.total, ...(own ? [] : [""]), ...sums, ""] };
+  const total = { cells: [it.total, ...(own ? [] : [""]), ...weekSums(od.rows), ""] };
   return {
     title: it.oTitle, sub: `${scopeText(t, ts)} · ${it.oSub(dd(today))}`, cols, lead: own ? 1 : 2,
     groups: [{ label: it.oWeeks, span: 3 }],
@@ -1520,7 +1525,7 @@ async function deliverMonday(t, today, prefix = "") {
       const wk = await weekData(prev, ts.keys, today);
       const png = renderSafe(weekTableSpec(wk.rows, ts, t, {
         title: it.weekTitle(dd(prev), dd(addDays(prev, 6))), sub: `${scopeText(tx, ts)} · ${it.prevSub}`,
-        groups: [it.gFull, it.gPlan], pace: 100, legend: it.lagFull, empty: it.prevEmpty, day: today,
+        groups: [it.gFull, it.gPlan], pace: 100, legend: it.lagFull, empty: it.prevEmpty, day: today, regionSums: true,
       }));
       if (png) {
         const s = totals(wk.rows);

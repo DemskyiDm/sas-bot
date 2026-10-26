@@ -72,7 +72,7 @@ function cellStyle(col, cell, rowTone, isTotal) {
 // spec: { title, sub, groups: [{ label, span }] | null (над колонками після lead перших),
 //         lead: скільки перших колонок без групи, cols: [{ label: "…" | ["рядок 1", "рядок 2"],
 //         kind: "site" | "muted" | "num" | "pct" | "text" | "status", align: "left" | "center", sep }],
-//         rows: [{ cells: [...], tone: null | "red" | "amber" } | { section: "Регіон" }], total: { cells } | null,
+//         rows: [{ cells: [...], tone: null | "red" | "amber" } | { section: "Регіон", cells?: підсумок регіону }], total: { cells } | null,
 //         totalTop: true — «Разом» одразу під шапкою на кожній картинці (інакше — внизу останньої),
 //         legend: [{ tone: "red" | "amber", text }], note: "рядок" | ["рядок", …], footRight, maxRows, scale }
 function render(spec) {
@@ -87,9 +87,9 @@ function render(spec) {
   const widths = cols.map((c, i) => {
     let w = Math.max(...c.lines.map((l) => width(String(l).toUpperCase(), F.head, 600)));
     for (const r of all.concat(spec.total ? [spec.total] : [])) {
-      if (r.section) continue;
+      if (r.section && (!r.cells || i === 0)) continue;   // назву регіону враховує sectionW
       const cell = cellOf(r.cells[i], c);
-      const st = cellStyle(c, cell, r.tone, r === spec.total);
+      const st = cellStyle(c, cell, r.tone, r === spec.total || !!r.section);
       w = Math.max(w, width(cell.v, st.size, st.weight));
     }
     return Math.ceil(w + 2 * CELL + (c.kind === "num" || c.kind === "pct" ? 6 : 0));
@@ -157,9 +157,16 @@ function render(spec) {
     const top = !!(spec.total && spec.totalTop);
     // рядки
     const drawRow = (r, isTotal) => {
-      if (r.section) {   // заголовок групи (регіон) на всю ширину
+      if (r.section) {   // заголовок групи (регіон); з cells — ще й підсумок регіону в колонках
         S.push(rect(x0, y, tableW, ROW, C.totalBg));
         S.push(txt(x0 + CELL + 2, y + ROW / 2 + F.head * 0.36 + 1, String(r.section).toUpperCase(), { size: F.head, weight: 700, fill: C.muted }));
+        if (r.cells) cols.forEach((c, i) => {
+          if (i === 0) return;
+          const cell = cellOf(r.cells[i], c);
+          const st = cellStyle(c, cell, r.tone, true);
+          const left = c.align === "left";
+          S.push(txt(left ? xs[i] + CELL : xs[i] + widths[i] / 2, y + ROW / 2 + st.size * 0.36, cell.v, { ...st, anchor: left ? "start" : "middle" }));
+        });
         y += ROW;
         S.push(hline(x0, x0 + tableW, y, C.rule));
         return;

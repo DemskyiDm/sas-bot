@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <title>SAS Praca</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="app.css?v=1" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <!-- Застосунок працівника в Telegram: кнопка «Застосунок» у чаті з ботом (bot/worker_app.js). API — api/wapp.js.
+       Відкрито не з Telegram: ?demo — тестові дані без сервера (перевірка вигляду). -->
+  <main id="view" aria-live="polite">
+    <div class="center"><div class="spin" aria-hidden="true"></div></div>
+  </main>
+  <div id="bar" class="bar" hidden></div>
+  <input id="camIn" type="file" accept="image/*" capture="environment" hidden />
+  <input id="fileIn" type="file" accept="image/*,application/pdf" hidden />
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="app.js?v=1"></script>
+</body>
+</html>

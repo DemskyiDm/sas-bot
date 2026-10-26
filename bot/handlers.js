@@ -15,6 +15,7 @@ const {
 } = require("./keyboards");
 const campaign = require("./campaign");
 const gaps = require("./gaps");
+const workerApp = require("./worker_app");
 
 const ABS_COLORS = { WZ: "wz", DWZ: "dwz", URL: "url", L4: "l4", NN: "nn", UN: "un" };
 
@@ -74,39 +75,39 @@ function resolveDate(ddmm) {
   return `${year}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
 }
 
-async function writeHours(workerId, ddmm, hours) {
-  const date = resolveDate(ddmm);
-
+// date — YYYY-MM-DD; source — 'telegram' (бот) або 'webapp' (міні-застосунок працівника, api/wapp.js)
+async function writeHoursOn(workerId, date, hours, source = "telegram") {
   if (!(await workedOnDate(workerId, date))) {
     return { ok: false, reason: "outside_period" };
   }
 
   await db.query(
     `INSERT INTO hours_log (worker_id, work_date, hours, absence_type, source)
-     VALUES ($1, $2, $3, NULL, 'telegram')
+     VALUES ($1, $2, $3, NULL, $4)
      ON CONFLICT (worker_id, work_date)
      DO UPDATE SET hours = $3, absence_type = NULL, updated_at = now()`,
-    [workerId, date, hours],
+    [workerId, date, hours, source],
   );
   return { ok: true };
 }
 
-async function writeAbsence(workerId, ddmm, absCode) {
-  const date = resolveDate(ddmm);
-
+async function writeAbsenceOn(workerId, date, absCode, source = "telegram") {
   if (!(await workedOnDate(workerId, date))) {
     return { ok: false, reason: "outside_period" };
   }
 
   await db.query(
     `INSERT INTO hours_log (worker_id, work_date, hours, absence_type, source)
-     VALUES ($1, $2, NULL, $3, 'telegram')
+     VALUES ($1, $2, NULL, $3, $4)
      ON CONFLICT (worker_id, work_date)
      DO UPDATE SET hours = NULL, absence_type = $3, updated_at = now()`,
-    [workerId, date, absCode],
+    [workerId, date, absCode, source],
   );
   return { ok: true };
 }
+
+const writeHours = (workerId, ddmm, hours) => writeHoursOn(workerId, resolveDate(ddmm), hours);
+const writeAbsence = (workerId, ddmm, absCode) => writeAbsenceOn(workerId, resolveDate(ddmm), absCode);
 
 async function getMonthlySummary(workerId) {
   const now = new Date();
@@ -186,6 +187,12 @@ async function sendDayKeyboard(bot, chatId, session, settings) {
     ? await gaps.gapRowsForWorker(session.workerId, session.lang)
     : null;
   const extraRows = [...(gapRows || []), ...(campaignRows || [])];
+  // Міні-застосунок (bot/worker_app.js): кнопка під меню і кнопка меню чату — лише коли задано TG_WORKER_URL
+  const appRow = session?.workerId ? workerApp.keyboardRow(session.workerLogin, session.lang) : null;
+  if (appRow) {
+    extraRows.unshift(appRow);
+    if (await workerApp.ensureMenuButton(chatId, session)) await saveSessionSafe(chatId, session);
+  }
   await sendMessage(bot, chatId, T(session, "choose_day"), {
     reply_markup: dayKeyboard(session, settings, extraRows.length ? extraRows : null), // ← передаємо весь settings
   });
@@ -1289,5 +1296,9 @@ async function sendLong(chatId, text, extra = {}) {
   if (chunk) await send(chunk);
 }
 
-module.exports = { handleUpdate, sendMissingReminders, sendTabeleReminders, sendCoordinatorReports };
+module.exports = {
+  handleUpdate, sendMissingReminders, sendTabeleReminders, sendCoordinatorReports,
+  // міні-застосунок працівника (api/wapp.js) — ті самі правила, що й у боті
+  writeHoursOn, writeAbsenceOn, isDismissed, splitNearWolne, writeWolne, writeWolneRejected, nextFriday, WOLNE_MIN_DAYS,
+};
 

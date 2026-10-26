@@ -70,6 +70,7 @@ app.use(async (req, res, next) => {
 // ── API routes ────────────────────────────────────────────────
 app.use("/api", apiRoutes);
 app.use("/api/tg", require("./api/tg").router);
+app.use("/api/wapp", require("./api/wapp").router);   // міні-застосунок працівника (public/tgw/)
 app.use("/api/regional", regional.router);
 app.use("/api/care", care.router);
 app.use("/api/board", board.router);
@@ -491,5 +492,7 @@ require("./bot/fines_sheet").schedule();  // штрафи → Google-табли�
 rec.schedule(bot);                         // замовлення: повідомлення координатору
 require("./bot/hr_sign").schedule(bot);    // підписи HRappka: 6:00 перевірка, 7:00 звіт, 10:00 нагадування працівникам
 require("./bot/hr_reason").schedule(bot);  // причина звільнення з HRappka: 5:00 щодня, у понеділок — повний прохід і звіт
+require("./bot/student").schedule();       // статус студента: 10:30 нагадування «довідка закінчується / закінчилась»
+require("./api/wapp").schedule();          // міні-застосунок працівника: чернетки сторінок старші за добу — геть
 
 //new

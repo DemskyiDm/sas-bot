@@ -27,6 +27,13 @@ const referral = require("./bot/referral");
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const app = express();
 app.use(express.json());
+// Тіло, яке express.json не розібрав (стиснення br, битий JSON, завелике) — відповідь без стеку в лозі,
+// один рядок: хто і куди (зазвичай сторонні сканери)
+app.use((err, req, res, next) => {
+  if (!err || !err.type || !/^(encoding\.unsupported|entity\.parse\.failed|entity\.too\.large|charset\.unsupported)$/.test(err.type)) return next(err);
+  console.warn(`[body] ${err.status} ${err.type} ${req.method} ${req.originalUrl} від ${req.ip}${req.headers["content-encoding"] ? " (" + req.headers["content-encoding"] + ")" : ""}`);
+  res.status(err.status || 400).json({ ok: false, error: err.message });
+});
 app.set("bot", bot);
 
 

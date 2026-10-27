@@ -726,15 +726,17 @@ router.get("/workers", requireAuth, async (req, res) => {
 });
 
 // ── Import ────────────────────────────────────────────────────
+// Кнопка «Import z HRappka» (Pracownicy): люди й поточні періоди — з HRappka (bot/hr_import.js), без листа.
+// Таблиці в базу не пишуть (лише копія для порівняння), тому їхній імпорт тут не запускаємо.
 router.post("/import", requireAuth, async (req, res) => {
   try {
-    // tylko obiekty z prawem edycji; pusta lista NIE może oznaczać „wszystko” (runImport([]) = pełny import)
+    // лише той, хто має право редагувати хоч один об'єкт
     const allowedFacilities = await getEditFacilityFilter(req.coordinator);
     if (allowedFacilities !== null && !allowedFacilities.length)
       return res.status(403).json({ ok: false, error: VIEW_ONLY });
-    const { runImport } = require("../import_sheets");
-    await runImport(allowedFacilities);
-    res.json({ ok: true, message: "Import finished" });
+    const r = await require("../bot/hr_import").refresh();
+    const a = r.stats.applied;
+    res.json({ ok: true, message: `HRappka: zmienione okresy ${a.update}, nowe ${a.insert}, nowe osoby ${a.create}` });
   } catch (err) {
     console.error("Import error:", err.message);
     res.status(500).json({ ok: false, error: err.message });

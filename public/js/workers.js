@@ -447,16 +447,16 @@ function closeHistoryModal() { document.getElementById("historyModal").classList
 
 async function startImport() {
   const btn = document.getElementById("importBtn");
-  btn.textContent = "⏳ Importowanie..."; btn.disabled = true;
+  btn.textContent = "⏳ Pobieranie z HRappka…"; btn.disabled = true;
   try {
     const res = await apiFetch("/api/import", { method: "POST" });
     if (res && res.ok) {
-      btn.textContent = "✅ Gotowe";
-      setTimeout(() => { btn.textContent = "⬇ Import"; btn.disabled = false; }, 5000);
+      btn.textContent = "✅ Gotowe"; btn.title = res.message || "";
+      setTimeout(() => { btn.textContent = "⬇ Import z HRappka"; btn.disabled = false; }, 5000);
       loadWorkersPage(); loadWorkerStats(); loadStats();
     } else {
-      btn.textContent = "❌ Blad"; setTimeout(() => { btn.textContent = "⬇ Import"; btn.disabled = false; }, 3000);
+      btn.textContent = "❌ Blad"; setTimeout(() => { btn.textContent = "⬇ Import z HRappka"; btn.disabled = false; }, 3000);
       if (res && res.error) alert(res.error);
     }
-  } catch (e) { btn.textContent = "❌ Blad"; setTimeout(() => { btn.textContent = "⬇ Import"; btn.disabled = false; }, 3000); }
+  } catch (e) { btn.textContent = "❌ Blad"; setTimeout(() => { btn.textContent = "⬇ Import z HRappka"; btn.disabled = false; }, 3000); }
 }

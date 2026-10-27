@@ -10,8 +10,8 @@ const CURRENT_USER = JSON.parse(localStorage.getItem("sas_user") || "null");
 if (!SESSION) location.href = "/login.html";
 
 const TYPES = [
-  ["status", "Status"], ["last_day", "Ostatni dzień"], ["passport", "Paszport"],
-  ["not_in_db", "Brak w bazie"], ["not_in_hr", "Brak w HRappka"],
+  ["status", "Status"], ["last_day", "Ostatni dzień"], ["object", "Obiekt"], ["passport", "Paszport"],
+  ["not_in_db", "Brak w tabeli"], ["not_in_hr", "Brak w HRappka"],
 ];
 const TYPE_PL = Object.fromEntries(TYPES);
 const NOTE_PL = {
@@ -54,10 +54,11 @@ async function load() {
   // grupujemy po osobie: { ...pierwszy wiersz, items: [{ code, note }] }
   const by = new Map();
   for (const x of r.rows) {
-    const k = x.worker_id ? "w" + x.worker_id : "h" + x.hr_id;
+    const k = x.worker_id ? "w" + x.worker_id : x.hr_id ? "h" + x.hr_id : "p" + x.passport;
     if (!by.has(k)) by.set(k, { ...x, items: [] });
     by.get(k).items.push({ code: x.code, note: x.note });
     if (x.hr_expected) by.get(k).hr_expected = x.hr_expected;
+    if (x.hr_facility) by.get(k).hr_facility = x.hr_facility;
   }
   r.people = [...by.values()].sort((a, b) => (a.facility || "~").localeCompare(b.facility || "~", "pl") || String(a.name).localeCompare(String(b.name), "pl"));
   ST.data = r;
@@ -82,9 +83,10 @@ function render() {
   const cnt = (code) => base.filter((x) => x.items.some((i) => i.code === code)).length;
 
   document.getElementById("content").innerHTML = `
-  <div class="banner">Porównanie bieżącego okresu w bazie (z tabel) z HRappka. Migawka HRappka: <b>${esc(at)}</b> — odświeżana codziennie o 8:00,
+  <div class="banner">Bieżący okres w bazie pochodzi z <b>HRappka</b>; tabele służą tylko do porównania — tu widać, gdzie tabela się różni.
+    Podział CAINIAO APT / APT 2, Dipico / Dipico 2, Action — z tabel. Migawka HRappka: <b>${esc(at)}</b> — odświeżana codziennie o 8:00,
     wtedy też idzie mail z CSV. ${r.full ? "Pokazane <b>wszystkie okresy</b>." : `Pokazane okresy <b>otwarte i zamknięte w ostatnich ${r.recent_days} dniach</b>.`}
-    Zmiany w tabelach widać od razu po imporcie tabel.</div>
+    Zmiany w tabelach widać po imporcie tabel.</div>
   <div class="bar">
     <span class="chip ${ST.type ? "" : "on"}" onclick="setType('')">Wszystkie<b>${base.length}</b></span>
     ${TYPES.map(([c, l]) => `<span class="chip ${ST.type === c ? "on" : ""}" onclick="setType('${c}')">${l}<b>${cnt(c)}</b></span>`).join("")}
@@ -123,14 +125,14 @@ function renderTable() {
   if (!list.length) { el.innerHTML = `<div class="empty">Brak rozbieżności 🎉</div>`; return; }
   el.innerHTML = `<div class="tblwrap"><table class="fl">
     <thead><tr>
-      <th>Typ</th><th>Imię i nazwisko</th><th>Obiekt (tabela)</th><th>Status tabela / HRappka</th>
+      <th>Typ</th><th>Imię i nazwisko</th><th>Obiekt tabela / HRappka</th><th>Status tabela / HRappka</th>
       <th>BHP</th><th>Ostatni dzień tabela / HRappka</th><th>HRappka: dział, firma, umowa od</th>
     </tr></thead>
     <tbody>${slice.map((x) => `
       <tr>
         <td>${x.items.map((i) => `<div><span class="tag ${i.code}">${esc(TYPE_PL[i.code] || i.code)}</span>${i.note ? `<div class="sub">${esc(NOTE_PL[i.note] || i.note)}</div>` : ""}</div>`).join("")}</td>
         <td><b>${esc(x.name)}</b><div class="sub">${esc(x.passport || "")}${x.hr_passport && x.hr_passport !== x.passport ? ` → HR: ${esc(x.hr_passport)}` : ""}${x.pesel ? ` · PESEL ${esc(x.pesel)}` : ""}${x.birth ? ` · ur. ${dmy(x.birth)}` : ""}</div></td>
-        <td>${esc(x.facility || "—")}</td>
+        <td>${has(x, "object") ? cell(x.facility, x.hr_facility) : esc(x.facility || "—")}</td>
         <td>${has(x, "status") ? `${cell(x.status, x.hr_state)}${x.hr_expected ? `<div class="sub">powinno być: <b>${esc(STATUS_PL[x.hr_expected] || x.hr_expected)}</b></div>` : ""}`
           : `${esc(x.status || "—")}<div class="sub">HR: ${esc(x.hr_state || "—")}</div>`}</td>
         <td>${dmy(x.bhp)}</td>

@@ -1,23 +1,27 @@
-// bot/hr_import.js — імпорт людей з HRappka і щоденне порівняння з таблицями (замість sync_hrrappka_diff.js).
-// Дані людей — з HRappka, поділ на об'єкти / періоди — з таблиць (import_sheets.js), тому об'єкт і BHP не порівнюємо.
-//   • знімок усіх працівників HRappka → hrz.people (статус, останній день, посада, дата народження…);
-//   • workers.pesel, workers.birth_date, workers.hr_employee_id ← картка HRappka. PESEL — лише з HRappka
-//     (імпорт таблиць його не пише, тільки шукає за ним людину); людину без картки HRappka не чіпаємо;
-//   • звіт: поточний період у БД ↔ HRappka — статус, останній день, інший паспорт, кого немає в одній із систем. CSV на пошту.
+// bot/hr_import.js — люди й поточні періоди з HRappka; таблиці — лише для порівняння (замість sync_hrrappka_diff.js).
+//   • знімок усіх працівників HRappka → hrz.people (статус, останній день, договір, посада, дата народження…);
+//   • поточний період кожної людини в worker_facility_history ← HRappka (apply): об'єкт, статус, BHP (початок договору),
+//     останній день, посада; hr_state — стан HRappka. Старі періоди не чіпаємо. Договір новіший — новий період,
+//     відкритий попередній закриваємо днем раніше. Людину, що працює в HRappka, а в базі немає, — додаємо;
+//   • об'єкт: відділ + фірма HRappka; де один відділ — кілька наших об'єктів (CAINIAO APT / APT 2, Dipico / Dipico 2,
+//     Action…), — об'єкт з таблиці (рядок того самого договору);
+//   • workers.pesel, workers.birth_date, workers.hr_employee_id ← картка HRappka;
+//   • таблиці (import_sheets.js) пишуть лише копію hrz.sheet_periods; після кожного імпорту таблиць — applySnapshot();
+//   • звіт: таблиці ↔ HRappka — статус, останній день, об'єкт, інший паспорт, кого немає в одній із систем. CSV на пошту.
 //     Щодня — відкриті періоди й закриті за останні 60 днів; у понеділок — усі.
-// Статуси HRappka → наші (решта — кандидати / історичні, їх порівнюємо лише якщо в нас людина працює):
-//   Pracuje → pracuje; Dotarł → pracuje або unknown (у таблиці ще без статусу); Urlop, Długi urlop → urlop; L4, Długi L4 → l4;
-//   Przeniesienie, Przeniesienie – czekamy → przeniesiony; Zwolniony → zwolniony; Rezygnacja → rezygnacja;
+// Статуси HRappka → наші (решта — кандидати / історичні: період не чіпаємо, у звіті — лише якщо в таблиці людина працює):
+//   Pracuje → pracuje; Dotarł → pracuje (у таблиці може бути ще unknown); Urlop, Długi urlop → urlop; L4, Długi L4 → l4;
+//   Przeniesienie, Przeniesienie – czekamy → przeniesiony; Rezygnacja → rezygnacja;
 //   Zwolniony, Umowa zamknięta → rezygnacja, якщо в таблиці rezygnacja, інакше zwolniony;
 //   Zwolniony, przejście bezpośrednio → pracuje, поки сьогодні < останнього дня, потім zwolniony;
-//   Do zatrudnienia (=Harmonogram) → unknown; Nie dotarł — окремий стан: розбіжність лише якщо в таблиці zwolniony.
+//   Do zatrudnienia (=Harmonogram) → unknown; Nie dotarł → у базі rezygnacja (такого статусу немає), у звіті — лише проти zwolniony.
 // Останній день різниться до 7 днів — беремо HRappka; понад 7 — перевірити (примітка в звіті).
-// Rezygnacja: останній день беремо, якщо він є в HRappka; «у HRappka не внесено» — не розбіжність.
+// Rezygnacja — людина не почала працювати: останній день і BHP не порівнюємо (і в ротації такі періоди не рахуються — reg.v_periods).
 // Останній день — attrdef_id_58419, одне значення на людину: до поточного періоду належить, лише якщо >= BHP.
-// Людину шукаємо за паспортом, потім за PESEL, потім за ПІБ (лише якщо таке ПІБ одне і в HRappka, і в базі — тоді «Паспорт»).
-// PERLIK не порівнюємо. Щодня о 8:00 (Варшава), index.js. Панель (hrappka.html, api/hr_import.js) рахує те саме зі знімка — current().
+// Людину шукаємо за паспортом, потім за PESEL, потім за ПІБ (лише якщо таке ПІБ одне з обох боків — тоді «Паспорт»).
+// PERLIK не чіпаємо. Щодня о 8:00 (Варшава), index.js. Панель (hrappka.html, api/hr_import.js) рахує те саме зі знімка — current().
 // Вручну: node bot/hr_import.js [--full] [--dry] [--send] [--csv <тека>]   (--dry — без запису в БД; --send — лист)
-// Таблиці: db/migration_hr_import.sql. Доступ до HRappka — ті самі змінні .env, що й у bot/hr_reason.js.
+// Таблиці: db/migration_hr_import.sql, db/migration_hr_current.sql. Доступ до HRappka — ті самі змінні .env, що й у bot/hr_reason.js.
 "use strict";
 
 const axios = require("axios");
@@ -31,6 +35,7 @@ const EMAIL_TO = (process.env.HR_IMPORT_EMAIL_TO ||
   "d.demskyi@saslogistic.pl,m.rosliakova@saslogistic.pl,o.kapkan@saslogistic.pl,d.ivanova@saslogistic.pl").split(/[,;\s]+/).filter(Boolean);
 const IGNORE = /PERLIK/i;
 const RECENT_DAYS = 60;   // щоденний звіт — закриті періоди за стільки днів
+const SAME_DAYS = 31;     // договір HRappka і період у базі / таблиці — той самий, якщо початок і BHP різняться не більше
 
 const STATE = {
   "Pracuje": "pracuje", "Dotarł": "dotarl",
@@ -101,11 +106,11 @@ async function fetchAll() {
 async function loadWorkers(client) {
   const r = await client.query(
     `SELECT w.id, w.login, w.full_name, w.pesel, to_char(w.birth_date, 'YYYY-MM-DD') AS birth, w.hr_employee_id AS hr_id,
-            c.status, to_char(c.bhp_date, 'YYYY-MM-DD') AS bhp, to_char(c.last_work_date, 'YYYY-MM-DD') AS lwd,
-            f.id AS facility_id, f.name AS facility, f.group_name AS grp
+            c.hid, c.status, to_char(c.bhp_date, 'YYYY-MM-DD') AS bhp, to_char(c.last_work_date, 'YYYY-MM-DD') AS lwd,
+            c.stanowisko, c.hr_state, c.source_sheet, f.id AS facility_id, f.name AS facility, f.group_name AS grp
        FROM public.workers w
        LEFT JOIN LATERAL (
-         SELECT h.status::text AS status, h.bhp_date, h.last_work_date, h.facility_id
+         SELECT h.id AS hid, h.status::text AS status, h.bhp_date, h.last_work_date, h.facility_id, h.stanowisko, h.hr_state, h.source_sheet
            FROM public.worker_facility_history h
           WHERE h.worker_id = w.id
           ORDER BY (h.last_work_date IS NULL) DESC, h.bhp_date DESC NULLS LAST, h.id DESC
@@ -113,7 +118,24 @@ async function loadWorkers(client) {
        ) c ON true
        LEFT JOIN public.facilities f ON f.id = COALESCE(c.facility_id, w.facility_id)
       WHERE COALESCE(w.login, '') NOT LIKE 'TEST_%'`);
-  return r.rows.map((w) => ({ ...w, status: w.status || "unknown" }));
+  return r.rows.map((w) => ({ ...w, status: w.hid ? w.status : "unknown" }));
+}
+
+// ── Таблиці: копія рядків (hrz.sheet_periods, пише import_sheets.js) — поточний рядок кожного паспорта ──
+// Той самий вигляд, що й loadWorkers: compare() порівнює HRappka саме з таблицями.
+async function loadSheets(client) {
+  const r = await client.query(
+    `SELECT DISTINCT ON (s.passport)
+            w.id, s.passport AS login, COALESCE(w.full_name, s.full_name) AS full_name, COALESCE(s.pesel, w.pesel) AS pesel,
+            to_char(w.birth_date, 'YYYY-MM-DD') AS birth, w.hr_employee_id AS hr_id,
+            s.status, to_char(s.bhp_date, 'YYYY-MM-DD') AS bhp, to_char(s.last_work_date, 'YYYY-MM-DD') AS lwd,
+            f.id AS facility_id, f.name AS facility, f.group_name AS grp
+       FROM hrz.sheet_periods s
+       LEFT JOIN public.workers w ON w.login = s.passport
+       LEFT JOIN public.facilities f ON f.id = s.facility_id
+      WHERE s.passport NOT LIKE 'TEST_%'
+      ORDER BY s.passport, (s.last_work_date IS NULL) DESC, s.bhp_date DESC NULLS LAST, s.id DESC`);
+  return r.rows;
 }
 
 // знімок hrz.people у тому ж вигляді, що й fetchAll
@@ -165,7 +187,30 @@ function statusOk(dbStatus, hr) {
   return dbStatus === hr;
 }
 
-function compare(people, workers, today) {
+// Об'єкт HRappka — відділ + фірма договору; один відділ буває кількома нашими об'єктами
+// (CAINIAO APT / APT 2, Dipico / Dipico 2, Action Zamienie / Przejęcie…). Які об'єкти в кожного відділу — з таблиць:
+// той самий договір (початок ≈ BHP), на якому об'єкті людина в таблиці. Об'єкт, що трапився лише раз, — помилка, не варіант.
+const depKey = (p) => `${p.department || ""}|${p.firm || ""}`;
+function facilityMap(pairs) {
+  const m = new Map();
+  for (const { w, p } of pairs) {
+    if (!p || !p.department || !w.facility_id || !p.start || !w.bhp || Math.abs(Date.parse(p.start) - Date.parse(w.bhp)) > SAME_DAYS * 864e5) continue;
+    if (!m.has(depKey(p))) m.set(depKey(p), new Map());
+    const c = m.get(depKey(p));
+    c.set(w.facility_id, (c.get(w.facility_id) || 0) + 1);
+  }
+  for (const c of m.values()) if (c.size > 1) for (const [id, n] of c) if (n < 2) c.delete(id);
+  return m;
+}
+// об'єкт людини: перший з prefer (таблиця, база), що є серед об'єктів відділу; інакше найчастіший; відділ невідомий — перший з prefer
+function pickFacility(p, fmap, ...prefer) {
+  const c = fmap.get(depKey(p));
+  if (!p.department || !c || !c.size) return prefer.find(Boolean) || null;
+  return prefer.find((id) => id && c.has(id)) || [...c].sort((a, b) => b[1] - a[1])[0][0];
+}
+
+// people — з HRappka; workers — поточні рядки таблиць (loadSheets); fmap — facilityMap, без нього об'єкт не порівнюємо
+function compare(people, workers, today, fmap = null) {
   const pairs = match(people, workers);
   const diffs = [];
   const seen = new Set();
@@ -182,12 +227,17 @@ function compare(people, workers, today) {
       if (w.status === "zwolniony") diffs.push({ type: "Статус", w, p, hr: "nie_dotarl" });
       continue;
     }
+    if (fmap && p.department && w.facility_id && w.status !== "rezygnacja" && STATE[p.state] !== "rezygnacja") {
+      const fac = pickFacility(p, fmap, w.facility_id);
+      if (fac && fac !== w.facility_id) diffs.push({ type: "Об'єкт", w, p, fac });
+    }
     if (how === "name") diffs.push({ type: "Паспорт", w, p, note: "знайдено за ПІБ, у HRappka інший паспорт / PESEL" });
     // останній день з HRappka належить цьому періоду, лише якщо він не раніше BHP
     const hrLast = p.lastDay && (!w.bhp || p.lastDay >= w.bhp) ? p.lastDay : null;
     const hr = expected(p.state, w.status, hrLast || w.lwd, today);
     if (hr ? !statusOk(w.status, hr) : dbWork) diffs.push({ type: "Статус", w, p, hr });
-    // rezygnacja: день беремо, якщо він є в HRappka; якщо немає — не важливо
+    // rezygnacja — людина не почала працювати: ні BHP, ні останній день не порівнюємо
+    if (hr === "rezygnacja" || w.status === "rezygnacja") continue;
     if (w.lwd && hrLast && w.lwd !== hrLast) {
       const gap = Math.abs(Date.parse(w.lwd) - Date.parse(hrLast)) / 864e5;
       diffs.push({ type: "Останній день", w, p, note: gap <= 7 ? "до 7 днів — беремо HRappka" : "понад 7 днів — перевірити" });
@@ -198,7 +248,7 @@ function compare(people, workers, today) {
   }
   for (const p of people) {
     if (!seen.has(p.id) && HR_WORK.includes(expected(p.state, null, p.lastDay, today)) && !IGNORE.test(p.department || ""))
-      diffs.push({ type: "Немає в БД", p });
+      diffs.push({ type: "Немає в таблиці", p });
   }
   return { pairs, diffs };
 }
@@ -240,14 +290,172 @@ async function saveWorkers(client, pairs) {
   return set.length;
 }
 
+// ── Поточний період з HRappka → worker_facility_history ─────────────────
+// Старі періоди не чіпаємо. Договір HRappka і поточний період у базі — той самий, якщо BHP різняться до SAME_DAYS днів
+// або це продовження договору на тому ж об'єкті: оновлюємо об'єкт, статус, BHP, останній день, посаду.
+// Договір HRappka новіший — новий період, а відкритий попередній закриваємо днем раніше.
+// Старіший (у базі вже новіший період) — не чіпаємо. Людину, що в HRappka працює, а в базі її немає, — додаємо.
+// Статусу «Nie dotarł» у базі немає — пишемо rezygnacja (не почав працювати, ніде не рахується), сам стан — у hr_state.
+const DB_STATUS = { dotarl: "pracuje", nie_dotarl: "rezygnacja" };
+
+// rows — усі рядки таблиць по паспорту: для договору HRappka беремо рядок того самого договору (BHP ≈ початок),
+// серед кількох (людина на двох аркушах з тим самим BHP) — на об'єкті, що вже в базі; немає такого — поточний рядок таблиці
+// prev — попередній знімок (id → людина): записуємо лише те, що змінилось у HRappka після нього (стан → статус,
+// останній день, початок договору → BHP / новий період, відділ → об'єкт, посада). Без prev — усе (тести).
+// objectOnly — після імпорту таблиць: лише об'єкт періодів, які вже записала HRappka (APT / APT 2 тощо з таблиці).
+function plan(people, dbWorkers, sheets, fmap, today, rows = new Map(), { prev = null, objectOnly = false } = {}) {
+  const cur = new Map(match(people, sheets).filter((x) => x.p).map((x) => [x.p.id, x.w]));
+  const sheetRow = (p, w) => {
+    const c = cur.get(p.id);
+    if (!c) return null;
+    const same = (rows.get(c.login) || []).filter((r) => p.start && r.bhp && Math.abs(Date.parse(p.start) - Date.parse(r.bhp)) <= SAME_DAYS * 864e5);
+    return same.find((r) => w && r.facility_id === w.facility_id) || same[0] || c;
+  };
+  const ops = [], skip = {};
+  const no = (why) => { skip[why] = (skip[why] || 0) + 1; };
+  const done = new Set();
+  const target = (p, w) => {
+    const st = STATE[p.state];
+    if (st === undefined) return no("стан HRappka не наш (кандидат тощо)");
+    if (IGNORE.test(p.department || "") || (w && (IGNORE.test(w.facility || "") || IGNORE.test(w.grp || "")))) return no("PERLIK");
+    const s = sheetRow(p, w);
+    const bhp = p.start || (w && w.bhp) || (s && s.bhp);
+    if (!bhp) return no("немає договору в HRappka");
+    const facility_id = pickFacility(p, fmap, s && s.facility_id, w && w.facility_id);
+    if (!facility_id) return no("невідомий об'єкт (відділ HRappka без відповідності)");
+    const lwd = p.lastDay && p.lastDay >= bhp ? p.lastDay : null;
+    const status = expected(p.state, s ? s.status : w && w.hid ? w.status : null, lwd, today);
+    return { facility_id, bhp, lwd, status: DB_STATUS[status] || status, stanowisko: p.position, hr_state: p.state };
+  };
+  // що змінилось у HRappka → які поля періоду можна міняти
+  const ALL = { state: 1, lastDay: 1, start: 1, dep: 1, position: 1 };
+  const delta = (p) => {
+    if (objectOnly) return { dep: 1 };
+    const o = prev && prev.get(p.id);
+    if (!prev || !o) return ALL;
+    const d = {};
+    if (o.state !== p.state) d.state = 1;
+    if (p.state === "Zwolniony, przejście bezpośrednio") d.tick = 1;   // pracuje → zwolniony, коли мине останній день
+    if ((o.lastDay || null) !== (p.lastDay || null)) d.lastDay = 1;
+    if ((o.start || null) !== (p.start || null)) d.start = 1;
+    if (depKey(o) !== depKey(p)) d.dep = 1;
+    if ((o.position || null) !== (p.position || null)) d.position = 1;
+    return d;
+  };
+  const FIELD = { status: ["state", "lastDay", "tick"], hr_state: ["state"], lwd: ["lastDay"], bhp: ["start"], facility_id: ["dep", "start"], stanowisko: ["position", "start"] };
+  for (const { w, p } of match(people, dbWorkers)) {
+    if (!p || done.has(p.id)) continue;
+    done.add(p.id);
+    const d = delta(p);
+    if (!Object.keys(d).length) continue;
+    if (objectOnly && !(w.hid && w.source_sheet === "HRappka")) continue;
+    const t = target(p, w);
+    if (!t) continue;
+    if (!w.hid) { if (d.start || d.state) ops.push({ op: "insert", w, p, t }); continue; }
+    const gap = w.bhp ? (Date.parse(t.bhp) - Date.parse(w.bhp)) / 864e5 : 0;
+    const renewal = gap > 0 && w.facility_id === t.facility_id && (!w.lwd || w.lwd >= addDays(t.bhp, -14));
+    if (Math.abs(gap) <= SAME_DAYS || renewal) {
+      if (renewal && gap > SAME_DAYS) t.bhp = w.bhp;          // продовження договору — BHP періоду лишається
+      const old = { facility_id: w.facility_id, bhp: w.bhp, lwd: w.lwd, status: w.status, stanowisko: w.stanowisko, hr_state: w.hr_state };
+      const changed = Object.keys(t).filter((k) => (t[k] || null) !== (old[k] || null) && !(k === "stanowisko" && !t[k]) && FIELD[k].some((x) => d[x]));
+      for (const k of Object.keys(t)) if (!changed.includes(k)) t[k] = old[k];   // решту лишаємо як у базі
+      if (changed.length) ops.push({ op: "update", w, p, t, changed });
+    } else if (gap > 0 && d.start) {
+      ops.push({ op: "insert", w, p, t });
+      if (!w.lwd) ops.push({ op: "close", w, p, t: { lwd: w.status === "rezygnacja" ? w.bhp : addDays(t.bhp, -1),
+        status: w.status === "rezygnacja" ? "rezygnacja" : w.facility_id === t.facility_id ? "zwolniony" : "przeniesiony" } });
+    } else if (gap < 0) no("у базі новіший період, ніж договір HRappka");
+  }
+  // працює в HRappka, а в базі немає — додаємо людину
+  for (const p of people) {
+    if (objectOnly || done.has(p.id) || !p.passport || !["pracuje", "dotarl", "urlop", "l4", "unknown"].includes(STATE[p.state])) continue;
+    if (prev && prev.has(p.id) && prev.get(p.id).state === p.state) continue;   // працював і раніше — не нова подія
+    const t = target(p, null);
+    if (t) ops.push({ op: "create", p, t });
+  }
+  return { ops, skip };
+}
+
+async function write(client, ops) {
+  let ok = 0;
+  const errors = [], failed = new Set();
+  const set = (t) => [t.facility_id, t.status, t.bhp, t.lwd, t.stanowisko || null, t.hr_state];
+  const ins = `INSERT INTO public.worker_facility_history (worker_id, facility_id, status, bhp_date, last_work_date, stanowisko, hr_state, source_sheet, imported_at)
+               VALUES ($1, $2, $3::worker_status, $4, $5, $6, $7, 'HRappka', now())`;
+  for (const x of ops) {
+    if (x.op === "close" && failed.has(x.w.id)) continue;   // новий період не записався — попередній не закриваємо
+    await client.query("SAVEPOINT op");
+    try {
+      if (x.op === "update") {
+        await client.query(
+          `UPDATE public.worker_facility_history SET facility_id = $2, status = $3::worker_status, bhp_date = $4, last_work_date = $5,
+                  stanowisko = COALESCE($6, stanowisko), hr_state = $7, source_sheet = 'HRappka', imported_at = now() WHERE id = $1`,
+          [x.w.hid, ...set(x.t)]);
+      } else if (x.op === "close") {
+        await client.query(`UPDATE public.worker_facility_history SET last_work_date = $2, status = $3::worker_status, imported_at = now() WHERE id = $1`,
+          [x.w.hid, x.t.lwd, x.t.status]);
+      } else {
+        let id = x.w && x.w.id;
+        if (x.op === "create") {
+          const [last, ...first] = String(x.p.name || x.p.passport).split(" ");
+          id = (await client.query(
+            `INSERT INTO public.workers (login, full_name, last_name, first_name, pesel, birth_date, hr_employee_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+            [x.p.passport, x.p.name || x.p.passport, last, first.join(" ") || null, x.p.pesel, x.p.birth, x.p.id])).rows[0].id;
+        }
+        await client.query(ins, [id, ...set(x.t)]);
+      }
+      await client.query("RELEASE SAVEPOINT op");
+      ok++;
+    } catch (e) {
+      await client.query("ROLLBACK TO SAVEPOINT op");
+      if (x.w) failed.add(x.w.id);
+      errors.push(`${x.op} ${(x.w && x.w.login) || x.p.passport} ${x.p.name}: ${e.message}`);
+    }
+  }
+  return { ok, errors };
+}
+
+// workers.status — статус поточного періоду (як було в import_sheets.js)
+async function syncWorkerStatus(client) {
+  const r = await client.query(`
+    UPDATE public.workers w SET status = c.status
+      FROM (SELECT DISTINCT ON (h.worker_id) h.worker_id, h.status FROM public.worker_facility_history h
+             ORDER BY h.worker_id, (h.last_work_date IS NULL) DESC, h.bhp_date DESC NULLS LAST, h.id DESC) c
+     WHERE w.id = c.worker_id AND w.status IS DISTINCT FROM c.status`);
+  return r.rowCount;
+}
+
+// знімок → поточні періоди в базі. people — свіжі з HRappka або зі знімка
+async function apply(client, people, today, { dry = false, prev = null, objectOnly = false } = {}) {
+  const sheets = await loadSheets(client);
+  const fmap = facilityMap(match(people, sheets));
+  const dbWorkers = await loadWorkers(client);
+  const rows = new Map();
+  for (const r of (await client.query(
+    `SELECT passport, facility_id, status, to_char(bhp_date, 'YYYY-MM-DD') AS bhp, to_char(last_work_date, 'YYYY-MM-DD') AS lwd
+       FROM hrz.sheet_periods ORDER BY (last_work_date IS NULL) DESC, bhp_date DESC NULLS LAST, id DESC`)).rows) {
+    if (!rows.has(r.passport)) rows.set(r.passport, []);
+    rows.get(r.passport).push(r);
+  }
+  const { ops, skip } = plan(people, dbWorkers, sheets, fmap, today, rows, { prev, objectOnly });
+  const count = (op) => ops.filter((x) => x.op === op).length;
+  const res = { update: count("update"), insert: count("insert"), close: count("close"), create: count("create"), skip, ops };
+  if (dry) return res;
+  Object.assign(res, await write(client, ops));
+  res.births = await saveWorkers(client, match(people, await loadWorkers(client)));
+  res.synced = await syncWorkerStatus(client);
+  return res;
+}
+
 // ── Звіт ──────────────────────────────────────────────────────────────
-const TYPES = ["Статус", "Останній день", "Паспорт", "Немає в БД", "Немає в HRappka"];
+const TYPES = ["Статус", "Останній день", "Об'єкт", "Паспорт", "Немає в таблиці", "Немає в HRappka"];
 function toCsv(diffs) {
   const head = ["Тип", "Примітка", "ПІБ", "Паспорт", "Паспорт HRappka", "PESEL HRappka", "Дата народження", "Об'єкт (таблиця)", "Статус (таблиця)", "BHP",
-    "Останній день (таблиця)", "Статус HRappka", "Має бути статус", "Останній день HRappka", "Відділ HRappka", "Фірма HRappka", "Посада HRappka", "Початок договору HRappka"];
-  const rows = diffs.slice().sort((a, b) => TYPES.indexOf(a.type) - TYPES.indexOf(b.type)).map(({ type, note, w = {}, p = {}, hr }) => [
-    type, note, w.full_name || p.name, w.login || p.passport, p.passport, p.pesel, p.birth || w.birth, w.facility, w.status, w.bhp, w.lwd,
-    p.state, hr, p.lastDay, p.department, p.firm, p.position, p.start]);
+    "Останній день (таблиця)", "Статус HRappka", "Має бути статус", "Останній день HRappka", "Об'єкт HRappka", "Відділ HRappka", "Фірма HRappka", "Посада HRappka", "Початок договору HRappka"];
+  const rows = diffs.slice().sort((a, b) => TYPES.indexOf(a.type) - TYPES.indexOf(b.type)).map((d) => [d, d.w || {}, d.p || {}]).map(([d, w, p]) => [
+    d.type, d.note, w.full_name || p.name, w.login || p.passport, p.passport, p.pesel, p.birth || w.birth, w.facility, w.status, w.bhp, w.lwd,
+    p.state, d.hr, p.lastDay, d.facName, p.department, p.firm, p.position, p.start]);
   const esc = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
   return "﻿" + [head, ...rows].map((r) => r.map(esc).join(";")).join("\r\n");
 }
@@ -268,9 +476,10 @@ async function sendEmail(diffs, stats, today, full) {
     from: `"SAS Bot Audit" <${process.env.GMAIL_USER}>`,
     to: EMAIL_TO,
     subject: `HRappka vs таблиці (${today}${full ? ", повний" : ""}) — розбіжностей: ${diffs.length}`,
-    text: `Доброго дня!\n\nПорівняння поточних періодів у базі (з таблиць) з HRappka` +
+    text: `Доброго дня!\n\nПоточні періоди в базі — з HRappka. Порівняння таблиць з HRappka` +
       `${full ? " — усі періоди" : ` — відкриті періоди й закриті за ${RECENT_DAYS} днів`}.\n` +
-      `HRappka: ${stats.people} людей, у базі: ${stats.workers}, знайдено в HRappka: ${stats.matched}.\n\n${summary(diffs)}\n\nДеталі — у CSV.`,
+      `HRappka: ${stats.people} людей, у таблицях: ${stats.workers}, знайдено в HRappka: ${stats.matched}.\n` +
+      `${applySummary(stats.applied)}\n\n${summary(diffs)}\n\nДеталі — у CSV.`,
     attachments: diffs.length ? [{ filename: `hrappka_${today}.csv`, content: toCsv(diffs) }] : [],
   });
   console.log(`[hr import] лист надіслано: ${info.messageId}`);
@@ -279,19 +488,32 @@ async function sendEmail(diffs, stats, today, full) {
 // відкриті періоди й закриті за RECENT_DAYS днів
 const recent = (diffs, today) => { const from = addDays(today, -RECENT_DAYS); return diffs.filter((d) => !d.w || !d.w.lwd || d.w.lwd >= from); };
 
+let RUNNING = false;   // знімок / запис з HRappka — не паралельно
+
 // ── Запуск ────────────────────────────────────────────────────────────
+// розбіжності таблиць з HRappka; d.facName — об'єкт за HRappka (для «Об'єкт»)
+async function diffsFor(client, people, today) {
+  const sheets = await loadSheets(client);
+  const pairs = match(people, sheets);
+  const res = compare(people, sheets, today, facilityMap(pairs));
+  const names = new Map((await client.query(`SELECT id, name FROM public.facilities`)).rows.map((x) => [x.id, x.name]));
+  for (const d of res.diffs) if (d.fac) d.facName = names.get(d.fac) || String(d.fac);
+  return res;
+}
+
 // full — усі періоди (понеділок); dry — нічого не записати; notify — лист
 async function run({ full = false, dry = false, notify = true } = {}) {
   const today = todayWarsaw();
   const people = await fetchAll();
   const client = await db.pool.connect();
-  let res, births;
+  let res, applied;
   try {
     await client.query("BEGIN");
+    const prev = new Map((await loadPeople(client)).map((x) => [x.id, x]));
     await snapshot(client, people);
-    const workers = await loadWorkers(client);
-    res = compare(people, workers, today);
-    births = await saveWorkers(client, res.pairs);
+    // перший знімок — лише точка відліку: те, що вже було в HRappka, у базі не міняємо
+    applied = prev.size ? await apply(client, people, today, { dry, prev }) : { update: 0, insert: 0, close: 0, create: 0, skip: {}, ops: [] };
+    res = await diffsFor(client, people, today);
     await client.query(dry ? "ROLLBACK" : "COMMIT");
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
@@ -300,28 +522,59 @@ async function run({ full = false, dry = false, notify = true } = {}) {
     client.release();
   }
   if (!full) res.diffs = recent(res.diffs, today);
-  const stats = { people: people.length, workers: res.pairs.length, matched: res.pairs.filter((x) => x.p).length, births };
-  console.log(`[hr import] HRappka ${stats.people}, у базі ${stats.workers}, знайдено ${stats.matched}, працівників оновлено (PESEL, дата народження, картка HRappka) ${births}; ` +
-    `розбіжностей ${res.diffs.length}${dry ? " — DRY, нічого не записано" : ""}\n${summary(res.diffs)}`);
+  const stats = { people: people.length, workers: res.pairs.length, matched: res.pairs.filter((x) => x.p).length, applied };
+  console.log(`[hr import] ${applySummary(applied)}${dry ? " — DRY, нічого не записано" : ""}
+` +
+    `таблиці: ${stats.workers} людей, знайдено в HRappka ${stats.matched}; розбіжностей ${res.diffs.length}
+${summary(res.diffs)}`);
   if (notify) await sendEmail(res.diffs, stats, today, full);
   return { ...res, stats, today };
 }
 
-// Для панелі: розбіжності між останнім знімком HRappka і поточними даними таблиць (без запиту до HRappka)
+function applySummary(a) {
+  const sk = Object.entries(a.skip).map(([k, v]) => `${k}: ${v}`).join("; ");
+  return `HRappka → база: оновлено періодів ${a.update}, нових ${a.insert}, закрито попередніх ${a.close}, нових людей ${a.create}` +
+    (a.errors ? `, помилок ${a.errors.length}` : "") + (sk ? ` (пропущено — ${sk})` : "");
+}
+
+// Після імпорту таблиць: копія таблиць змінилась — об'єкт періодів, записаних з HRappka (APT / APT 2 тощо), беремо з таблиці.
+// Решту зі знімка не перераховуємо: у базу йдуть лише зміни HRappka (run).
+async function applySnapshot({ dry = false } = {}) {
+  if (RUNNING) return null;
+  RUNNING = true;
+  const client = await db.pool.connect();
+  try {
+    const people = await loadPeople(client);
+    if (!people.length) return null;
+    await client.query("BEGIN");
+    const a = await apply(client, people, todayWarsaw(), { dry, objectOnly: true });
+    await client.query(dry ? "ROLLBACK" : "COMMIT");
+    console.log(`  ${applySummary(a)}`);
+    for (const e of (a.errors || []).slice(0, 20)) console.warn(`  HRappka: ${e}`);
+    return a;
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+    RUNNING = false;
+  }
+}
+
+// Для панелі: розбіжності між останнім знімком HRappka і таблицями (без запиту до HRappka)
 async function current({ full = false } = {}) {
   const today = todayWarsaw();
   const client = await db.pool.connect();
   try {
     const people = await loadPeople(client);
     const at = (await client.query(`SELECT max(seen_at) AS at FROM hrz.people`)).rows[0].at;
-    const { diffs } = compare(people, await loadWorkers(client), today);
+    const { diffs } = await diffsFor(client, people, today);
     return { diffs: full ? diffs : recent(diffs, today), snapshotAt: at, today, recentDays: RECENT_DAYS };
   } finally {
     client.release();
   }
 }
 
-let RUNNING = false;
 // Кнопка «Odśwież z HRappka»: новий знімок без листа; паралельно з cron не запускаємо
 async function refresh() {
   if (RUNNING) throw new Error("Import z HRappka już trwa — spróbuj za minutę");
@@ -340,7 +593,7 @@ function schedule() {
   }, { timezone: "Europe/Warsaw" });
 }
 
-module.exports = { run, schedule, compare, current, refresh, toCsv, STATE, TYPES, _test: { fetchAll, toPerson, match } };
+module.exports = { run, schedule, compare, current, refresh, applySnapshot, toCsv, STATE, TYPES, _test: { fetchAll, toPerson, match, plan, facilityMap, loadPeople } };
 
 if (require.main === module) {
   require("dotenv").config();

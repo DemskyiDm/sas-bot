@@ -1,4 +1,5 @@
-// api/hr_import.js — розбіжності HRappka ↔ таблиці для панелі (hrappka.html). app.use("/api/hrimport", hrImport.router)
+// api/hr_import.js — розбіжності таблиць з HRappka для панелі (hrappka.html). app.use("/api/hrimport", hrImport.router)
+// Поточні періоди в базі — з HRappka; тут видно, де таблиці відстають.
 //   GET  /diffs[?full=1]  — розбіжності з останнього знімка HRappka (щодня о 8:00); full — усі періоди, інакше відкриті й закриті за 60 днів
 //   GET  /diffs.csv[?full=1] — те саме CSV-файлом (як у листі)
 //   POST /refresh          — новий знімок з HRappka зараз (лише адмін, ~1 хв)
@@ -17,7 +18,7 @@ const fail = (res, e) => {
 };
 
 // типи й примітки з bot/hr_import.js (українською, для листа) → коди для панелі
-const CODE = { "Статус": "status", "Останній день": "last_day", "Паспорт": "passport", "Немає в БД": "not_in_db", "Немає в HRappka": "not_in_hr" };
+const CODE = { "Статус": "status", "Останній день": "last_day", "Об'єкт": "object", "Паспорт": "passport", "Немає в таблиці": "not_in_db", "Немає в HRappka": "not_in_hr" };
 const NOTE = {
   "у HRappka є, у таблиці немає": "hr_only",
   "у HRappka не внесено": "hr_missing",
@@ -40,8 +41,8 @@ async function visibleDiffs(c, full) {
 router.get("/diffs", async (req, res) => {
   try {
     const r = await visibleDiffs(req.coordinator, req.query.full === "1");
-    const rows = r.diffs.map(({ type, note, w = {}, p = {}, hr: expected }) => ({
-      code: CODE[type] || type, note: NOTE[note] || note || null, hr_expected: expected || null,
+    const rows = r.diffs.map(({ type, note, w = {}, p = {}, hr: expected, facName }) => ({
+      code: CODE[type] || type, note: NOTE[note] || note || null, hr_expected: expected || null, hr_facility: facName || null,
       worker_id: w.id || null, name: w.full_name || p.name, passport: w.login || p.passport, hr_passport: p.passport || null,
       pesel: p.pesel || null, birth: p.birth || w.birth || null,
       facility_id: w.facility_id || null, facility: w.facility || null, status: w.status || null, bhp: w.bhp || null, lwd: w.lwd || null,

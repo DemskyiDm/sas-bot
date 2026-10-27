@@ -8,9 +8,10 @@
 // Статуси HRappka → наші (решта — кандидати / історичні, їх порівнюємо лише якщо в нас людина працює):
 //   Pracuje → pracuje; Dotarł → pracuje або unknown (у таблиці ще без статусу); Urlop, Długi urlop → urlop; L4, Długi L4 → l4;
 //   Przeniesienie, Przeniesienie – czekamy → przeniesiony; Zwolniony → zwolniony; Rezygnacja → rezygnacja;
-//   Umowa zamknięta → rezygnacja, якщо в таблиці rezygnacja, інакше zwolniony;
+//   Zwolniony, Umowa zamknięta → rezygnacja, якщо в таблиці rezygnacja, інакше zwolniony;
 //   Zwolniony, przejście bezpośrednio → pracuje, поки сьогодні < останнього дня, потім zwolniony;
-//   Do zatrudnienia (=Harmonogram) → unknown; Nie dotarł — окремий стан, таких людей не порівнюємо зовсім.
+//   Do zatrudnienia (=Harmonogram) → unknown; Nie dotarł — окремий стан: розбіжність лише якщо в таблиці zwolniony.
+// Останній день різниться до 7 днів — беремо HRappka; понад 7 — перевірити (примітка в звіті).
 // Rezygnacja: останній день беремо, якщо він є в HRappka; «у HRappka не внесено» — не розбіжність.
 // Останній день — attrdef_id_58419, одне значення на людину: до поточного періоду належить, лише якщо >= BHP.
 // Людину шукаємо за паспортом, потім за PESEL, потім за ПІБ (лише якщо таке ПІБ одне і в HRappka, і в базі — тоді «Паспорт»).
@@ -37,7 +38,7 @@ const STATE = {
   "Przeniesienie": "przeniesiony", "Przeniesienie – czekamy": "przeniesiony",
   "Zwolniony": "zwolniony", "Zwolniony, przejście bezpośrednio": "zwolniony", "Umowa zamknięta": "zwolniony",
   "Rezygnacja": "rezygnacja",
-  "Nie dotarł": "nie_dotarl",                     // окремий стан — ніде не рахуємо
+  "Nie dotarł": "nie_dotarl",                     // окремий стан — порівнюємо лише з zwolniony
   "Do zatrudnienia (=Harmonogram)": "unknown",
 };
 const HR_WORK = ["pracuje", "dotarl", "urlop", "l4"];
@@ -154,7 +155,7 @@ function match(people, workers) {
 
 // статус, який має бути в таблиці за станом HRappka; залежить і від статусу в таблиці, і від останнього дня
 function expected(state, dbStatus, lastDay, today) {
-  if (state === "Umowa zamknięta") return dbStatus === "rezygnacja" ? "rezygnacja" : "zwolniony";
+  if (state === "Umowa zamknięta" || state === "Zwolniony") return dbStatus === "rezygnacja" ? "rezygnacja" : "zwolniony";
   if (state === "Zwolniony, przejście bezpośrednio") return lastDay && today < lastDay ? "pracuje" : "zwolniony";
   return STATE[state];
 }
@@ -177,14 +178,20 @@ function compare(people, workers, today) {
       if (dbWork) diffs.push({ type: "Немає в HRappka", w });
       continue;
     }
-    if (STATE[p.state] === "nie_dotarl") continue;
+    if (STATE[p.state] === "nie_dotarl") {
+      if (w.status === "zwolniony") diffs.push({ type: "Статус", w, p, hr: "nie_dotarl" });
+      continue;
+    }
     if (how === "name") diffs.push({ type: "Паспорт", w, p, note: "знайдено за ПІБ, у HRappka інший паспорт / PESEL" });
     // останній день з HRappka належить цьому періоду, лише якщо він не раніше BHP
     const hrLast = p.lastDay && (!w.bhp || p.lastDay >= w.bhp) ? p.lastDay : null;
     const hr = expected(p.state, w.status, hrLast || w.lwd, today);
     if (hr ? !statusOk(w.status, hr) : dbWork) diffs.push({ type: "Статус", w, p, hr });
     // rezygnacja: день беремо, якщо він є в HRappka; якщо немає — не важливо
-    if (w.lwd && hrLast && w.lwd !== hrLast) diffs.push({ type: "Останній день", w, p });
+    if (w.lwd && hrLast && w.lwd !== hrLast) {
+      const gap = Math.abs(Date.parse(w.lwd) - Date.parse(hrLast)) / 864e5;
+      diffs.push({ type: "Останній день", w, p, note: gap <= 7 ? "до 7 днів — беремо HRappka" : "понад 7 днів — перевірити" });
+    }
     else if (!w.lwd && hrLast) diffs.push({ type: "Останній день", w, p, note: "у HRappka є, у таблиці немає" });
     else if (w.lwd && !hrLast && w.lwd <= today && (hr === "zwolniony" || hr === "przeniesiony"))
       diffs.push({ type: "Останній день", w, p, note: "у HRappka не внесено" });

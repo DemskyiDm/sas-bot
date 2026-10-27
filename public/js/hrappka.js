@@ -18,7 +18,10 @@ const NOTE_PL = {
   hr_only: "w HRappka jest, w tabeli brak",
   hr_missing: "w HRappka nie wpisano",
   by_name: "znaleziono po nazwisku — w HRappka inny paszport / PESEL",
+  gap_small: "różnica do 7 dni — bierzemy HRappka",
+  gap_big: "różnica ponad 7 dni — sprawdzić",
 };
+const STATUS_PL = { nie_dotarl: "Nie dotarł" };
 const PAGE = 100;
 const ST = { data: null, full: false, type: "", fac: "", q: "", page: 0 };
 
@@ -128,7 +131,7 @@ function renderTable() {
         <td>${x.items.map((i) => `<div><span class="tag ${i.code}">${esc(TYPE_PL[i.code] || i.code)}</span>${i.note ? `<div class="sub">${esc(NOTE_PL[i.note] || i.note)}</div>` : ""}</div>`).join("")}</td>
         <td><b>${esc(x.name)}</b><div class="sub">${esc(x.passport || "")}${x.hr_passport && x.hr_passport !== x.passport ? ` → HR: ${esc(x.hr_passport)}` : ""}${x.pesel ? ` · PESEL ${esc(x.pesel)}` : ""}${x.birth ? ` · ur. ${dmy(x.birth)}` : ""}</div></td>
         <td>${esc(x.facility || "—")}</td>
-        <td>${has(x, "status") ? `${cell(x.status, x.hr_state)}${x.hr_expected ? `<div class="sub">powinno być: <b>${esc(x.hr_expected)}</b></div>` : ""}`
+        <td>${has(x, "status") ? `${cell(x.status, x.hr_state)}${x.hr_expected ? `<div class="sub">powinno być: <b>${esc(STATUS_PL[x.hr_expected] || x.hr_expected)}</b></div>` : ""}`
           : `${esc(x.status || "—")}<div class="sub">HR: ${esc(x.hr_state || "—")}</div>`}</td>
         <td>${dmy(x.bhp)}</td>
         <td>${has(x, "last_day") ? cell(x.lwd && dmy(x.lwd), lastDayHr(x)) : `${dmy(x.lwd)}<div class="sub">HR: ${esc(lastDayHr(x) || "—")}</div>`}</td>

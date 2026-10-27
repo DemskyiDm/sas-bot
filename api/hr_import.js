@@ -22,6 +22,8 @@ const NOTE = {
   "у HRappka є, у таблиці немає": "hr_only",
   "у HRappka не внесено": "hr_missing",
   "знайдено за ПІБ, у HRappka інший паспорт / PESEL": "by_name",
+  "до 7 днів — беремо HRappka": "gap_small",
+  "понад 7 днів — перевірити": "gap_big",
 };
 
 async function visibleDiffs(c, full) {

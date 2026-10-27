@@ -54,6 +54,7 @@ async function load() {
     const k = x.worker_id ? "w" + x.worker_id : "h" + x.hr_id;
     if (!by.has(k)) by.set(k, { ...x, items: [] });
     by.get(k).items.push({ code: x.code, note: x.note });
+    if (x.hr_expected) by.get(k).hr_expected = x.hr_expected;
   }
   r.people = [...by.values()].sort((a, b) => (a.facility || "~").localeCompare(b.facility || "~", "pl") || String(a.name).localeCompare(String(b.name), "pl"));
   ST.data = r;
@@ -127,7 +128,8 @@ function renderTable() {
         <td>${x.items.map((i) => `<div><span class="tag ${i.code}">${esc(TYPE_PL[i.code] || i.code)}</span>${i.note ? `<div class="sub">${esc(NOTE_PL[i.note] || i.note)}</div>` : ""}</div>`).join("")}</td>
         <td><b>${esc(x.name)}</b><div class="sub">${esc(x.passport || "")}${x.hr_passport && x.hr_passport !== x.passport ? ` → HR: ${esc(x.hr_passport)}` : ""}${x.pesel ? ` · PESEL ${esc(x.pesel)}` : ""}${x.birth ? ` · ur. ${dmy(x.birth)}` : ""}</div></td>
         <td>${esc(x.facility || "—")}</td>
-        <td>${has(x, "status") ? cell(x.status, x.hr_state) : `${esc(x.status || "—")}<div class="sub">HR: ${esc(x.hr_state || "—")}</div>`}</td>
+        <td>${has(x, "status") ? `${cell(x.status, x.hr_state)}${x.hr_expected ? `<div class="sub">powinno być: <b>${esc(x.hr_expected)}</b></div>` : ""}`
+          : `${esc(x.status || "—")}<div class="sub">HR: ${esc(x.hr_state || "—")}</div>`}</td>
         <td>${dmy(x.bhp)}</td>
         <td>${has(x, "last_day") ? cell(x.lwd && dmy(x.lwd), lastDayHr(x)) : `${dmy(x.lwd)}<div class="sub">HR: ${esc(lastDayHr(x) || "—")}</div>`}</td>
         <td>${x.hr_id ? `${esc(x.hr_department || "—")}<div class="sub">${esc(x.hr_firm || "")}${x.hr_start ? ` · od ${dmy(x.hr_start)}` : ""}</div>` : `<span class="dim">—</span>`}</td>

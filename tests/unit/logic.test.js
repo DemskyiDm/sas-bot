@@ -146,3 +146,22 @@ test("hr_import.compare: статус, останній день, кого не�
   const got = diffs.map((d) => `${d.type}:${(d.w || d.p).id}`).sort();
   assert.deepEqual(got, ["Немає в HRappka:11", "Немає в БД:8", "Останній день:4", "Паспорт:13", "Статус:6"]);
 });
+
+test("hr_import.compare: статус залежить від таблиці й останнього дня", () => {
+  const P = (id, state, extra = {}) => ({ id, state, passport: `P${id}`, pesel: null, lastDay: null, department: "X", ...extra });
+  const W = (id, status, extra = {}) => ({ id, login: `P${id}`, pesel: null, status, bhp: "2026-01-10", lwd: null, facility: "F", ...extra });
+  const people = [
+    P(20, "Nie dotarł", { lastDay: "2026-02-01" }), P(21, "Umowa zamknięta"), P(22, "Umowa zamknięta"),
+    P(23, "Zwolniony, przejście bezpośrednio", { lastDay: "2026-11-05" }), P(24, "Zwolniony, przejście bezpośrednio", { lastDay: "2026-10-01" }),
+    P(25, "Rezygnacja"), P(26, "Rezygnacja", { lastDay: "2026-03-01" }), P(27, "Do zatrudnienia (=Harmonogram)"), P(28, "Długi urlop"),
+    P(29, "Zwolniony, przejście bezpośrednio", { lastDay: "2026-11-05" }), P(30, "Nie dotarł"),
+  ];
+  const workers = [
+    W(20, "pracuje"), W(21, "rezygnacja", { lwd: "2026-02-01" }), W(22, "przeniesiony", { lwd: "2026-02-01" }),
+    W(23, "pracuje", { lwd: "2026-11-05" }), W(24, "pracuje", { lwd: "2026-10-01" }), W(25, "rezygnacja", { lwd: "2026-02-01" }),
+    W(26, "rezygnacja"), W(27, "unknown"), W(28, "unknown"),
+  ];
+  const { diffs } = hrImport.compare(people, workers, "2026-10-27");
+  const got = diffs.map((d) => `${d.type}:${(d.w || d.p).id}${d.hr ? ":" + d.hr : ""}`).sort();
+  assert.deepEqual(got, ["Немає в БД:29", "Останній день:22", "Останній день:26", "Статус:22:zwolniony", "Статус:24:zwolniony", "Статус:28:urlop"]);
+});

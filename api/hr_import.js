@@ -38,8 +38,8 @@ async function visibleDiffs(c, full) {
 router.get("/diffs", async (req, res) => {
   try {
     const r = await visibleDiffs(req.coordinator, req.query.full === "1");
-    const rows = r.diffs.map(({ type, note, w = {}, p = {} }) => ({
-      code: CODE[type] || type, note: NOTE[note] || note || null,
+    const rows = r.diffs.map(({ type, note, w = {}, p = {}, hr: expected }) => ({
+      code: CODE[type] || type, note: NOTE[note] || note || null, hr_expected: expected || null,
       worker_id: w.id || null, name: w.full_name || p.name, passport: w.login || p.passport, hr_passport: p.passport || null,
       pesel: p.pesel || null, birth: p.birth || w.birth || null,
       facility_id: w.facility_id || null, facility: w.facility || null, status: w.status || null, bhp: w.bhp || null, lwd: w.lwd || null,

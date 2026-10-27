@@ -8,7 +8,7 @@
 //   • о 10:00 — нагадування працівнику в боті «перевірте посилання в e-mail» (раз на пакет, наступного дня);
 //   • з панелі — «Sprawdź podpisy» для вибраних / обʼєкта (не частіше ніж раз на хвилину на людину).
 // Анкети — лише вибрані (HR_SIGN_SURVEYS у .env, id з HRappka → Ankiety): відповіді беремо пачкою по анкеті, не по людині.
-// Доступ до HRappka — ті самі змінні .env, що й у sync_hrrappka_diff.js. Таблиці: db/migration_hr_sign.sql.
+// Доступ до HRappka — ті самі змінні .env, що й у bot/hr_import.js. Таблиці: db/migration_hr_sign.sql.
 "use strict";
 
 const axios = require("axios");

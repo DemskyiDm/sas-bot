@@ -126,3 +126,23 @@ test("hr_reason.decide: новий період, перенесення, ста�
   assert.deepEqual(reason.decide({ status: "zwolniony", bhp: "2026-08-01", lwd: "2026-10-28", next_bhp: "2026-11-02" }, { ...dis, state: "Pracuje" },
     [{ reason: "Редукция", baseline: true, d: "2026-10-25" }], ctx), { problem: "next_period" });
 });
+
+const hrImport = require("../../bot/hr_import");
+test("hr_import.compare: статус, останній день, кого немає", () => {
+  const P = (id, state, extra = {}) => ({ id, state, passport: `P${id}`, pesel: null, lastDay: null, department: "X", ...extra });
+  const W = (id, status, extra = {}) => ({ id, login: `P${id}`, pesel: null, status, bhp: "2026-01-10", lwd: null, facility: "F", ...extra });
+  const people = [
+    P(1, "Pracuje"), P(2, "Dotarł"), P(3, "Zwolniony", { lastDay: "2026-05-01" }), P(4, "Umowa zamknięta", { lastDay: "2026-04-01" }),
+    P(5, "Czarna lista"), P(6, "Do zatrudnienia (=Harmonogram)"), P(7, "Pracuje", { lastDay: "2025-03-01" }),
+    P(8, "Pracuje"), P(9, "Pracuje", { department: "JÓZEF PERLIK" }), P(10, "Nie dotarł"),
+    P(13, "Pracuje", { passport: "NEW13", name: "KOWAL JAN" }), P(14, "Pracuje", { pesel: "90010112345" }),
+  ];
+  const workers = [
+    W(1, "pracuje"), W(2, "unknown"), W(3, "zwolniony", { lwd: "2026-05-01" }), W(4, "zwolniony", { lwd: "2026-04-03" }),
+    W(5, "zwolniony", { lwd: "2025-01-01" }), W(6, "pracuje"), W(7, "pracuje"), W(11, "pracuje"), W(12, "zwolniony", { lwd: "2025-01-01" }),
+    W(13, "pracuje", { full_name: "JAN KOWAL" }), W(14, "pracuje", { pesel: "90010112346" }),
+  ];
+  const { diffs } = hrImport.compare(people, workers, "2026-10-27");
+  const got = diffs.map((d) => `${d.type}:${(d.w || d.p).id}`).sort();
+  assert.deepEqual(got, ["Немає в HRappka:11", "Немає в БД:8", "Останній день:4", "Паспорт:13", "Статус:6"]);
+});

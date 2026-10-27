@@ -79,6 +79,7 @@ app.use("/api/hours-report", hoursReport.router);
 app.use("/api/ref", require("./api/ref").router);
 app.use("/api/broadcast", broadcast.router);
 app.use("/api/hrsign", require("./api/hr_sign").router);
+app.use("/api/hrimport", require("./api/hr_import").router);   // Rozbieżności HRappka (public/hrappka.html)
 const rec = require("./api/rec");   // Zamówienia · Rekrutacja (поки лише адмін)
 app.use("/api/rec", rec.router);   // підписи документів HRappka (Pracownicy → Dokumenty)
 app.use("/api", apiRoutes);
@@ -368,26 +369,8 @@ function scheduleImport() {
   );
 }
 
-const cron = require('node-cron');
-const { main: runHrappkaAudit } = require('./sync_hrrappka_diff');
-
-// Щотижневий аудит HRappka: щопонеділка о 08:00 за Варшавою ('0 8 * * 1'; четвер — '0 8 * * 4').
-// Помилку (HRappka не відповіла, пошта) лише пишемо в лог — інакше необроблена помилка могла б зупинити процес.
-let hrappkaAuditRunning = false;
-cron.schedule('0 8 * * 1', async () => {
-  if (hrappkaAuditRunning) return;
-  hrappkaAuditRunning = true;
-  console.log('--- Запуск щотижневого аудиту HRappka ---');
-  try {
-    await runHrappkaAudit();
-  } catch (err) {
-    console.error('[HRappka audit] Error:', err.message);
-  } finally {
-    hrappkaAuditRunning = false;
-  }
-}, {
-  timezone: "Europe/Warsaw"
-});
+// Імпорт людей з HRappka і порівняння з таблицями: щодня о 8:00, звіт на пошту (bot/hr_import.js)
+require("./bot/hr_import").schedule();
 
 app.get("/api/facility-settings-all", requireAuth, async (req, res) => {
   try {

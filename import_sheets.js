@@ -111,13 +111,11 @@ function cleanPassport(str) {
     .toUpperCase();
 }
 
+// PESEL з таблиці — лише щоб знайти людину; у workers.pesel його пише bot/hr_import.js з HRappka.
+// У таблиці PESEL часто як число — без нуля на початку.
 function cleanPesel(str) {
-  return (
-    String(str || "")
-      .trim()
-      .replace(/[^0-9]/g, "")
-      .substring(0, 20) || null
-  );
+  const p = String(str || "").trim().replace(/[^0-9]/g, "").substring(0, 20);
+  return (p.length === 10 ? "0" + p : p) || null;
 }
 
 // ── STATUS PRIORITY ───────────────────────────────────────────
@@ -360,25 +358,20 @@ async function importSource(source, facilityId, cache) {
 
         const needsUpdate =
           worker.full_name !== fullName ||
-          (pesel && worker.pesel !== pesel) ||
           (worker.login !== loginToSave) ||
           (names && (worker.last_name !== nazwisko || worker.first_name !== imie));
 
         if (needsUpdate) {
           await db.query(
             names
-              ? `UPDATE workers SET full_name = $1, login = $2, pesel = COALESCE($3, pesel), last_name = $5, first_name = $6, updated_at = now() WHERE id = $4`
-              : `UPDATE workers SET full_name = $1, login = $2, pesel = COALESCE($3, pesel), updated_at = now() WHERE id = $4`,
-            names ? [fullName, loginToSave, pesel, workerId, nazwisko, imie] : [fullName, loginToSave, pesel, workerId],
+              ? `UPDATE workers SET full_name = $1, login = $2, last_name = $4, first_name = $5, updated_at = now() WHERE id = $3`
+              : `UPDATE workers SET full_name = $1, login = $2, updated_at = now() WHERE id = $3`,
+            names ? [fullName, loginToSave, workerId, nazwisko, imie] : [fullName, loginToSave, workerId],
           );
           // Оновлюємо кеш
           worker.full_name = fullName;
           if (names) { worker.last_name = nazwisko; worker.first_name = imie; }
           worker.login = loginToSave;
-          if (pesel) {
-            worker.pesel = pesel;
-            cache.byPesel.set(pesel, worker);
-          }
           cache.byLogin.set(loginToSave, worker);
           updated++;
         }
@@ -386,21 +379,20 @@ async function importSource(source, facilityId, cache) {
         // Новий працівник
         const insertRes = await db.query(
           names
-            ? `INSERT INTO workers (login, full_name, pesel, last_name, first_name) VALUES ($1, $2, $3, $4, $5) RETURNING id`
-            : `INSERT INTO workers (login, full_name, pesel) VALUES ($1, $2, $3) RETURNING id`,
-          names ? [passport, fullName, pesel, nazwisko, imie] : [passport, fullName, pesel],
+            ? `INSERT INTO workers (login, full_name, last_name, first_name) VALUES ($1, $2, $3, $4) RETURNING id`
+            : `INSERT INTO workers (login, full_name) VALUES ($1, $2) RETURNING id`,
+          names ? [passport, fullName, nazwisko, imie] : [passport, fullName],
         );
         workerId = insertRes.rows[0].id;
         const newWorker = {
           id: workerId,
           login: passport,
           full_name: fullName,
-          pesel,
+          pesel: null,
           last_name: nazwisko,
           first_name: imie,
         };
         cache.byLogin.set(passport, newWorker);
-        if (pesel) cache.byPesel.set(pesel, newWorker);
         added++;
       }
       processedWorkerIds.add(workerId);

@@ -492,10 +492,24 @@ let RUNNING = false;   // знімок / запис з HRappka — не пара
 
 // ── Запуск ────────────────────────────────────────────────────────────
 // розбіжності таблиць з HRappka; d.facName — об'єкт за HRappka (для «Об'єкт»)
+// у базі вже стоїть те, що каже HRappka (виправили базу, таблиця ще стара) — такої розбіжності не показуємо
+function fixedInDb(d, cur) {
+  if (!cur || !cur.hid) return false;
+  if (d.type === "Статус") return !!d.hr && (d.hr === "nie_dotarl" ? cur.status === "rezygnacja" : statusOk(cur.status, d.hr));
+  if (d.type === "Останній день") return d.note !== "у HRappka не внесено" && !!d.p.lastDay && cur.lwd === d.p.lastDay;
+  if (d.type === "Об'єкт") return cur.facility_id === d.fac;
+  return false;
+}
+
 async function diffsFor(client, people, today) {
   const sheets = await loadSheets(client);
   const pairs = match(people, sheets);
   const res = compare(people, sheets, today, facilityMap(pairs));
+  // працівник у базі: за логіном рядка таблиці, інакше — за карткою HRappka (паспорт у таблиці інший, ніж логін)
+  const dbw = await loadWorkers(client);
+  const byId = new Map(dbw.map((w) => [w.id, w])), byHr = new Map(dbw.filter((w) => w.hr_id).map((w) => [String(w.hr_id), w]));
+  const cur = (d) => (d.w && d.w.id && byId.get(d.w.id)) || (d.p && byHr.get(String(d.p.id))) || null;
+  res.diffs = res.diffs.filter((d) => !(d.w && fixedInDb(d, cur(d))));
   const names = new Map((await client.query(`SELECT id, name FROM public.facilities`)).rows.map((x) => [x.id, x.name]));
   for (const d of res.diffs) if (d.fac) d.facName = names.get(d.fac) || String(d.fac);
   return res;

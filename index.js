@@ -369,7 +369,7 @@ function scheduleImport() {
   );
 }
 
-// Імпорт людей з HRappka і порівняння з таблицями: щодня о 8:00, звіт на пошту (bot/hr_import.js)
+// Імпорт людей з HRappka і порівняння з таблицями: о 6, 8, 10, 12, 16, 20, звіт на пошту о 8:00 (bot/hr_import.js)
 require("./bot/hr_import").schedule();
 
 app.get("/api/facility-settings-all", requireAuth, async (req, res) => {

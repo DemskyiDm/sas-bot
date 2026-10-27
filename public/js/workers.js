@@ -5,9 +5,84 @@ let pageWorkers = 1;
 let workersCurrentGroup = '';
 let workersCurrentFac = '';
 
-// Посада (Stanowisko) — з імпорту таблиць; ще не імпортована — «—»
+// Посада (Stanowisko) — з HRappka; ще немає — «—»
 function escStan(s) {
   return s ? String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])) : "—";
+}
+
+// ── Kolumny: які показувати в таблиці і які йдуть в Excel (окремо), вибір пам'ятає браузер ──
+const plDate = (d) => (d ? new Date(d).toLocaleDateString("pl") : "—");
+const WORKER_COLS = [
+  { key: "login", label: "ID", cell: (w) => `<span style="font-family:var(--mono);font-size:11px">${w.login}</span>`, xls: (w) => w.login },
+  { key: "name", label: "Imie i Nazwisko", cell: (w) => `<span class="worker-name">${escStan(w.full_name)}</span>`, xls: (w) => w.full_name },
+  { key: "pesel", label: "PESEL", title: "Z HRappka", cell: (w) => `<span style="font-family:var(--mono);font-size:11px;color:var(--text3)">${w.pesel || "—"}</span>`, xls: (w) => w.pesel || "—" },
+  { key: "birth", label: "Data ur.", title: "Z HRappka", cell: (w) => `<span style="font-size:11px;color:var(--text3)">${plDate(w.birth_date)}</span>`, xls: (w) => plDate(w.birth_date) },
+  { key: "group", label: "Grupa", off: true, cell: (w) => `<span style="color:var(--text2);font-size:12px">${escStan(w.group_name)}</span>`, xls: (w) => w.group_name || "—" },
+  { key: "facility", label: "Obiekt", cell: (w) => `<span style="color:var(--text2);font-size:12px">${escStan(w.facility_name)}</span>`, xls: (w) => w.facility_name || "—" },
+  { key: "stan", label: "Stanowisko", cell: (w) => `<span style="color:var(--text2);font-size:12px">${escStan(w.stanowisko)}</span>`, xls: (w) => w.stanowisko || "—" },
+  { key: "status", label: "Status", cell: (w) => `<span class="badge ${w.status === "pracuje" ? "badge-green"
+      : w.status === "urlop" || w.status === "l4" ? "badge-purple"
+        : w.status === "przeniesiony" ? "badge-orange" : "badge-blue"}"><span class="badge-dot"></span>${w.status || "—"}</span>`, xls: (w) => w.status || "—" },
+  { key: "tg", label: "Telegram", cell: (w) => `<span style="font-family:var(--mono);font-size:11px;color:var(--text3)">${w.telegram_chat_id ? "✅" : "—"}</span>`, xls: (w) => (w.telegram_chat_id ? "TAK" : "NIE") },
+  { key: "bhp", label: "BHP", cell: (w) => `<span style="font-size:11px;color:var(--text3)">${plDate(w.bhp_date)}</span>`, xls: (w) => plDate(w.bhp_date) },
+  { key: "last", label: "Ostatni dzień", cell: (w) => `<span style="font-size:11px;color:var(--text3)">${plDate(w.last_work_date)}</span>`, xls: (w) => plDate(w.last_work_date) },
+  { key: "docs", label: "Dokumenty", title: "Podpisy dokumentów w HRappka", cell: (w) => hrsCell(w), xls: null },
+];
+const COLS_KEY = { table: "sas_workers_cols", excel: "sas_workers_cols_xls" };
+function colsGet(kind) {
+  try {
+    const v = JSON.parse(localStorage.getItem(COLS_KEY[kind]) || "null");
+    if (Array.isArray(v)) return new Set(v);
+  } catch (e) {}
+  return new Set(WORKER_COLS.filter((c) => !c.off && (kind === "table" || c.xls)).map((c) => c.key));
+}
+function colsSet(kind, set) { try { localStorage.setItem(COLS_KEY[kind], JSON.stringify([...set])); } catch (e) {} }
+const visibleCols = () => { const s = colsGet("table"); return WORKER_COLS.filter((c) => s.has(c.key)); };
+
+function renderWorkersHead() {
+  const h = document.getElementById("workersHead");
+  if (h) h.innerHTML = visibleCols().map((c) => `<th${c.title ? ` title="${c.title}"` : ""}>${c.label}</th>`).join("") + "<th>Akcje</th>";
+}
+
+function toggleWorkersCols(e) {
+  if (e) e.stopPropagation();
+  const d = document.getElementById("workersColsDrop");
+  if (d.style.display === "block") { d.style.display = "none"; return; }
+  const t = colsGet("table"), x = colsGet("excel");
+  d.innerHTML = `<div style="display:grid;grid-template-columns:1fr auto auto;gap:4px 12px;align-items:center;font-size:12px">
+      <span style="font-size:10px;color:var(--text3);font-family:var(--mono)">KOLUMNA</span>
+      <span style="font-size:10px;color:var(--text3);font-family:var(--mono)">TABELA</span>
+      <span style="font-size:10px;color:var(--text3);font-family:var(--mono)">EXCEL</span>
+      ${WORKER_COLS.map((c) => `<span>${c.label}</span>
+        <input type="checkbox" ${t.has(c.key) ? "checked" : ""} onchange="setWorkersCol('table','${c.key}',this.checked)" />
+        ${c.xls ? `<input type="checkbox" ${x.has(c.key) ? "checked" : ""} onchange="setWorkersCol('excel','${c.key}',this.checked)" />` : "<span></span>"}`).join("")}
+    </div>`;
+  // fixed — щоб не ховалось під фільтрами нижче (свій контекст накладання в картці)
+  const r = e && e.currentTarget ? e.currentTarget.getBoundingClientRect() : d.parentElement.getBoundingClientRect();
+  Object.assign(d.style, { position: "fixed", top: `${r.bottom + 4}px`, right: `${Math.max(8, innerWidth - r.right)}px`,
+    maxHeight: `${Math.max(160, innerHeight - r.bottom - 12)}px`, overflowY: "auto", display: "block" });
+}
+function setWorkersCol(kind, key, on) {
+  const s = colsGet(kind);
+  if (on) s.add(key); else s.delete(key);
+  colsSet(kind, s);
+  if (kind === "table") { renderWorkersHead(); filterWorkers(false); }
+}
+document.addEventListener("click", (e) => {
+  const d = document.getElementById("workersColsDrop");
+  if (d && d.style.display === "block" && !e.target.closest("#workersColsWrap")) d.style.display = "none";
+});
+document.addEventListener("scroll", (e) => {
+  const d = document.getElementById("workersColsDrop");
+  if (d && d.style.display === "block" && !d.contains(e.target)) d.style.display = "none";
+}, true);
+
+// рядок для Excel (modules.js → exportToExcel('workers')) — лише вибрані колонки
+function workerExcelRow(w) {
+  const s = colsGet("excel");
+  const row = {};
+  for (const c of WORKER_COLS) if (c.xls && s.has(c.key)) row[c.label === "Imie i Nazwisko" ? "Imię i Nazwisko" : c.label] = c.xls(w);
+  return row;
 }
 
 // ── Podpisy dokumentów w HRappka (api/hr_sign.js) ─────────────────
@@ -308,30 +383,17 @@ function filterWorkers(reset = true) {
 
   const { slice, pages } = paginate(filtered, pageWorkers, pageSizeWorkers);
   document.getElementById("workersCount").textContent = filtered.length;
+  const cols = visibleCols();
+  renderWorkersHead();
   document.getElementById("workersTable").innerHTML = slice.map((w) => `
     <tr>
-      <td><span style="font-family:var(--mono);font-size:11px">${w.login}</span></td>
-      <td class="worker-name">${w.full_name}</td>
-      <td style="font-family:var(--mono);font-size:11px;color:var(--text3)">${w.pesel || "—"}</td>
-      <td style="font-size:11px;color:var(--text3)">${w.birth_date ? new Date(w.birth_date).toLocaleDateString("pl") : "—"}</td>
-      <td style="color:var(--text2);font-size:12px">${w.facility_name || "—"}</td>
-      <td style="color:var(--text2);font-size:12px">${escStan(w.stanowisko)}</td>
-      <td><span class="badge ${w.status === "pracuje" ? "badge-green"
-      : w.status === "urlop" || w.status === "l4" ? "badge-purple"
-        : w.status === "przeniesiony" ? "badge-orange"
-          : w.status === "rezygnacja" ? "badge-blue"
-            : "badge-blue"
-    }"><span class="badge-dot"></span>${w.status || "—"}</span></td>
-      <td style="font-family:var(--mono);font-size:11px;color:var(--text3)">${w.telegram_chat_id ? "✅" : "—"}</td>
-      <td style="font-size:11px;color:var(--text3)">${w.bhp_date ? new Date(w.bhp_date).toLocaleDateString("pl") : "—"}</td>
-      <td style="font-size:11px;color:var(--text3)">${w.last_work_date ? new Date(w.last_work_date).toLocaleDateString("pl") : "—"}</td>
-      <td>${hrsCell(w)}</td>
+      ${cols.map((c) => `<td>${c.cell(w)}</td>`).join("")}
       <td style="display:flex;gap:4px">
         <button class="btn btn-ghost btn-sm" onclick='openWorkerModal(${JSON.stringify(w)})'>Edytuj</button>
         <button class="btn btn-ghost btn-sm" onclick="openHistoryModal(${w.id},'${w.full_name.replace(/'/g, "\\'").replace(/"/g, "&quot;")}')">Historia</button>
       </td>
     </tr>`).join("") ||
-    `<tr><td colspan="12" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
+    `<tr><td colspan="${cols.length + 1}" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
 
   renderPagination("paginationWorkers", pageWorkers, pages, "goPageWorkers");
 }

@@ -559,6 +559,10 @@
               <button class="btn btn-ghost btn-sm" onclick="startImport()" id="importBtn">
                 ⬇ Import z HRappka
               </button>
+              <div style="position:relative" id="workersColsWrap">
+                <button class="btn btn-ghost btn-sm" onclick="toggleWorkersCols(event)" title="Kolumny w tabeli i w Excelu">⚙ Kolumny</button>
+                <div id="workersColsDrop" style="display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:300;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.35);white-space:nowrap"></div>
+              </div>
               <button class="btn btn-ghost btn-sm" onclick="exportToExcel('workers')">
                 📥 Excel
               </button>
@@ -600,20 +604,7 @@
           <div class="table-wrap">
             <table>
               <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Imie i Nazwisko</th>
-                  <th title="Z HRappka">PESEL</th>
-                  <th title="Z HRappka">Data ur.</th>
-                  <th>Obiekt</th>
-                  <th>Stanowisko</th>
-                  <th>Status</th>
-                  <th>Telegram</th>
-                  <th>BHP</th>
-                  <th>Ostatni dzień</th>
-                  <th title="Podpisy dokumentów w HRappka">Dokumenty</th>
-                  <th>Akcje</th>
-                </tr>
+                <tr id="workersHead"></tr>
               </thead>
               <tbody id="workersTable">
                 <tr>

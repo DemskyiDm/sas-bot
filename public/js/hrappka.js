@@ -1,6 +1,6 @@
 // ══════════════════════════════════════════════════════════════════════
 //  Rozbieżności HRappka ↔ tabele (api/hr_import.js, bot/hr_import.js).
-//  Dane ludzi — z HRappka (migawka codziennie o 8:00), podział na obiekty — z tabel.
+//  Dane ludzi — z HRappka (migawka o 6, 8, 10, 12, 16, 20), podział na obiekty — z tabel.
 //  Domyślnie: okresy otwarte i zamknięte w ostatnich 60 dniach; „Wszystkie okresy” — cała historia.
 //  Koordynator widzi swoje obiekty; admin — wszystko i może odświeżyć migawkę z HRappka.
 //  Jedna osoba — jeden wiersz (kilka rozbieżności = kilka znaczników).
@@ -84,8 +84,8 @@ function render() {
 
   document.getElementById("content").innerHTML = `
   <div class="banner">Bieżący okres w bazie pochodzi z <b>HRappka</b>; tabele służą tylko do porównania — tu widać, gdzie tabela się różni.
-    Podział CAINIAO APT / APT 2, Dipico / Dipico 2, Action — z tabel. Migawka HRappka: <b>${esc(at)}</b> — odświeżana codziennie o 8:00,
-    wtedy też idzie mail z CSV. ${r.full ? "Pokazane <b>wszystkie okresy</b>." : `Pokazane okresy <b>otwarte i zamknięte w ostatnich ${r.recent_days} dniach</b>.`}
+    Podział CAINIAO APT / APT 2, Dipico / Dipico 2, Action — z tabel. Migawka HRappka: <b>${esc(at)}</b> — odświeżana o 6, 8, 10, 12, 16 i 20,
+    mail z CSV — o 8:00. ${r.full ? "Pokazane <b>wszystkie okresy</b>." : `Pokazane okresy <b>otwarte i zamknięte w ostatnich ${r.recent_days} dniach</b>.`}
     Zmiany w tabelach widać po imporcie tabel.</div>
   <div class="bar">
     <span class="chip ${ST.type ? "" : "on"}" onclick="setType('')">Wszystkie<b>${base.length}</b></span>

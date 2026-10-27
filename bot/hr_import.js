@@ -19,7 +19,7 @@
 // Rezygnacja — людина не почала працювати: останній день і BHP не порівнюємо (і в ротації такі періоди не рахуються — reg.v_periods).
 // Останній день — attrdef_id_58419, одне значення на людину: до поточного періоду належить, лише якщо >= BHP.
 // Людину шукаємо за паспортом, потім за PESEL, потім за ПІБ (лише якщо таке ПІБ одне з обох боків — тоді «Паспорт»).
-// PERLIK не чіпаємо. Щодня о 8:00 (Варшава), index.js. Панель (hrappka.html, api/hr_import.js) рахує те саме зі знімка — current().
+// PERLIK не чіпаємо. Імпорт о 6, 8, 10, 12, 16, 20 (Варшава), лист — о 8:00; index.js. Панель (hrappka.html, api/hr_import.js) рахує те саме зі знімка — current().
 // Вручну: node bot/hr_import.js [--full] [--dry] [--send] [--csv <тека>]   (--dry — без запису в БД; --send — лист)
 // Таблиці: db/migration_hr_import.sql, db/migration_hr_current.sql. Доступ до HRappka — ті самі змінні .env, що й у bot/hr_reason.js.
 "use strict";
@@ -584,12 +584,15 @@ async function refresh() {
 
 function schedule() {
   const cron = require("node-cron");
-  // щодня о 8:00; у понеділок — повний звіт
-  cron.schedule("0 8 * * *", async () => {
+  // імпорт о 6, 8, 10, 12, 16, 20; лист — лише о 8:00 (у понеділок — повний звіт)
+  cron.schedule("0 6,8,10,12,16,20 * * *", async () => {
     if (RUNNING) return;
     RUNNING = true;
-    const monday = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Warsaw", weekday: "short" }).format(new Date()) === "Mon";
-    try { await run({ full: monday }); } catch (e) { console.error("[hr import]:", e.response ? JSON.stringify(e.response.data).slice(0, 300) : e.message); } finally { RUNNING = false; }
+    const part = (o) => new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Warsaw", ...o }).format(new Date());
+    const notify = Number(part({ hour: "numeric", hourCycle: "h23" })) === 8;
+    try { await run({ full: notify && part({ weekday: "short" }) === "Mon", notify }); }
+    catch (e) { console.error("[hr import]:", e.response ? JSON.stringify(e.response.data).slice(0, 300) : e.message); }
+    finally { RUNNING = false; }
   }, { timezone: "Europe/Warsaw" });
 }
 

@@ -7,8 +7,11 @@
 //     Щодня — відкриті періоди й закриті за останні 60 днів; у понеділок — усі.
 // Статуси HRappka → наші (решта — кандидати / історичні, їх порівнюємо лише якщо в нас людина працює):
 //   Pracuje → pracuje; Dotarł → pracuje або unknown (у таблиці ще без статусу); Urlop, Długi urlop → urlop; L4, Długi L4 → l4;
-//   Przeniesienie, Przeniesienie – czekamy → przeniesiony; Zwolniony, Zwolniony (przejście bezpośrednio), Umowa zamknięta → zwolniony;
-//   Rezygnacja, Nie dotarł → rezygnacja.
+//   Przeniesienie, Przeniesienie – czekamy → przeniesiony; Zwolniony → zwolniony; Rezygnacja → rezygnacja;
+//   Umowa zamknięta → rezygnacja, якщо в таблиці rezygnacja, інакше zwolniony;
+//   Zwolniony, przejście bezpośrednio → pracuje, поки сьогодні < останнього дня, потім zwolniony;
+//   Do zatrudnienia (=Harmonogram) → unknown; Nie dotarł — окремий стан, таких людей не порівнюємо зовсім.
+// Rezygnacja: останній день беремо, якщо він є в HRappka; «у HRappka не внесено» — не розбіжність.
 // Останній день — attrdef_id_58419, одне значення на людину: до поточного періоду належить, лише якщо >= BHP.
 // Людину шукаємо за паспортом, потім за PESEL, потім за ПІБ (лише якщо таке ПІБ одне і в HRappka, і в базі — тоді «Паспорт»).
 // PERLIK не порівнюємо. Щодня о 8:00 (Варшава), index.js. Панель (hrappka.html, api/hr_import.js) рахує те саме зі знімка — current().
@@ -33,7 +36,9 @@ const STATE = {
   "Urlop": "urlop", "Długi urlop": "urlop", "L4": "l4", "Długi L4": "l4",
   "Przeniesienie": "przeniesiony", "Przeniesienie – czekamy": "przeniesiony",
   "Zwolniony": "zwolniony", "Zwolniony, przejście bezpośrednio": "zwolniony", "Umowa zamknięta": "zwolniony",
-  "Rezygnacja": "rezygnacja", "Nie dotarł": "rezygnacja",
+  "Rezygnacja": "rezygnacja",
+  "Nie dotarł": "nie_dotarl",                     // окремий стан — ніде не рахуємо
+  "Do zatrudnienia (=Harmonogram)": "unknown",
 };
 const HR_WORK = ["pracuje", "dotarl", "urlop", "l4"];
 const DB_WORK = ["pracuje", "unknown", "urlop", "l4"];
@@ -147,6 +152,13 @@ function match(people, workers) {
   return pairs;
 }
 
+// статус, який має бути в таблиці за станом HRappka; залежить і від статусу в таблиці, і від останнього дня
+function expected(state, dbStatus, lastDay, today) {
+  if (state === "Umowa zamknięta") return dbStatus === "rezygnacja" ? "rezygnacja" : "zwolniony";
+  if (state === "Zwolniony, przejście bezpośrednio") return lastDay && today < lastDay ? "pracuje" : "zwolniony";
+  return STATE[state];
+}
+
 function statusOk(dbStatus, hr) {
   if (hr === "dotarl") return dbStatus === "pracuje" || dbStatus === "unknown";
   return dbStatus === hr;
@@ -165,18 +177,21 @@ function compare(people, workers, today) {
       if (dbWork) diffs.push({ type: "Немає в HRappka", w });
       continue;
     }
+    if (STATE[p.state] === "nie_dotarl") continue;
     if (how === "name") diffs.push({ type: "Паспорт", w, p, note: "знайдено за ПІБ, у HRappka інший паспорт / PESEL" });
-    const hr = STATE[p.state];
-    if (hr ? !statusOk(w.status, hr) : dbWork) diffs.push({ type: "Статус", w, p });
     // останній день з HRappka належить цьому періоду, лише якщо він не раніше BHP
     const hrLast = p.lastDay && (!w.bhp || p.lastDay >= w.bhp) ? p.lastDay : null;
+    const hr = expected(p.state, w.status, hrLast || w.lwd, today);
+    if (hr ? !statusOk(w.status, hr) : dbWork) diffs.push({ type: "Статус", w, p, hr });
+    // rezygnacja: день беремо, якщо він є в HRappka; якщо немає — не важливо
     if (w.lwd && hrLast && w.lwd !== hrLast) diffs.push({ type: "Останній день", w, p });
     else if (!w.lwd && hrLast) diffs.push({ type: "Останній день", w, p, note: "у HRappka є, у таблиці немає" });
     else if (w.lwd && !hrLast && w.lwd <= today && (hr === "zwolniony" || hr === "przeniesiony"))
       diffs.push({ type: "Останній день", w, p, note: "у HRappka не внесено" });
   }
   for (const p of people) {
-    if (!seen.has(p.id) && HR_WORK.includes(STATE[p.state]) && !IGNORE.test(p.department || "")) diffs.push({ type: "Немає в БД", p });
+    if (!seen.has(p.id) && HR_WORK.includes(expected(p.state, null, p.lastDay, today)) && !IGNORE.test(p.department || ""))
+      diffs.push({ type: "Немає в БД", p });
   }
   return { pairs, diffs };
 }
@@ -222,10 +237,10 @@ async function saveWorkers(client, pairs) {
 const TYPES = ["Статус", "Останній день", "Паспорт", "Немає в БД", "Немає в HRappka"];
 function toCsv(diffs) {
   const head = ["Тип", "Примітка", "ПІБ", "Паспорт", "Паспорт HRappka", "PESEL HRappka", "Дата народження", "Об'єкт (таблиця)", "Статус (таблиця)", "BHP",
-    "Останній день (таблиця)", "Статус HRappka", "Останній день HRappka", "Відділ HRappka", "Фірма HRappka", "Посада HRappka", "Початок договору HRappka"];
-  const rows = diffs.slice().sort((a, b) => TYPES.indexOf(a.type) - TYPES.indexOf(b.type)).map(({ type, note, w = {}, p = {} }) => [
+    "Останній день (таблиця)", "Статус HRappka", "Має бути статус", "Останній день HRappka", "Відділ HRappka", "Фірма HRappka", "Посада HRappka", "Початок договору HRappka"];
+  const rows = diffs.slice().sort((a, b) => TYPES.indexOf(a.type) - TYPES.indexOf(b.type)).map(({ type, note, w = {}, p = {}, hr }) => [
     type, note, w.full_name || p.name, w.login || p.passport, p.passport, p.pesel, p.birth || w.birth, w.facility, w.status, w.bhp, w.lwd,
-    p.state, p.lastDay, p.department, p.firm, p.position, p.start]);
+    p.state, hr, p.lastDay, p.department, p.firm, p.position, p.start]);
   const esc = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
   return "﻿" + [head, ...rows].map((r) => r.map(esc).join(";")).join("\r\n");
 }

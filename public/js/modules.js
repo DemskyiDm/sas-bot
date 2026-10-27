@@ -938,18 +938,7 @@ function exportToExcel(type) {
     // TEST не потрапляють у експорт (не впливають на чисельність)
     data = getFilteredWorkers()
       .filter((w) => !isTestLogin(w.login))
-      .map((w) => ({
-        ID: w.login,
-        "Imię i Nazwisko": w.full_name,
-        Obiekt: w.facility_name || "—",
-        Stanowisko: w.stanowisko || "—",
-        Status: w.status || "—",
-        Telegram: w.telegram_chat_id ? "TAK" : "NIE",
-        BHP: w.bhp_date ? new Date(w.bhp_date).toLocaleDateString("pl") : "—",
-        "Ostatni dzień": w.last_work_date
-          ? new Date(w.last_work_date).toLocaleDateString("pl")
-          : "—",
-      }));
+      .map(workerExcelRow);   // вибрані колонки — workers.js
     filename = `pracownicy_${today}.xlsx`;
   } else if (type === "dayoff") {
     data = getFilteredDayoff()

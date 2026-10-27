@@ -144,7 +144,7 @@ test("hr_import.compare: статус, останній день, кого не�
   ];
   const { diffs } = hrImport.compare(people, workers, "2026-10-27");
   const got = diffs.map((d) => `${d.type}:${(d.w || d.p).id}`).sort();
-  assert.deepEqual(got, ["Немає в HRappka:11", "Немає в БД:8", "Останній день:4", "Паспорт:13", "Статус:6"]);
+  assert.deepEqual(got, ["Немає в HRappka:11", "Немає в таблиці:8", "Останній день:4", "Паспорт:13", "Статус:6"]);
 });
 
 test("hr_import.compare: статус залежить від таблиці й останнього дня", () => {
@@ -165,6 +165,57 @@ test("hr_import.compare: статус залежить від таблиці й 
   ];
   const { diffs } = hrImport.compare(people, workers, "2026-10-27");
   const got = diffs.map((d) => `${d.type}:${(d.w || d.p).id}${d.hr ? ":" + d.hr : ""}${d.note && /днів/.test(d.note) ? ":" + d.note.slice(0, 7) : ""}`).sort();
-  assert.deepEqual(got, ["Немає в БД:29", "Останній день:22", "Останній день:26", "Останній день:33:до 7 дн", "Останній день:34:понад 7",
+  assert.deepEqual(got, ["Немає в таблиці:29", "Останній день:22", "Останній день:33:до 7 дн", "Останній день:34:понад 7",
     "Статус:22:zwolniony", "Статус:24:zwolniony", "Статус:28:urlop", "Статус:31:nie_dotarl"]);
+});
+
+test("hr_import.plan: поточний період з HRappka, об'єкт APT / APT 2 — з таблиці", () => {
+  const { plan, facilityMap } = hrImport._test;
+  const P = (id, state, extra = {}) => ({ id, state, passport: `P${id}`, pesel: null, lastDay: null, department: "CAINIAO", firm: "APT", start: "2026-05-01", ...extra });
+  const W = (id, extra = {}) => ({ id, hid: 100 + id, login: `P${id}`, status: "pracuje", bhp: "2026-05-03", lwd: null, facility_id: 1, facility: "APT", ...extra });
+  const S = (id, fac, extra = {}) => ({ id, login: `P${id}`, status: "pracuje", bhp: "2026-05-03", lwd: null, facility_id: fac, ...extra });
+  const people = [
+    P(1, "Pracuje"), P(2, "Pracuje"), P(3, "Zwolniony", { lastDay: "2026-09-30" }),
+    P(4, "Pracuje", { start: "2026-09-01" }),                               // новий договір на іншому об'єкті → новий період, старий закрити
+    P(5, "Pracuje", { start: "2026-08-01" }),                               // продовження на тому ж об'єкті → BHP лишається
+    P(6, "Nie dotarł"), P(7, "Pracuje"), P(8, "Kandydat"),
+  ];
+  const db = [W(1), W(2, { facility_id: 2 }), W(3), W(4, { facility_id: 2 }), W(5), W(6, { status: "zwolniony" })];
+  const sheets = [S(1, 1), S(2, 2), S(3, 1), S(4, 1), S(5, 1, { bhp: "2026-05-01" }), S(6, 1, { status: "zwolniony" }), S(9, 2)];
+  const fmap = facilityMap([...sheets.slice(0, 3).map((w, i) => ({ w, p: people[i] })), { w: S(9, 2), p: P(9, "Pracuje") }]);
+  const { ops } = plan(people, db, sheets, fmap, "2026-10-27");
+  const got = ops.map((o) => `${o.op}:${(o.w || o.p).id}:${o.t.facility_id || ""}:${o.t.bhp || ""}:${o.t.lwd || ""}:${o.t.status}`);
+  assert.deepEqual(got, [
+    "update:1:1:2026-05-01::pracuje",
+    "update:2:2:2026-05-01::pracuje",
+    "update:3:1:2026-05-01:2026-09-30:zwolniony",
+    "insert:4:1:2026-09-01::pracuje", "close:4:::2026-08-31:przeniesiony",
+    "update:5:1:2026-05-03::pracuje",
+    "update:6:1:2026-05-01::rezygnacja",
+    "create:7:1:2026-05-01::pracuje",
+  ]);
+});
+
+test("hr_import.plan: лише зміни HRappka після попереднього знімка", () => {
+  const { plan, facilityMap } = hrImport._test;
+  const P = (id, state, extra = {}) => ({ id, state, passport: `P${id}`, pesel: null, lastDay: null, department: "D", firm: "F", start: "2026-05-01", position: "x", ...extra });
+  const W = (id, extra = {}) => ({ id, hid: 100 + id, login: `P${id}`, status: "pracuje", bhp: "2026-05-03", lwd: null, facility_id: 1, facility: "A", ...extra });
+  const before = [P(1, "Pracuje"), P(2, "Pracuje"), P(3, "Pracuje"), P(4, "Pracuje"), P(5, "Kandydat")];
+  const now = [P(1, "Pracuje"),                                            // без змін — період не чіпаємо (BHP 03.05 лишається)
+    P(2, "Zwolniony", { lastDay: "2026-10-20" }),                           // звільнили — статус і останній день, BHP той самий
+    P(3, "Pracuje", { start: "2026-10-01", department: "E" }),              // новий договір в іншому відділі — новий період
+    P(4, "Pracuje", { position: "y" }),                                     // лише посада
+    P(5, "Dotarł", { department: "E" }), P(6, "Pracuje", { department: "E" })];                                     // стали працювати, у базі немає — нові люди
+  const db = [W(1), W(2), W(3), W(4)];
+  const sheets = [{ id: 9, login: "P9", status: "pracuje", bhp: "2026-10-01", facility_id: 2 }];
+  const fmap = facilityMap([{ w: sheets[0], p: P(9, "Pracuje", { start: "2026-10-01", department: "E" }) }]);
+  const prev = new Map(before.map((x) => [x.id, x]));
+  const { ops } = plan(now, db, sheets, fmap, "2026-10-27", new Map(), { prev });
+  const got = ops.map((o) => `${o.op}:${(o.w || o.p).id}:${(o.changed || []).join("+")}:${o.t.bhp || ""}:${o.t.lwd || ""}:${o.t.status || ""}`);
+  assert.deepEqual(got, [
+    "update:2:lwd+status+hr_state:2026-05-03:2026-10-20:zwolniony",
+    "insert:3::2026-10-01::pracuje", "close:3:::2026-09-30:przeniesiony",
+    "update:4:stanowisko:2026-05-03::pracuje",
+    "create:5::2026-05-01::pracuje", "create:6::2026-05-01::pracuje",
+  ]);
 });

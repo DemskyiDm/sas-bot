@@ -282,7 +282,7 @@ function filterWorkers(reset = true) {
   const lastTo = document.getElementById("workersLastTo").value;
 
   const filtered = allWorkersData.filter((w) => {
-    if (q && !w.full_name.toLowerCase().includes(q) && !w.login.toLowerCase().includes(q)) return false;
+    if (q && !w.full_name.toLowerCase().includes(q) && !w.login.toLowerCase().includes(q) && !(w.pesel || "").includes(q)) return false;
     if (workersCurrentFac && w.facility_name !== workersCurrentFac) return false;
     if (!workersCurrentFac && workersCurrentGroup && (w.group_name || w.facility_name) !== workersCurrentGroup) return false;
     if (statusSet.size > 0) {
@@ -312,6 +312,8 @@ function filterWorkers(reset = true) {
     <tr>
       <td><span style="font-family:var(--mono);font-size:11px">${w.login}</span></td>
       <td class="worker-name">${w.full_name}</td>
+      <td style="font-family:var(--mono);font-size:11px;color:var(--text3)">${w.pesel || "—"}</td>
+      <td style="font-size:11px;color:var(--text3)">${w.birth_date ? new Date(w.birth_date).toLocaleDateString("pl") : "—"}</td>
       <td style="color:var(--text2);font-size:12px">${w.facility_name || "—"}</td>
       <td style="color:var(--text2);font-size:12px">${escStan(w.stanowisko)}</td>
       <td><span class="badge ${w.status === "pracuje" ? "badge-green"
@@ -329,7 +331,7 @@ function filterWorkers(reset = true) {
         <button class="btn btn-ghost btn-sm" onclick="openHistoryModal(${w.id},'${w.full_name.replace(/'/g, "\\'").replace(/"/g, "&quot;")}')">Historia</button>
       </td>
     </tr>`).join("") ||
-    `<tr><td colspan="10" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
+    `<tr><td colspan="12" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
 
   renderPagination("paginationWorkers", pageWorkers, pages, "goPageWorkers");
 }

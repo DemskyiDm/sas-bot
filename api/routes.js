@@ -572,9 +572,11 @@ router.get("/workers/all", requireAuth, async (req, res) => {
     const allowedFacilities = await getFacilityFilter(req.coordinator);
     let query = `
      SELECT w.id, w.login, w.full_name, w.status, w.bhp_date, w.last_work_date, w.telegram_chat_id,
-       f.name AS facility_name, f.id AS facility_id, f.group_name AS group_name, st.stanowisko
+       f.name AS facility_name, f.id AS facility_id, f.group_name AS group_name, st.stanowisko, wb.birth_date, wb.pesel
 FROM v_worker_current w
 LEFT JOIN facilities f ON f.id = w.facility_id
+-- дата народження і PESEL з HRappka (bot/hr_import.js)
+LEFT JOIN workers wb ON wb.id = w.id
 -- посада поточного періоду (колонка з імпорту; немає колонки — порожньо)
 LEFT JOIN LATERAL (SELECT to_jsonb(h)->>'stanowisko' AS stanowisko FROM worker_facility_history h
                     WHERE h.worker_id = w.id AND h.facility_id = w.facility_id AND h.bhp_date IS NOT DISTINCT FROM w.bhp_date

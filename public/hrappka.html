@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SAS Logistic — Rozbieżności HRappka</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <style>
+    /* ── tylko dla strony «Rozbieżności HRappka» ── */
+    .banner { padding: 9px 14px; font-size: 12px; border-radius: 8px; margin-bottom: 14px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--text2); line-height: 1.5; }
+    .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    .bar .spacer { margin-left: auto; }
+    .chip { padding: 5px 11px; font-size: 12px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface);
+      color: var(--text2); cursor: pointer; white-space: nowrap; }
+    .chip b { color: var(--text); margin-left: 4px; }
+    .chip.on { border-color: var(--accent); color: var(--accent); background: rgba(59,130,246,.08); }
+    input.inp, select.sel { background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-size: 12px;
+      padding: 5px 8px; border-radius: 5px; outline: none; font-family: inherit; color-scheme: dark; }
+    input.inp { width: 220px; }
+    label.chk { font-size: 12px; color: var(--text2); display: flex; align-items: center; gap: 5px; cursor: pointer; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .msg { font-size: 11px; } .msg.err { color: var(--red); } .msg.ok { color: var(--green); }
+    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .tblwrap { overflow-x: auto; }
+    table.fl { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.fl th { text-align: left; padding: 7px 8px; font-size: 10px; letter-spacing: .6px; color: var(--text3);
+      border-bottom: 1px solid var(--border); font-family: var(--mono); text-transform: uppercase; white-space: nowrap; }
+    table.fl td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    table.fl tr:hover td { background: var(--surface2); }
+    .sub { font-size: 10px; color: var(--text3); font-family: var(--mono); }
+    .tag { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--border); color: var(--text2); white-space: nowrap; }
+    .tag.status { border-color: var(--orange, #f59e0b); color: var(--orange, #f59e0b); }
+    .tag.last_day { border-color: var(--accent); color: var(--accent); }
+    .tag.passport { border-color: var(--purple, #a78bfa); color: var(--purple, #a78bfa); }
+    .tag.not_in_db, .tag.not_in_hr { border-color: var(--red); color: var(--red); }
+    .diff { color: var(--red); font-weight: 600; }
+    .dim { color: var(--text3); }
+    .pager { display: flex; gap: 8px; align-items: center; padding: 8px 12px; font-size: 12px; color: var(--text2); border-top: 1px solid var(--border); }
+    .empty, .loading { padding: 26px; text-align: center; color: var(--text3); font-size: 12px; }
+    .main { min-width: 0; }
+    .content > * { flex-shrink: 0; }
+    @media (max-width: 800px) { .topbar { height: auto; flex-wrap: wrap; padding: 10px 16px; gap: 8px; } .topbar-right { display: none; }
+      .content { padding: 12px; } input.inp { width: 100%; } }
+  </style>
+  <link rel="stylesheet" href="/css/mobile.css" />
+</head>
+<body>
+  <div class="sidebar">
+    <button class="sidebar-toggle" onclick="toggleSidebar()" title="Ukryj / Przypnij menu">◀</button>
+    <div class="logo">
+      <div class="logo-tag">SAS LOGISTIC</div>
+      <div class="logo-name">HRappka</div>
+    </div>
+    <div class="nav">
+      <div class="nav-item" onclick="location.href='index.html'">⬅️ Panel główny</div>
+      <div class="nav-item active">🔀 Rozbieżności HRappka</div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-title">Rozbieżności: HRappka ↔ tabele</div>
+      <div class="topbar-right"><span id="userName" style="font-size: 12px; color: var(--text2)"></span></div>
+    </div>
+    <div class="content" id="content"><div class="loading">Ładowanie…</div></div>
+  </div>
+
+  <script src="js/hrappka.js"></script>
+  <div class="sidebar-hover-zone"
+     onmouseenter="document.querySelector('.sidebar').classList.add('sidebar-peek')"
+     onmouseleave="document.querySelector('.sidebar').classList.remove('sidebar-peek')"></div>
+  <script>
+  function toggleSidebar() {
+    const hidden = document.body.classList.toggle('sidebar-hidden');
+    const btn = document.querySelector('.sidebar-toggle');
+    btn.textContent = hidden ? '▶' : '◀';
+    btn.title = hidden ? 'Przypnij menu' : 'Ukryj menu';
+    try { localStorage.setItem('sas_sidebar_hidden', hidden ? '1' : '0'); } catch (e) {}
+  }
+  if ((function () { try { return localStorage.getItem('sas_sidebar_hidden') === '1'; } catch (e) { return false; } })() || window.innerWidth < 800) {
+    document.body.classList.add('sidebar-hidden');
+    const btn = document.querySelector('.sidebar-toggle');
+    if (btn) { btn.textContent = '▶'; btn.title = 'Przypnij menu'; }
+  }
+  </script>
+</body>
+</html>

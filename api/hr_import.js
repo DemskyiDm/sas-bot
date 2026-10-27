@@ -49,7 +49,7 @@ router.get("/diffs", async (req, res) => {
       hr_id: p.id || null, hr_state: p.state || null, hr_last_day: p.lastDay || null, hr_department: p.department || null,
       hr_firm: p.firm || null, hr_position: p.position || null, hr_start: p.start || null,
     }));
-    res.json({ ok: true, snapshot_at: r.snapshotAt, today: r.today, recent_days: r.recentDays, full: req.query.full === "1",
+    res.json({ ok: true, snapshot_at: r.snapshotAt, sheets_at: r.sheetsAt, today: r.today, recent_days: r.recentDays, full: req.query.full === "1",
       is_admin: !!req.coordinator.is_admin, rows });
   } catch (e) { fail(res, e); }
 });

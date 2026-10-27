@@ -1,12 +1,14 @@
 // bot/hr_import.js — люди й поточні періоди з HRappka; таблиці — лише для порівняння (замість sync_hrrappka_diff.js).
 //   • знімок усіх працівників HRappka → hrz.people (статус, останній день, договір, посада, дата народження…);
-//   • поточний період кожної людини в worker_facility_history ← HRappka (apply): об'єкт, статус, BHP (початок договору),
-//     останній день, посада; hr_state — стан HRappka. Старі періоди не чіпаємо. Договір новіший — новий період,
-//     відкритий попередній закриваємо днем раніше. Людину, що працює в HRappka, а в базі немає, — додаємо;
+//   • у worker_facility_history пишемо лише те, що змінилось у HRappka відносно вже записаного (hrz.people_applied):
+//     стан → статус, останній день, новий договір → новий період (відкритий попередній закриваємо днем раніше),
+//     відділ → об'єкт, посада; hr_state — стан HRappka. Старі періоди не чіпаємо. Людину, яка стала працювати
+//     в HRappka, а в базі її немає, — додаємо. Не записане (невідомий об'єкт, лише за ПІБ, помилка) — пробуємо знову;
 //   • об'єкт: відділ + фірма HRappka; де один відділ — кілька наших об'єктів (CAINIAO APT / APT 2, Dipico / Dipico 2,
 //     Action…), — об'єкт з таблиці (рядок того самого договору);
 //   • workers.pesel, workers.birth_date, workers.hr_employee_id ← картка HRappka;
-//   • таблиці (import_sheets.js) пишуть лише копію hrz.sheet_periods; після кожного імпорту таблиць — applySnapshot();
+//   • таблиці (import_sheets.js) пишуть лише копію hrz.sheet_periods; одразу після кожного імпорту таблиць — імпорт
+//     HRappka (afterSheets), тож порівняння бачить обидва джерела на один момент (hrz.runs — коли);
 //   • звіт: таблиці ↔ HRappka — статус, останній день, об'єкт, інший паспорт, кого немає в одній із систем. CSV на пошту.
 //     Щодня — відкриті періоди й закриті за останні 60 днів; у понеділок — усі.
 // Статуси HRappka → наші (решта — кандидати / історичні: період не чіпаємо, у звіті — лише якщо в таблиці людина працює):
@@ -19,7 +21,7 @@
 // Rezygnacja — людина не почала працювати: останній день і BHP не порівнюємо (і в ротації такі періоди не рахуються — reg.v_periods).
 // Останній день — attrdef_id_58419, одне значення на людину: до поточного періоду належить, лише якщо >= BHP.
 // Людину шукаємо за паспортом, потім за PESEL, потім за ПІБ (лише якщо таке ПІБ одне з обох боків — тоді «Паспорт»).
-// PERLIK не чіпаємо. Імпорт о 6, 8, 10, 12, 16, 20 (Варшава), лист — о 8:00; index.js. Панель (hrappka.html, api/hr_import.js) рахує те саме зі знімка — current().
+// PERLIK не чіпаємо. Імпорт о 6, 8, 10, 12, 16, 20 (Варшава): таблиці → HRappka; лист — о 8:00; schedule() з index.js. Панель (hrappka.html, api/hr_import.js) рахує те саме зі знімка — current().
 // Вручну: node bot/hr_import.js [--full] [--dry] [--send] [--csv <тека>]   (--dry — без запису в БД; --send — лист)
 // Таблиці: db/migration_hr_import.sql, db/migration_hr_current.sql. Доступ до HRappka — ті самі змінні .env, що й у bot/hr_reason.js.
 "use strict";
@@ -138,13 +140,13 @@ async function loadSheets(client) {
   return r.rows;
 }
 
-// знімок hrz.people у тому ж вигляді, що й fetchAll
-async function loadPeople(client) {
+// знімок hrz.people (або hrz.people_applied) у тому ж вигляді, що й fetchAll
+async function loadPeople(client, table = "hrz.people") {
   const r = await client.query(
     `SELECT hr_employee_id AS id, name, state, passport, pesel, citizenship, department, firm, position,
             to_char(birth_date, 'YYYY-MM-DD') AS birth, to_char(last_day, 'YYYY-MM-DD') AS "lastDay",
             to_char(contract_start, 'YYYY-MM-DD') AS start, to_char(contract_end, 'YYYY-MM-DD') AS "end"
-       FROM hrz.people`);
+       FROM ${table}`);
   return r.rows.map((x) => ({ ...x, id: Number(x.id) }));
 }
 
@@ -254,13 +256,14 @@ function compare(people, workers, today, fmap = null) {
 }
 
 // ── Запис ─────────────────────────────────────────────────────────────
-async function snapshot(client, people) {
-  const prev = Number((await client.query(`SELECT count(*) AS n FROM hrz.people`)).rows[0].n);
+// table — hrz.people (знімок) або hrz.people_applied (те, що вже записано в базу)
+async function snapshot(client, people, table = "hrz.people") {
+  const prev = Number((await client.query(`SELECT count(*) AS n FROM ${table}`)).rows[0].n);
   // битий / неповний список від HRappka не повинен перезаписати знімок
-  if (prev && people.length < prev * 0.8) throw new Error(`HRappka віддала ${people.length} працівників, у знімку ${prev} — пропускаю`);
+  if (table === "hrz.people" && prev && people.length < prev * 0.8) throw new Error(`HRappka віддала ${people.length} працівників, у знімку ${prev} — пропускаю`);
   const col = (f) => people.map(f);
   await client.query(
-    `INSERT INTO hrz.people (hr_employee_id, name, passport, pesel, birth_date, citizenship, state, last_day,
+    `INSERT INTO ${table} (hr_employee_id, name, passport, pesel, birth_date, citizenship, state, last_day,
                              department, firm, position, contract_start, contract_end, seen_at)
      SELECT *, now() FROM unnest($1::bigint[], $2::text[], $3::text[], $4::text[], $5::date[], $6::text[], $7::text[], $8::date[],
                                  $9::text[], $10::text[], $11::text[], $12::date[], $13::date[])
@@ -300,8 +303,10 @@ const DB_STATUS = { dotarl: "pracuje", nie_dotarl: "rezygnacja" };
 
 // rows — усі рядки таблиць по паспорту: для договору HRappka беремо рядок того самого договору (BHP ≈ початок),
 // серед кількох (людина на двох аркушах з тим самим BHP) — на об'єкті, що вже в базі; немає такого — поточний рядок таблиці
-// prev — попередній знімок (id → людина): записуємо лише те, що змінилось у HRappka після нього (стан → статус,
-// останній день, початок договору → BHP / новий період, відділ → об'єкт, посада). Без prev — усе (тести).
+// prev — HRappka, уже записана в базу (hrz.people_applied, id → людина): записуємо лише те, що змінилось після неї
+// (стан → статус, останній день, початок договору → BHP / новий період, відділ → об'єкт, посада). Без prev — усе (тести).
+// pending — люди, чию зміну не записали з причини, що може зникнути (невідомий об'єкт, лише за ПІБ, помилка):
+// для них prev не оновлюємо, і наступний імпорт пробує знову.
 // objectOnly — після імпорту таблиць: лише об'єкт періодів, які вже записала HRappka (APT / APT 2 тощо з таблиці).
 function plan(people, dbWorkers, sheets, fmap, today, rows = new Map(), { prev = null, objectOnly = false } = {}) {
   const cur = new Map(match(people, sheets).filter((x) => x.p).map((x) => [x.p.id, x.w]));
@@ -311,8 +316,11 @@ function plan(people, dbWorkers, sheets, fmap, today, rows = new Map(), { prev =
     const same = (rows.get(c.login) || []).filter((r) => p.start && r.bhp && Math.abs(Date.parse(p.start) - Date.parse(r.bhp)) <= SAME_DAYS * 864e5);
     return same.find((r) => w && r.facility_id === w.facility_id) || same[0] || c;
   };
-  const ops = [], skip = {};
-  const no = (why) => { skip[why] = (skip[why] || 0) + 1; };
+  const ops = [], skip = {}, pending = new Set();
+  const no = (why, p = null) => { skip[why] = (skip[why] || 0) + 1; if (p) pending.add(p.id); };
+  const dbNames = new Set(dbWorkers.map((w) => normName(w.full_name)).filter(Boolean));
+  const near = (a, b) => !!a && !!b && Math.abs(Date.parse(a) - Date.parse(b)) <= SAME_DAYS * 864e5;
+  const WORKING = ["pracuje", "unknown", "urlop", "l4"];
   const done = new Set();
   const target = (p, w) => {
     const st = STATE[p.state];
@@ -320,11 +328,13 @@ function plan(people, dbWorkers, sheets, fmap, today, rows = new Map(), { prev =
     if (IGNORE.test(p.department || "") || (w && (IGNORE.test(w.facility || "") || IGNORE.test(w.grp || "")))) return no("PERLIK");
     const s = sheetRow(p, w);
     const bhp = p.start || (w && w.bhp) || (s && s.bhp);
-    if (!bhp) return no("немає договору в HRappka");
+    if (!bhp) return no("немає договору в HRappka", p);
     const facility_id = pickFacility(p, fmap, s && s.facility_id, w && w.facility_id);
-    if (!facility_id) return no("невідомий об'єкт (відділ HRappka без відповідності)");
+    if (!facility_id) return no("невідомий об'єкт (відділ HRappka без відповідності)", p);
     const lwd = p.lastDay && p.lastDay >= bhp ? p.lastDay : null;
-    const status = expected(p.state, s ? s.status : w && w.hid ? w.status : null, lwd, today);
+    // правила «Umowa zamknięta / Zwolniony + rezygnacja» — від статусу того самого договору: у базі, інакше в таблиці
+    const base = w && w.hid && (!w.bhp || near(w.bhp, p.start)) ? w.status : s && near(s.bhp, p.start) ? s.status : w && w.hid ? w.status : null;
+    const status = expected(p.state, base, lwd, today);
     return { facility_id, bhp, lwd, status: DB_STATUS[status] || status, stanowisko: p.position, hr_state: p.state };
   };
   // що змінилось у HRappka → які поля періоду можна міняти
@@ -343,42 +353,58 @@ function plan(people, dbWorkers, sheets, fmap, today, rows = new Map(), { prev =
     return d;
   };
   const FIELD = { status: ["state", "lastDay", "tick"], hr_state: ["state"], lwd: ["lastDay"], bhp: ["start"], facility_id: ["dep", "start"], stanowisko: ["position", "start"] };
-  for (const { w, p } of match(people, dbWorkers)) {
+  for (const { w, p, how } of match(people, dbWorkers)) {
     if (!p || done.has(p.id)) continue;
     done.add(p.id);
     const d = delta(p);
     if (!Object.keys(d).length) continue;
     if (objectOnly && !(w.hid && w.source_sheet === "HRappka")) continue;
+    // знайшли лише за ПІБ (паспорт інший) — може бути інша людина: не пишемо, доки паспорт не з'ясують (звіт «Паспорт»)
+    if (how === "name") { no("знайдено лише за ПІБ — перевірити паспорт", p); continue; }
     const t = target(p, w);
     if (!t) continue;
     if (!w.hid) { if (d.start || d.state) ops.push({ op: "insert", w, p, t }); continue; }
     const gap = w.bhp ? (Date.parse(t.bhp) - Date.parse(w.bhp)) / 864e5 : 0;
     const renewal = gap > 0 && w.facility_id === t.facility_id && (!w.lwd || w.lwd >= addDays(t.bhp, -14));
-    if (Math.abs(gap) <= SAME_DAYS || renewal) {
-      if (renewal && gap > SAME_DAYS) t.bhp = w.bhp;          // продовження договору — BHP періоду лишається
-      const old = { facility_id: w.facility_id, bhp: w.bhp, lwd: w.lwd, status: w.status, stanowisko: w.stanowisko, hr_state: w.hr_state };
-      const changed = Object.keys(t).filter((k) => (t[k] || null) !== (old[k] || null) && !(k === "stanowisko" && !t[k]) && FIELD[k].some((x) => d[x]));
-      for (const k of Object.keys(t)) if (!changed.includes(k)) t[k] = old[k];   // решту лишаємо як у базі
-      if (changed.length) ops.push({ op: "update", w, p, t, changed });
-    } else if (gap > 0 && d.start) {
+    const same = Math.abs(gap) <= SAME_DAYS || renewal;
+    if (!same && gap > 0 && d.start) {
+      // новий договір — новий період; відкритий попередній закриваємо днем раніше
       ops.push({ op: "insert", w, p, t });
       if (!w.lwd) ops.push({ op: "close", w, p, t: { lwd: w.status === "rezygnacja" ? w.bhp : addDays(t.bhp, -1),
         status: w.status === "rezygnacja" ? "rezygnacja" : w.facility_id === t.facility_id ? "zwolniony" : "przeniesiony" } });
-    } else if (gap < 0) no("у базі новіший період, ніж договір HRappka");
+      continue;
+    }
+    if (gap < -SAME_DAYS) { no("у базі новіший період, ніж договір HRappka"); continue; }
+    // той самий договір — або договір у HRappka давно новіший за період у базі (розбіжність була ще до імпорту з HRappka):
+    // тоді в поточному періоді міняємо лише статус, останній день і посаду, а BHP і об'єкт — ні
+    if (renewal && gap > SAME_DAYS) t.bhp = w.bhp;            // продовження договору — BHP періоду лишається
+    const old = { facility_id: w.facility_id, bhp: w.bhp, lwd: w.lwd, status: w.status, stanowisko: w.stanowisko, hr_state: w.hr_state };
+    let changed = Object.keys(t).filter((k) => (t[k] || null) !== (old[k] || null) && !(k === "stanowisko" && !t[k])
+      && FIELD[k].some((x) => d[x]) && (same || !["bhp", "facility_id"].includes(k)));
+    const lwd = changed.includes("lwd") ? t.lwd : old.lwd;
+    // робочий статус на закритому періоді — швидше новий договір, якого HRappka ще не показала: не міняємо
+    if (changed.includes("status") && WORKING.includes(t.status) && lwd && lwd < today) {
+      changed = changed.filter((k) => k !== "status" && k !== "hr_state");
+      no("період закрито, а в HRappka людина працює — перевірити");
+    }
+    for (const k of Object.keys(t)) if (!changed.includes(k)) t[k] = old[k];   // решту лишаємо як у базі
+    if (changed.length) ops.push({ op: "update", w, p, t, changed });
   }
   // працює в HRappka, а в базі немає — додаємо людину
   for (const p of people) {
     if (objectOnly || done.has(p.id) || !p.passport || !["pracuje", "dotarl", "urlop", "l4", "unknown"].includes(STATE[p.state])) continue;
     if (prev && prev.has(p.id) && prev.get(p.id).state === p.state) continue;   // працював і раніше — не нова подія
+    // у базі є людина з таким ПІБ (паспорт змінився?) — не дублюємо, доки не з'ясують
+    if (dbNames.has(normName(p.name))) { no("у базі є людина з таким ПІБ — перевірити паспорт", p); continue; }
     const t = target(p, null);
     if (t) ops.push({ op: "create", p, t });
   }
-  return { ops, skip };
+  return { ops, skip, pending };
 }
 
 async function write(client, ops) {
   let ok = 0;
-  const errors = [], failed = new Set();
+  const errors = [], failed = new Set(), pending = new Set();
   const set = (t) => [t.facility_id, t.status, t.bhp, t.lwd, t.stanowisko || null, t.hr_state];
   const ins = `INSERT INTO public.worker_facility_history (worker_id, facility_id, status, bhp_date, last_work_date, stanowisko, hr_state, source_sheet, imported_at)
                VALUES ($1, $2, $3::worker_status, $4, $5, $6, $7, 'HRappka', now())`;
@@ -410,10 +436,11 @@ async function write(client, ops) {
     } catch (e) {
       await client.query("ROLLBACK TO SAVEPOINT op");
       if (x.w) failed.add(x.w.id);
+      pending.add(x.p.id);
       errors.push(`${x.op} ${(x.w && x.w.login) || x.p.passport} ${x.p.name}: ${e.message}`);
     }
   }
-  return { ok, errors };
+  return { ok, errors, pending };
 }
 
 // workers.status — статус поточного періоду (як було в import_sheets.js)
@@ -438,11 +465,13 @@ async function apply(client, people, today, { dry = false, prev = null, objectOn
     if (!rows.has(r.passport)) rows.set(r.passport, []);
     rows.get(r.passport).push(r);
   }
-  const { ops, skip } = plan(people, dbWorkers, sheets, fmap, today, rows, { prev, objectOnly });
+  const { ops, skip, pending } = plan(people, dbWorkers, sheets, fmap, today, rows, { prev, objectOnly });
   const count = (op) => ops.filter((x) => x.op === op).length;
-  const res = { update: count("update"), insert: count("insert"), close: count("close"), create: count("create"), skip, ops };
+  const res = { update: count("update"), insert: count("insert"), close: count("close"), create: count("create"), skip, ops, pending };
   if (dry) return res;
-  Object.assign(res, await write(client, ops));
+  const w = await write(client, ops);
+  for (const id of w.pending) pending.add(id);
+  Object.assign(res, { ok: w.ok, errors: w.errors });
   res.births = await saveWorkers(client, match(people, await loadWorkers(client)));
   res.synced = await syncWorkerStatus(client);
   return res;
@@ -488,7 +517,15 @@ async function sendEmail(diffs, stats, today, full) {
 // відкриті періоди й закриті за RECENT_DAYS днів
 const recent = (diffs, today) => { const from = addDays(today, -RECENT_DAYS); return diffs.filter((d) => !d.w || !d.w.lwd || d.w.lwd >= from); };
 
-let RUNNING = false;   // знімок / запис з HRappka — не паралельно
+// Знімок і запис з HRappka — по черзі (кнопка, імпорт після таблиць, cron): наступний чекає на попередній, а не пропускається
+let CHAIN = Promise.resolve();
+let BUSY = false;
+function exclusive(fn) {
+  const job = CHAIN.then(async () => { BUSY = true; try { return await fn(); } finally { BUSY = false; } });
+  CHAIN = job.catch(() => {});
+  return job;
+}
+let LAST = null;   // останній імпорт HRappka: { at, stats } — для листа о 8:00
 
 // ── Запуск ────────────────────────────────────────────────────────────
 // розбіжності таблиць з HRappka; d.facName — об'єкт за HRappka (для «Об'єкт»)
@@ -515,19 +552,31 @@ async function diffsFor(client, people, today) {
   return res;
 }
 
+// Імпорт HRappka: знімок → зміни відносно вже записаного (hrz.people_applied) → база → розбіжності з таблицями.
 // full — усі періоди (понеділок); dry — нічого не записати; notify — лист
-async function run({ full = false, dry = false, notify = true } = {}) {
+async function run({ full = false, dry = false, notify = false } = {}) {
   const today = todayWarsaw();
   const people = await fetchAll();
   const client = await db.pool.connect();
   let res, applied;
   try {
     await client.query("BEGIN");
-    const prev = new Map((await loadPeople(client)).map((x) => [x.id, x]));
+    const prev = new Map((await loadPeople(client, "hrz.people_applied")).map((x) => [x.id, x]));
     await snapshot(client, people);
-    // перший знімок — лише точка відліку: те, що вже було в HRappka, у базі не міняємо
-    applied = prev.size ? await apply(client, people, today, { dry, prev }) : { update: 0, insert: 0, close: 0, create: 0, skip: {}, ops: [] };
+    if (prev.size) {
+      applied = await apply(client, people, today, { dry, prev });
+      // об'єкт періодів, які записала HRappka, — з таблиці (новий працівник, а рядок у таблиці з'явився пізніше)
+      const obj = await apply(client, people, today, { dry, objectOnly: true });
+      applied.update += obj.update;
+      if (obj.errors) applied.errors = [...(applied.errors || []), ...obj.errors];
+    } else {
+      // перший знімок — лише точка відліку: те, що вже було в HRappka, у базі не міняємо
+      applied = { update: 0, insert: 0, close: 0, create: 0, skip: {}, ops: [], pending: new Set() };
+    }
+    // записане (і без змін) — нова точка відліку; не записане з причини, що може зникнути, — спробуємо знову
+    await snapshot(client, people.filter((p) => !applied.pending.has(p.id)), "hrz.people_applied");
     res = await diffsFor(client, people, today);
+    if (!dry) await client.query(`INSERT INTO hrz.runs (kind, at) VALUES ('hrappka', now()) ON CONFLICT (kind) DO UPDATE SET at = now()`);
     await client.query(dry ? "ROLLBACK" : "COMMIT");
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
@@ -535,12 +584,12 @@ async function run({ full = false, dry = false, notify = true } = {}) {
   } finally {
     client.release();
   }
+  for (const e of (applied.errors || []).slice(0, 20)) console.warn(`[hr import] ${e}`);
   if (!full) res.diffs = recent(res.diffs, today);
   const stats = { people: people.length, workers: res.pairs.length, matched: res.pairs.filter((x) => x.p).length, applied };
-  console.log(`[hr import] ${applySummary(applied)}${dry ? " — DRY, нічого не записано" : ""}
-` +
-    `таблиці: ${stats.workers} людей, знайдено в HRappka ${stats.matched}; розбіжностей ${res.diffs.length}
-${summary(res.diffs)}`);
+  if (!dry) LAST = { at: Date.now(), stats };
+  console.log(`[hr import] ${applySummary(applied)}${dry ? " — DRY, нічого не записано" : ""}\n` +
+    `таблиці: ${stats.workers} людей, знайдено в HRappka ${stats.matched}; розбіжностей ${res.diffs.length}\n${summary(res.diffs)}`);
   if (notify) await sendEmail(res.diffs, stats, today, full);
   return { ...res, stats, today };
 }
@@ -551,28 +600,11 @@ function applySummary(a) {
     (a.errors ? `, помилок ${a.errors.length}` : "") + (sk ? ` (пропущено — ${sk})` : "");
 }
 
-// Після імпорту таблиць: копія таблиць змінилась — об'єкт періодів, записаних з HRappka (APT / APT 2 тощо), беремо з таблиці.
-// Решту зі знімка не перераховуємо: у базу йдуть лише зміни HRappka (run).
-async function applySnapshot({ dry = false } = {}) {
-  if (RUNNING) return null;
-  RUNNING = true;
-  const client = await db.pool.connect();
-  try {
-    const people = await loadPeople(client);
-    if (!people.length) return null;
-    await client.query("BEGIN");
-    const a = await apply(client, people, todayWarsaw(), { dry, objectOnly: true });
-    await client.query(dry ? "ROLLBACK" : "COMMIT");
-    console.log(`  ${applySummary(a)}`);
-    for (const e of (a.errors || []).slice(0, 20)) console.warn(`  HRappka: ${e}`);
-    return a;
-  } catch (e) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw e;
-  } finally {
-    client.release();
-    RUNNING = false;
-  }
+// Одразу після імпорту таблиць (import_sheets.js): імпорт HRappka на той самий момент. sheetsAt — коли почався
+// повний імпорт таблиць (частковий — null): панель показує, на який момент обидва джерела.
+async function afterSheets({ sheetsAt = null } = {}) {
+  if (sheetsAt) await db.query(`INSERT INTO hrz.runs (kind, at) VALUES ('sheets', $1) ON CONFLICT (kind) DO UPDATE SET at = $1`, [sheetsAt]);
+  return exclusive(() => run());
 }
 
 // Для панелі: розбіжності між останнім знімком HRappka і таблицями (без запиту до HRappka)
@@ -582,35 +614,48 @@ async function current({ full = false } = {}) {
   try {
     const people = await loadPeople(client);
     const at = (await client.query(`SELECT max(seen_at) AS at FROM hrz.people`)).rows[0].at;
+    const runs = Object.fromEntries((await client.query(`SELECT kind, at FROM hrz.runs`)).rows.map((x) => [x.kind, x.at]));
     const { diffs } = await diffsFor(client, people, today);
-    return { diffs: full ? diffs : recent(diffs, today), snapshotAt: at, today, recentDays: RECENT_DAYS };
+    return { diffs: full ? diffs : recent(diffs, today), snapshotAt: at, sheetsAt: runs.sheets || null, today, recentDays: RECENT_DAYS };
   } finally {
     client.release();
   }
 }
 
-// Кнопка «Odśwież z HRappka»: новий знімок без листа; паралельно з cron не запускаємо
+// Кнопки «Odśwież z HRappka» / «Import z HRappka»: лише HRappka (швидко), таблиці — з останнього імпорту таблиць
 async function refresh() {
-  if (RUNNING) throw new Error("Import z HRappka już trwa — spróbuj za minutę");
-  RUNNING = true;
-  try { return await run({ notify: false }); } finally { RUNNING = false; }
+  if (BUSY) throw new Error("Import z HRappka już trwa — spróbuj za minutę");
+  return exclusive(() => run());
+}
+
+// Лист о 8:00: розбіжності на момент щойно завершеного імпорту (таблиці + HRappka)
+async function report({ full = false } = {}) {
+  const r = await current({ full });
+  const stats = LAST ? LAST.stats : { people: "?", workers: "?", matched: "?", applied: { update: 0, insert: 0, close: 0, create: 0, skip: {} } };
+  await sendEmail(r.diffs, stats, r.today, full);
 }
 
 function schedule() {
   const cron = require("node-cron");
-  // імпорт о 6, 8, 10, 12, 16, 20; лист — лише о 8:00 (у понеділок — повний звіт)
+  // о 6, 8, 10, 12, 16, 20: таблиці, одразу за ними HRappka (afterSheets з import_sheets.js) — обидва на один момент.
+  // Лист — о 8:00 (у понеділок — повний звіт), коли обидва імпорти завершились.
   cron.schedule("0 6,8,10,12,16,20 * * *", async () => {
-    if (RUNNING) return;
-    RUNNING = true;
     const part = (o) => new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Warsaw", ...o }).format(new Date());
     const notify = Number(part({ hour: "numeric", hourCycle: "h23" })) === 8;
-    try { await run({ full: notify && part({ weekday: "short" }) === "Mon", notify }); }
-    catch (e) { console.error("[hr import]:", e.response ? JSON.stringify(e.response.data).slice(0, 300) : e.message); }
-    finally { RUNNING = false; }
+    const monday = part({ weekday: "short" }) === "Mon";
+    const started = Date.now();
+    const err = (where, e) => console.error(`[hr import] ${where}:`, e.response ? JSON.stringify(e.response.data).slice(0, 300) : e.message);
+    try {
+      const r = await require("../import_sheets").runImport();   // через чергу імпортів (api/flow.js)
+      if (r && r.skipped) console.warn("[hr import] імпорт таблиць пропущено (інший ще йде) — HRappka з попередньою копією таблиць");
+    } catch (e) { err("таблиці", e); }
+    // таблиці не дійшли до HRappka (пропуск, помилка) — HRappka все одно
+    try { if (!LAST || LAST.at < started) await exclusive(() => run()); } catch (e) { err("HRappka", e); }
+    try { if (notify) await report({ full: monday }); } catch (e) { err("лист", e); }
   }, { timezone: "Europe/Warsaw" });
 }
 
-module.exports = { run, schedule, compare, current, refresh, applySnapshot, toCsv, STATE, TYPES, _test: { fetchAll, toPerson, match, plan, facilityMap, loadPeople } };
+module.exports = { run, schedule, compare, current, refresh, afterSheets, report, toCsv, STATE, TYPES, _test: { fetchAll, toPerson, match, plan, facilityMap, loadPeople } };
 
 if (require.main === module) {
   require("dotenv").config();

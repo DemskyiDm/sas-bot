@@ -339,37 +339,8 @@ function scheduleReminder() {
   }, 60000);
 }
 
-function scheduleImport() {
-  // Перший запуск через 5 хвилин після старту сервера
-  setTimeout(
-    async () => {
-      // console.log(`[AutoImport] First run...`);
-      try {
-        const { runImport } = require("./import_sheets");
-        await runImport();
-      } catch (e) {
-        console.error(`[AutoImport] Error:`, e.message);
-      }
-    },
-    5 * 60 * 1000,
-  );
-
-  // Далі кожну годину
-  setInterval(
-    async () => {
-      //  console.log(`[AutoImport] Hourly run...`);
-      try {
-        const { runImport } = require("./import_sheets");
-        await runImport();
-      } catch (e) {
-        console.error(`[AutoImport] Error:`, e.message);
-      }
-    },
-    60 * 60 * 1000 * 4,
-  );
-}
-
-// Імпорт людей з HRappka і порівняння з таблицями: о 6, 8, 10, 12, 16, 20, звіт на пошту о 8:00 (bot/hr_import.js)
+// Імпорт: о 6, 8, 10, 12, 16, 20 — спершу таблиці (копія для порівняння), одразу за ними HRappka (люди й поточні періоди),
+// щоб порівняння бачило обидва джерела на один момент; звіт на пошту о 8:00 (bot/hr_import.js)
 require("./bot/hr_import").schedule();
 
 app.get("/api/facility-settings-all", requireAuth, async (req, res) => {
@@ -462,7 +433,6 @@ app.patch("/api/facility-settings/:id", requireAuth, async (req, res) => {
 });
 
 scheduleReminder();
-scheduleImport();
 regional.schedule(bot);
 require("./bot/care").schedule(bot);
 flow.schedule(bot);

@@ -219,3 +219,27 @@ test("hr_import.plan: лише зміни HRappka після попереднь�
     "create:5::2026-05-01::pracuje", "create:6::2026-05-01::pracuje",
   ]);
 });
+
+test("hr_import.plan: незаписане пробуємо знову, лише за ПІБ не пишемо, закритий період не відкриваємо", () => {
+  const { plan, facilityMap } = hrImport._test;
+  const P = (id, state, extra = {}) => ({ id, state, name: `N${id} X`, passport: `P${id}`, pesel: null, lastDay: null, department: "D", firm: "F", start: "2026-05-01", position: "x", ...extra });
+  const W = (id, extra = {}) => ({ id, hid: 100 + id, login: `P${id}`, full_name: `N${id} X`, status: "pracuje", bhp: "2026-05-03", lwd: null, facility_id: 1, facility: "A", ...extra });
+  const before = [P(1, "Pracuje"), P(2, "Pracuje"), P(3, "Zwolniony", { lastDay: "2026-08-01" }), P(4, "Pracuje", { start: "2026-09-01" }), P(5, "Pracuje", { start: "2025-01-01" })];
+  const now = [
+    P(1, "Zwolniony", { passport: "NEW1", lastDay: "2026-10-20" }),         // паспорт інший, знайшли за ПІБ — не пишемо, пробуємо знову
+    P(2, "Zwolniony", { department: "Q", lastDay: "2026-10-01" }),          // об'єкт невідомий — пробуємо знову
+    P(3, "Długi urlop", { lastDay: "2026-08-01" }),                         // закритий період — робочий статус не ставимо
+    P(4, "Zwolniony", { start: "2026-09-01", lastDay: "2026-10-20" }),      // договір у HRappka давно новіший, ніж період у базі:
+                                                                            //  статус і останній день — так, BHP і об'єкт — ні
+    P(5, "Zwolniony", { start: "2025-01-01", lastDay: "2026-10-20" }),      // у базі новіший період — не чіпаємо
+  ];
+  const db = [W(1, { login: "OLD1" }), W(2, { facility_id: null }), W(3, { status: "zwolniony", lwd: "2026-08-01" }), W(4, { facility_id: 2 }), W(5)];
+  const fmap = facilityMap([{ w: { facility_id: 1, bhp: "2026-05-01" }, p: P(9, "Pracuje") }, { w: { facility_id: 1, bhp: "2026-05-01" }, p: P(8, "Pracuje") }]);
+  const prev = new Map(before.map((x) => [x.id, x]));
+  const { ops, skip, pending } = plan(now, db, [], fmap, "2026-10-27", new Map(), { prev });
+  const got = ops.map((o) => `${o.op}:${(o.w || o.p).id}:${(o.changed || []).join("+")}:${o.t.facility_id}:${o.t.bhp}:${o.t.lwd || ""}:${o.t.status || ""}`);
+  assert.deepEqual(got, ["update:4:lwd+status+hr_state:2:2026-05-03:2026-10-20:zwolniony"]);
+  assert.deepEqual([...pending].sort(), [1, 2]);
+  assert.equal(skip["період закрито, а в HRappka людина працює — перевірити"], 1);
+  assert.equal(skip["у базі новіший період, ніж договір HRappka"], 1);
+});

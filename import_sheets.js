@@ -797,6 +797,7 @@ async function runImport(allowedFacilities = null) {
 
 async function runImportUnlocked(allowedFacilities) {
   console.log(`\n === IMPORT STARTED === `);
+  const startedAt = new Date();
 
   const sheetMap = await loadSheetMap();
   const cache = await loadCache();
@@ -937,11 +938,12 @@ async function runImportUnlocked(allowedFacilities) {
     }
   }
 
-  // Поточні періоди — з HRappka; копія таблиць змінилась → перераховуємо (поділ APT / APT 2 тощо, rezygnacja)
+  // Одразу за таблицями — HRappka (люди й поточні періоди): порівняння і поділ APT / APT 2 тощо бачать обидва
+  // джерела на один момент. Той, хто чекає на імпорт (зведення flow, cron), дочекається і HRappka.
   try {
-    await require("./bot/hr_import").applySnapshot();
+    await require("./bot/hr_import").afterSheets({ sheetsAt: allowed ? null : startedAt });   // частковий імпорт (деякі об'єкти) часу таблиць не міняє
   } catch (err) {
-    console.error(`  HRappka apply error: ${err.message}`);
+    console.error(`  HRappka import error: ${err.response ? JSON.stringify(err.response.data).slice(0, 300) : err.message}`);
   }
 
   const sk = Object.entries(stats.skipped).map(([k, v]) => `${k} ${v}`).join(", ");

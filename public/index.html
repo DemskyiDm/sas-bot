@@ -376,11 +376,11 @@
             <div class="wk-title">Pracownicy <span class="card-count" id="workersCount">0</span></div>
             <div class="wk-actions">
               <button class="btn btn-primary btn-sm" onclick="openWorkerModal(null)">+ Dodaj</button>
-              <button class="btn btn-ghost btn-sm" onclick="startImport()" id="importBtn">⬇ Import z HRappka</button>
+              <button class="btn btn-ghost btn-sm" onclick="startImport()" id="importBtn">⬇ Import<span class="wk-long"> z HRappka</span></button>
               <!-- podpisy dokumentów w HRappka (workers.js → HRS, api/hr_sign.js) -->
-              <button class="btn btn-ghost btn-sm" id="workersDocsBtn" onclick="refreshSignatures()" title="Sprawdź teraz w HRappka (widoczni na liście, BHP od 15.10)">🔄 Sprawdź podpisy</button>
+              <button class="btn btn-ghost btn-sm" id="workersDocsBtn" onclick="refreshSignatures()" title="Sprawdź teraz w HRappka (widoczni na liście, BHP od 15.10)">🔄 <span class="wk-long">Sprawdź </span>podpisy</button>
               <div style="position:relative" id="workersColsWrap">
-                <button class="btn btn-ghost btn-sm" onclick="toggleWorkersCols(event)" title="Kolumny w tabeli i w Excelu">⚙ Kolumny</button>
+                <button class="btn btn-ghost btn-sm" onclick="toggleWorkersCols(event)" title="Kolumny w tabeli i w Excelu">⚙<span class="wk-long"> Kolumny</span></button>
                 <div id="workersColsDrop" style="display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:300;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.35);white-space:nowrap"></div>
               </div>
               <button class="btn btn-ghost btn-sm" onclick="exportToExcel('workers')">📥 Excel</button>
@@ -389,6 +389,8 @@
           <!-- filtry: szukaj, grupa, obiekt, status, dokumenty, student -->
           <div class="wk-filters">
             <input type="text" id="workersSearch" class="wk-search" placeholder="🔍 Szukaj: nazwisko, ID, PESEL…" oninput="filterWorkers()" />
+            <!-- telefon: pozostałe filtry chowają się pod tym przyciskiem (css/mobile.css) -->
+            <button class="wk-drop wk-more" id="workersFiltersBtn" onclick="toggleWorkersFilters()"><span id="workersFiltersLabel">Filtry</span> <span class="wk-caret">▾</span></button>
             <div style="position:relative;" id="workersGroupDropWrap">
               <button class="wk-drop" onclick="toggleWorkersGroupDrop()">
                 <span id="workersGroupLabel">📁 Grupa...</span> <span class="wk-caret">▾</span>
@@ -1182,6 +1184,7 @@ fetch('/api/hours-report/me', { headers: { 'x-session': localStorage.getItem('sa
   .then(function (d) { if (d && d.is_admin) document.getElementById('hoursReportLink').style.display = ''; })
   .catch(function () {});
 </script>
+  <script src="/js/mobile.js"></script>  <!-- телефон: меню ☰, таблиці картками (css/mobile.css) -->
 </body>
 
 </html>

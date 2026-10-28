@@ -149,6 +149,7 @@ select:focus, input:focus { border-color: var(--accent); }
 .wk-filters select:hover, .wk-drop:hover { border-color: #3a4560; color: var(--text); }
 .wk-filters .on, .wk-filters select.on { border-color: var(--accent); color: var(--text); background-color: rgba(59, 130, 246, 0.08); }
 .wk-caret { font-size: 10px; color: var(--text3); }
+.wk-more { display: none; }   /* tylko telefon (css/mobile.css) */
 .wk-clear { margin-left: auto; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; background: transparent; }
 .wk-clear:hover { color: var(--text); border-color: #3a4560; }
 /* okienko dat */

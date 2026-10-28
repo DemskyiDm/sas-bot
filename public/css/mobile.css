@@ -1,5 +1,109 @@
-/* Мобільна версія: плитки показників — 2 в ряд на телефоні; прокрутка головної панелі.
-   Підключається ПІСЛЯ style.css. На екранах ширше 768px (і вищих за 500px) нічого не змінює. */
+/* Мобільна версія панелі (разом з js/mobile.js). Підключається ПІСЛЯ style.css на всіх сторінках з меню.
+   На телефоні (до 768px): меню виїжджає зліва по кнопці ☰, сторінка прокручується цілком,
+   таблиці — картками (підпис колонки + значення), фільтри — у два стовпчики.
+   На екранах ширше 768px (і вищих за 500px) нічого не змінює. */
+
+/* ── Меню, верхня смужка, прокрутка сторінки ───────────────────────── */
+@media (max-width: 768px) {
+  body { height: auto; min-height: 100vh; overflow: visible; display: block; }
+  .main { margin-left: 0 !important; min-height: 100vh; display: block; }
+  .content { padding: 12px; overflow: visible; display: block; }
+  .sidebar { width: 272px; max-width: 85vw; transform: translateX(-100%); opacity: 1 !important; pointer-events: auto !important;
+    z-index: 300; overflow-y: auto; transition: transform 0.22s ease; }
+  body.sidebar-hidden .sidebar { transform: translateX(-100%); }
+  body.m-menu-open .sidebar { transform: translateX(0); box-shadow: 8px 0 28px rgba(0, 0, 0, 0.5); }
+  .sidebar-toggle, .sidebar-hover-zone { display: none !important; }
+  .nav-item { padding: 11px 12px; font-size: 14px; }
+  .m-backdrop { display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 250; }
+  body.m-menu-open .m-backdrop { display: block; }
+  body.m-menu-open { overflow: hidden; }
+  .m-bar { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 12px;
+    background: var(--surface); border-bottom: 1px solid var(--border); }
+  .m-bar-title { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .m-menu-btn { width: 40px; height: 40px; flex-shrink: 0; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface2); color: var(--text); font-size: 18px; line-height: 1; cursor: pointer; }
+  .topbar { height: auto; min-height: 52px; flex-wrap: wrap; padding: 8px 12px; gap: 8px; }
+  .modal { max-width: calc(100vw - 24px) !important; max-height: calc(100vh - 24px); overflow-y: auto; }
+}
+@media (min-width: 769px) {
+  .m-bar, .m-menu-btn, .m-backdrop { display: none !important; }
+}
+
+/* ── Таблиці → картки (js/mobile.js ставить класи й підписи) ──────── */
+@media (max-width: 768px) {
+  .table-wrap:has(> table.m-cards), .table-wrapper:has(> table.m-cards) { overflow: visible; padding: 10px; }
+  table.m-cards, table.m-cards tbody { display: block; width: 100%; }
+  table.m-cards thead { display: none; }
+  table.m-cards tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; padding: 12px 14px; margin-bottom: 10px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+  table.m-cards tr:last-child { margin-bottom: 0; }
+  table.m-cards td { display: block; padding: 0 !important; border: none !important; min-width: 0; white-space: normal !important;
+    font-size: 13px; overflow-wrap: anywhere; background: none !important; }
+  table.m-cards td::before { content: attr(data-label); display: block; margin-bottom: 3px; font-size: 10px; color: var(--text3);
+    font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.4px; }
+  table.m-cards td.m-title { order: -1; grid-column: 1 / -1; font-size: 15px; font-weight: 600; }
+  table.m-cards td.m-title::before, table.m-cards td.m-actions::before { display: none; }
+  table.m-cards td.m-empty { display: none !important; }
+  /* прапорець вибору (Zaliczki, Wolne) — у правому верхньому куті картки */
+  table.m-cards tr { position: relative; }
+  table.m-cards td:has(> input[type="checkbox"]:only-child) { position: absolute; top: 12px; right: 14px; }
+  table.m-cards td:has(> input[type="checkbox"]:only-child)::before { display: none; }
+  table.m-cards td:has(> input[type="checkbox"]:only-child) input { width: 20px; height: 20px; }
+  table.m-cards tr:has(> td > input[type="checkbox"]:only-child) td.m-title { padding-right: 34px !important; }
+  table.m-cards td.m-actions { grid-column: 1 / -1; display: flex !important; justify-content: flex-end; gap: 8px; flex-wrap: wrap;
+    border-top: 1px solid var(--border) !important; padding-top: 10px !important; }
+  table.m-cards td.m-actions button { min-height: 34px; }
+  table.m-cards tr.m-group { display: block; background: none; border: none; padding: 8px 2px; }
+  table.m-cards tr.m-group td::before { display: none; }
+  table.m-cards .wk-ell { max-width: none; white-space: normal; }
+}
+
+/* ── Start ─────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .start-head { align-items: flex-start; margin-bottom: 12px; }
+  .start-hello { font-size: 17px; }
+  .start-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+  .start-tiles .stat-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .start-row { padding: 12px; gap: 10px; }
+  .start-todo-h { padding: 12px; }
+}
+
+/* ── Pracownicy: дії, фільтри у два стовпчики, дати — на всю ширину ── */
+@media (max-width: 768px) {
+  .wk-head { padding: 10px 12px; }
+  .wk-actions { margin-left: 0; width: 100%; flex-wrap: nowrap; }
+  .wk-actions .btn { padding: 0 8px; white-space: nowrap; }
+  .wk-actions > .btn, .wk-actions #workersColsWrap { flex: 1 1 auto; justify-content: center; }
+  .wk-actions #workersColsWrap .btn { width: 100%; justify-content: center; }
+  .wk-long { display: none; }
+  /* wyszukiwanie + «Filtry»; reszta filtrów — po naciśnięciu «Filtry» */
+  .wk-filters { padding: 10px 12px; }
+  .wk-search { flex: 1 1 calc(100% - 112px); max-width: none; min-width: 0; }
+  .wk-filters > .wk-more { display: flex; flex: 0 0 104px; justify-content: space-between; }
+  .wk-filters:not(.open) > :not(.wk-search):not(.wk-more) { display: none; }
+  .wk-filters.open > .wk-more .wk-caret { transform: rotate(180deg); }
+  .wk-filters > div, .wk-filters > select, .wk-clear { flex: 1 1 calc(50% - 4px); min-width: 0; margin-left: 0; }
+  /* картка працівника: ✎ і ⟲ — у правому верхньому куті, поля щільніше */
+  #pageWorkers table.m-cards tr { position: relative; gap: 8px 14px; }
+  #pageWorkers table.m-cards td.m-title { padding-right: 76px !important; }
+  #pageWorkers table.m-cards td.m-actions { position: absolute; top: 8px; right: 8px; border-top: none !important; padding-top: 0 !important; gap: 2px; }
+  #pageWorkers table.m-cards td::before { margin-bottom: 1px; }
+  #pageWorkers .wk-ic { width: 34px; height: 34px; }
+  .wk-filters > div > .wk-drop { width: 100%; justify-content: space-between; overflow: hidden; }
+  .wk-filters > div > .wk-drop > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+  .wk-filters select { width: 100%; text-overflow: ellipsis; }
+  .wk-clear { justify-content: center; }
+  #workersGroupDrop, #workersFacDrop, #workersStatusDrop { min-width: 0 !important; width: min(280px, calc(100vw - 40px)); }
+  #workersFacDrop { left: auto !important; right: 0; }
+  .wk-pop { position: fixed; left: 12px; right: 12px; top: 64px; }
+  .wk-range { grid-template-columns: minmax(0, 1fr) 12px minmax(0, 1fr); }
+  .wk-range > span { grid-column: 1 / -1; }
+  .wk-range input[type="date"] { width: 100%; }
+  .wk-foot { padding: 6px 12px; }
+  .wk-foot .pagination { flex-wrap: wrap; }
+}
+
+/* Плитки показників — 2 в ряд на телефоні */
 @media (max-width: 768px) {
   .stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px !important; margin-bottom: 12px !important; }
   .stat-card { padding: 10px 12px !important; min-width: 0; }

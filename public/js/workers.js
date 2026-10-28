@@ -12,21 +12,26 @@ function escStan(s) {
 
 // ── Kolumny: які показувати в таблиці і які йдуть в Excel (окремо), вибір пам'ятає браузер ──
 const plDate = (d) => (d ? new Date(d).toLocaleDateString("pl") : "—");
+// status: polska nazwa i kolor (Excel — jak w bazie)
+const WK_STATUS = {
+  pracuje: ["Pracuje", "badge-green"], urlop: ["Urlop", "badge-purple"], l4: ["L4", "badge-purple"],
+  przeniesiony: ["Przeniesiony", "badge-orange"], zwolniony: ["Zwolniony", "badge-gray"], rezygnacja: ["Rezygnacja", "badge-red"],
+  do_zatrudnienia: ["Do zatrudnienia", "badge-blue"], unknown: ["Brak statusu", "badge-blue"],
+};
+const statusBadge = (s) => { const x = WK_STATUS[s] || [s || "—", "badge-blue"]; return `<span class="badge ${x[1]}"><span class="badge-dot"></span>${escStan(x[0])}</span>`; };
 const WORKER_COLS = [
-  { key: "login", label: "ID", cell: (w) => `<span style="font-family:var(--mono);font-size:11px">${w.login}</span>`, xls: (w) => w.login },
+  { key: "login", label: "ID", cell: (w) => `<span class="wk-num">${escStan(w.login)}</span>`, xls: (w) => w.login },
   { key: "name", label: "Imie i Nazwisko", cell: (w) => `<span class="worker-name">${escStan(w.full_name)}</span>`, xls: (w) => w.full_name },
-  { key: "pesel", label: "PESEL", title: "Z HRappka", cell: (w) => `<span style="font-family:var(--mono);font-size:11px;color:var(--text3)">${w.pesel || "—"}</span>`, xls: (w) => w.pesel || "—" },
-  { key: "birth", label: "Data ur.", title: "Z HRappka", cell: (w) => `<span style="font-size:11px;color:var(--text3)">${plDate(w.birth_date)}</span>`, xls: (w) => plDate(w.birth_date) },
-  { key: "group", label: "Grupa", off: true, cell: (w) => `<span class="wk-ell" style="color:var(--text2);font-size:12px" title="${escStan(w.group_name)}">${escStan(w.group_name)}</span>`, xls: (w) => w.group_name || "—" },
-  { key: "facility", label: "Obiekt", cell: (w) => `<span class="wk-ell" style="color:var(--text2);font-size:12px" title="${escStan(w.facility_name)}">${escStan(w.facility_name)}</span>`, xls: (w) => w.facility_name || "—" },
-  { key: "stan", label: "Stanowisko", cell: (w) => `<span class="wk-ell" style="color:var(--text2);font-size:12px" title="${escStan(w.stanowisko)}">${escStan(w.stanowisko)}</span>`, xls: (w) => w.stanowisko || "—" },
-  { key: "status", label: "Status", cell: (w) => `<span class="badge ${w.status === "pracuje" ? "badge-green"
-      : w.status === "urlop" || w.status === "l4" ? "badge-purple"
-        : w.status === "przeniesiony" ? "badge-orange" : "badge-blue"}"><span class="badge-dot"></span>${w.status || "—"}</span>`, xls: (w) => w.status || "—" },
-  { key: "tg", label: "Telegram", cell: (w) => `<span style="font-family:var(--mono);font-size:11px;color:var(--text3)">${w.telegram_chat_id ? "✅" : "—"}</span>`, xls: (w) => (w.telegram_chat_id ? "TAK" : "NIE") },
-  { key: "bhp", label: "BHP", cell: (w) => `<span style="font-size:11px;color:var(--text3)">${plDate(w.bhp_date)}</span>`, xls: (w) => plDate(w.bhp_date) },
-  { key: "last", label: "Ostatni dzień", cell: (w) => `<span style="font-size:11px;color:var(--text3)">${plDate(w.last_work_date)}</span>`, xls: (w) => plDate(w.last_work_date) },
-  { key: "stud_from", label: "Student od", title: "Status studenta z HRappka", cell: (w) => `<span style="font-size:11px;color:var(--text3)">${plDate(w.student_from)}</span>`, xls: (w) => plDate(w.student_from) },
+  { key: "pesel", label: "PESEL", title: "Z HRappka", cell: (w) => `<span class="wk-num">${w.pesel || "—"}</span>`, xls: (w) => w.pesel || "—" },
+  { key: "birth", label: "Data ur.", title: "Z HRappka", cell: (w) => `<span class="wk-sec">${plDate(w.birth_date)}</span>`, xls: (w) => plDate(w.birth_date) },
+  { key: "group", label: "Grupa", off: true, cell: (w) => `<span class="wk-ell wk-sec" title="${escStan(w.group_name)}">${escStan(w.group_name)}</span>`, xls: (w) => w.group_name || "—" },
+  { key: "facility", label: "Obiekt", cell: (w) => `<span class="wk-ell" title="${escStan(w.facility_name)}">${escStan(w.facility_name)}</span>`, xls: (w) => w.facility_name || "—" },
+  { key: "stan", label: "Stanowisko", cell: (w) => `<span class="wk-ell wk-sec" title="${escStan(w.stanowisko)}">${escStan(w.stanowisko)}</span>`, xls: (w) => w.stanowisko || "—" },
+  { key: "status", label: "Status", cell: (w) => statusBadge(w.status), xls: (w) => w.status || "—" },
+  { key: "tg", label: "Telegram", short: "TG", cell: (w) => (w.telegram_chat_id ? `<span class="wk-yes" title="Połączony z botem">✓</span>` : `<span class="wk-sec">—</span>`), xls: (w) => (w.telegram_chat_id ? "TAK" : "NIE") },
+  { key: "bhp", label: "BHP", cell: (w) => `<span class="wk-sec">${plDate(w.bhp_date)}</span>`, xls: (w) => plDate(w.bhp_date) },
+  { key: "last", label: "Ostatni dzień", cell: (w) => `<span class="wk-sec">${plDate(w.last_work_date)}</span>`, xls: (w) => plDate(w.last_work_date) },
+  { key: "stud_from", label: "Student od", title: "Status studenta z HRappka", cell: (w) => `<span class="wk-sec">${plDate(w.student_from)}</span>`, xls: (w) => plDate(w.student_from) },
   { key: "stud_to", label: "Student do", title: "Status studenta z HRappka", cell: (w) => studentCell(w), xls: (w) => plDate(w.student_to) },
   { key: "docs", label: "Dokumenty", title: "Podpisy dokumentów w HRappka", cell: (w) => hrsCell(w), xls: null },
 ];
@@ -83,7 +88,8 @@ const visibleCols = () => { const s = colsGet("table"); return WORKER_COLS.filte
 
 function renderWorkersHead() {
   const h = document.getElementById("workersHead");
-  if (h) h.innerHTML = visibleCols().map((c) => `<th${c.title ? ` title="${c.title}"` : ""}>${c.label}</th>`).join("") + "<th>Akcje</th>";
+  // short — krótszy nagłówek w tabeli (pełna nazwa w podpowiedzi, w «Kolumny» i w Excelu)
+  if (h) h.innerHTML = visibleCols().map((c) => { const t = c.title || (c.short ? c.label : ""); return `<th${t ? ` title="${t}"` : ""}>${c.short || c.label}</th>`; }).join("") + "<th></th>";
 }
 
 function toggleWorkersCols(e) {
@@ -367,8 +373,37 @@ function filterWorkersFacList() {
   });
 }
 
+// ── Daty (BHP, ostatni dzień, student do) — w okienku pod przyciskiem «Daty» ──
+const WK_DATES = [["workersBhpFrom", "workersBhpTo"], ["workersLastFrom", "workersLastTo"], ["workersStudFrom", "workersStudTo"]];
+function toggleWorkersDates(e) {
+  if (e) e.stopPropagation();
+  const d = document.getElementById("workersDatesDrop");
+  d.hidden = !d.hidden;
+}
+function clearWorkersDates() {
+  WK_DATES.flat().forEach((id) => { document.getElementById(id).value = ""; });
+  filterWorkers();
+}
+document.addEventListener("click", (e) => {
+  const d = document.getElementById("workersDatesDrop");
+  if (d && !d.hidden && !e.target.closest("#workersDatesWrap")) d.hidden = true;
+});
+// Ustawione filtry — niebieska ramka; na «Daty» — ile zakresów
+function markWorkersFilters() {
+  const on = (el, v) => { if (el) el.classList.toggle("on", !!v); };
+  const n = WK_DATES.filter(([a, b]) => document.getElementById(a).value || document.getElementById(b).value).length;
+  document.getElementById("workersDatesLabel").textContent = n ? `📅 Daty · ${n}` : "📅 Daty";
+  on(document.getElementById("workersDatesBtn"), n);
+  on(document.getElementById("workersDocs"), document.getElementById("workersDocs").value);
+  on(document.getElementById("workersStudent"), document.getElementById("workersStudent").value);
+  on(document.querySelector("#statusDropWrap .wk-drop"), selectedStatuses.workers.size);
+  on(document.querySelector("#workersGroupDropWrap .wk-drop"), workersCurrentGroup);
+  on(document.querySelector("#workersFacDropWrap .wk-drop"), workersCurrentFac);
+}
+
 function filterWorkers(reset = true) {
   if (reset) pageWorkers = 1;
+  markWorkersFilters();
   const q = (document.getElementById("workersSearch").value || "").toLowerCase();
 
   const statusSet = selectedStatuses.workers;
@@ -416,9 +451,9 @@ function filterWorkers(reset = true) {
   document.getElementById("workersTable").innerHTML = slice.map((w) => `
     <tr>
       ${cols.map((c) => `<td>${c.cell(w)}</td>`).join("")}
-      <td style="display:flex;gap:4px">
-        <button class="btn btn-ghost btn-sm" onclick='openWorkerModal(${JSON.stringify(w)})'>Edytuj</button>
-        <button class="btn btn-ghost btn-sm" onclick="openHistoryModal(${w.id},'${w.full_name.replace(/'/g, "\\'").replace(/"/g, "&quot;")}')">Historia</button>
+      <td class="wk-act">
+        <button class="wk-ic" title="Edytuj" aria-label="Edytuj" onclick='openWorkerModal(${JSON.stringify(w)})'>✎</button>
+        <button class="wk-ic" title="Historia" aria-label="Historia" onclick="openHistoryModal(${w.id},'${w.full_name.replace(/'/g, "\\'").replace(/"/g, "&quot;")}')">⟲</button>
       </td>
     </tr>`).join("") ||
     `<tr><td colspan="${cols.length + 1}" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;

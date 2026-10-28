@@ -1,6 +1,6 @@
 // ── START — strona startowa panelu (GET /api/start, api/routes.js) ─────
 // Na górze: pracują, przyjęcia i zwolnienia w tym tygodniu, zwolnienia do końca miesiąca, godziny w miesiącu.
-// Niżej «Do zrobienia». Każda liczba otwiera zakładkę od razu z filtrem (te same definicje co na kartach «Pracownicy»).
+// Niżej «Do zrobienia». Każda liczba otwiera zakładkę od razu z filtrem (liczone jak dawne karty «Pracownicy»).
 // Zakres jak w zakładkach: admin — cała firma, pozostali — swoje obiekty (koordynator regionu — region).
 
 const startNum = (n) => Number(n || 0).toLocaleString("pl-PL");

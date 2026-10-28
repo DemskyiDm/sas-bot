@@ -186,7 +186,6 @@ function selectGroup(gname) {
     ? allWorkers.filter(w => (w.group_name || w.facility_name) === gname)
     : allWorkers;
   renderTable(filtered);
-  loadStatsByFacility(null);
 }
 
 
@@ -206,7 +205,6 @@ function filterFacility(id) {
   renderTabs(allWorkers);
   const filtered = id ? allWorkers.filter((w) => w.facility_id == id) : allWorkers;
   renderTable(filtered);
-  loadStatsByFacility(id);
 }
 
 function filterFacilitiesList() {
@@ -611,7 +609,6 @@ async function saveHours() {
     closeModal();
     await loadWorkers();
     if (currentFacility) filterFacility(currentFacility);
-    loadStats();
   } catch (e) { alert("Blad: " + e.message); }
 }
 
@@ -620,5 +617,4 @@ function filterGroup(groupName) {
   renderTabs(allWorkers);
   const filtered = allWorkers.filter(w => (w.group_name || w.facility_name) === groupName);
   renderTable(filtered);
-  loadStatsByFacility(null);
 }

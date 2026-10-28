@@ -17,9 +17,9 @@ const WORKER_COLS = [
   { key: "name", label: "Imie i Nazwisko", cell: (w) => `<span class="worker-name">${escStan(w.full_name)}</span>`, xls: (w) => w.full_name },
   { key: "pesel", label: "PESEL", title: "Z HRappka", cell: (w) => `<span style="font-family:var(--mono);font-size:11px;color:var(--text3)">${w.pesel || "—"}</span>`, xls: (w) => w.pesel || "—" },
   { key: "birth", label: "Data ur.", title: "Z HRappka", cell: (w) => `<span style="font-size:11px;color:var(--text3)">${plDate(w.birth_date)}</span>`, xls: (w) => plDate(w.birth_date) },
-  { key: "group", label: "Grupa", off: true, cell: (w) => `<span style="color:var(--text2);font-size:12px">${escStan(w.group_name)}</span>`, xls: (w) => w.group_name || "—" },
-  { key: "facility", label: "Obiekt", cell: (w) => `<span style="color:var(--text2);font-size:12px">${escStan(w.facility_name)}</span>`, xls: (w) => w.facility_name || "—" },
-  { key: "stan", label: "Stanowisko", cell: (w) => `<span style="color:var(--text2);font-size:12px">${escStan(w.stanowisko)}</span>`, xls: (w) => w.stanowisko || "—" },
+  { key: "group", label: "Grupa", off: true, cell: (w) => `<span class="wk-ell" style="color:var(--text2);font-size:12px" title="${escStan(w.group_name)}">${escStan(w.group_name)}</span>`, xls: (w) => w.group_name || "—" },
+  { key: "facility", label: "Obiekt", cell: (w) => `<span class="wk-ell" style="color:var(--text2);font-size:12px" title="${escStan(w.facility_name)}">${escStan(w.facility_name)}</span>`, xls: (w) => w.facility_name || "—" },
+  { key: "stan", label: "Stanowisko", cell: (w) => `<span class="wk-ell" style="color:var(--text2);font-size:12px" title="${escStan(w.stanowisko)}">${escStan(w.stanowisko)}</span>`, xls: (w) => w.stanowisko || "—" },
   { key: "status", label: "Status", cell: (w) => `<span class="badge ${w.status === "pracuje" ? "badge-green"
       : w.status === "urlop" || w.status === "l4" ? "badge-purple"
         : w.status === "przeniesiony" ? "badge-orange" : "badge-blue"}"><span class="badge-dot"></span>${w.status || "—"}</span>`, xls: (w) => w.status || "—" },
@@ -367,27 +367,6 @@ function filterWorkersFacList() {
   });
 }
 
-async function loadWorkerStats() {
-  try {
-    const res = await apiFetch("/api/workers/stats");
-    if (!res || !res.data) return;
-    const { data } = res;
-    document.getElementById("statAllWorkers").textContent = data.total;
-    // координатор / регіональний: перший рядок — свої обʼєкти (регіон), нижче — уся фірма; адмін — як було
-    const allSub = document.getElementById("statAllSub");
-    const allCo = document.getElementById("statAllCompany");
-    if (allSub && allCo) {
-      const two = data.company_total != null;
-      allSub.textContent = !two ? "aktywnych" : data.scope === "region" ? "aktywnych w regionie" : "aktywnych na Twoich obiektach";
-      allCo.innerHTML = two ? `Cała firma: <b style="color:var(--text)">${Number(data.company_total)}</b>` : "";
-      allCo.hidden = !two;
-    }
-    document.getElementById("statNewWorkers").textContent = data.new_this_week;
-    document.getElementById("statStartedWorkers").textContent = data.started_this_week ?? "—";
-    document.getElementById("statLeavingWeek").textContent = data.leaving_this_week;
-    document.getElementById("statLeavingMonth").textContent = data.leaving_this_month;
-  } catch (e) { console.error(e); }
-}
 function filterWorkers(reset = true) {
   if (reset) pageWorkers = 1;
   const q = (document.getElementById("workersSearch").value || "").toLowerCase();
@@ -515,7 +494,7 @@ async function saveWorker() {
 
   if (!res || !res.ok) { document.getElementById("wm_err").textContent = res?.error || "Blad zapisu"; return; }
   closeWorkerModal();
-  loadWorkersPage(); loadWorkers(); loadStats(); loadWorkerStats();
+  loadWorkersPage(); loadWorkers();
 }
 
 // ── HISTORY MODAL ─────────────────────────────────────────────
@@ -564,7 +543,7 @@ async function startImport() {
     if (res && res.ok) {
       btn.textContent = "✅ Gotowe"; btn.title = res.message || "";
       setTimeout(() => { btn.textContent = "⬇ Import z HRappka"; btn.disabled = false; }, 5000);
-      loadWorkersPage(); loadWorkerStats(); loadStats();
+      loadWorkersPage();
     } else {
       btn.textContent = "❌ Blad"; setTimeout(() => { btn.textContent = "⬇ Import z HRappka"; btn.disabled = false; }, 3000);
       if (res && res.error) alert(res.error);

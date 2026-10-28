@@ -131,6 +131,36 @@ select:focus, input:focus { border-color: var(--accent); }
 .start-row.done .start-n { color: var(--text3); font-weight: 400; }
 .start-empty { padding: 20px; text-align: center; color: var(--text3); }
 
+/* ── PRACOWNICY: nagłówek, filtry, daty, stopka (index.html → #pageWorkers) ── */
+.wk-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.wk-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.wk-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.wk-filters, .wk-dates { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.wk-filters { background: var(--surface2); }
+.wk-filters > select, .wk-filters > input, .wk-drop { height: 32px; box-sizing: border-box; }
+.wk-filters > select, .wk-drop { background: var(--surface); }
+.wk-search { flex: 1 1 220px; min-width: 180px; max-width: 340px; background: var(--surface) !important; }
+.wk-drop { padding: 0 10px; font-size: 12px; border: 1px solid var(--border); border-radius: 5px; color: var(--text2);
+  cursor: pointer; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.wk-drop:hover { border-color: var(--accent); }
+.wk-caret { font-size: 10px; color: var(--text3); }
+.wk-dates { gap: 8px 18px; }
+.wk-range { display: flex; align-items: center; gap: 6px; }
+.wk-range > span { font-size: 11px; color: var(--text3); font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.5px; }
+.wk-range input[type="date"] { width: 128px; height: 28px; box-sizing: border-box; background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text); border-radius: 5px; padding: 0 6px; font-size: 12px; color-scheme: dark; }
+.wk-range i { color: var(--text3); font-style: normal; font-size: 12px; }
+.wk-clear { margin-left: auto; height: 32px; }
+/* wiersze w jednej linii (długie obiekty / stanowiska — skrócone, pełna nazwa w podpowiedzi); na telefonie — karty (mobile.css) */
+@media (min-width: 769px) {
+  #pageWorkers th, #pageWorkers td { padding-left: 12px; padding-right: 12px; }
+  #pageWorkers td { white-space: nowrap; }
+}
+.wk-ell { display: inline-block; max-width: 200px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.wk-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; border-top: 1px solid var(--border); padding: 0 16px; min-height: 44px; }
+.wk-foot .pagination { border-top: none; padding: 8px 0; }
+.wk-size { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text3); }
+
 /* ── TABLE ── */
 .table-wrap { overflow-x: auto; overflow-y: visible; }
 table { width: 100%; border-collapse: collapse; font-size: 12px; }

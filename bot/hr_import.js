@@ -18,7 +18,7 @@
 //   Zwolniony, przejście bezpośrednio → pracuje, поки сьогодні < останнього дня, потім zwolniony;
 //   Do zatrudnienia (=Harmonogram) → unknown; Nie dotarł → у базі rezygnacja (такого статусу немає), у звіті — лише проти zwolniony.
 // Останній день різниться до 20 днів — беремо HRappka: імпорт пише його в поточний період бази; понад 20 — перевірити.
-// У HRappka останнього дня немає — лишаємо наш.
+// У HRappka останнього дня немає — лишаємо наш. Решту розбіжностей періодів, що закінчились до 31.07.2026, не показуємо (IGNORE_TO).
 // Rezygnacja — людина не почала працювати: останній день і BHP не порівнюємо (і в ротації такі періоди не рахуються — reg.v_periods).
 // Останній день — attrdef_id_58419, одне значення на людину: до поточного періоду належить, лише якщо >= BHP.
 // Людину шукаємо за паспортом, потім за PESEL, потім за ПІБ (лише якщо таке ПІБ одне з обох боків — тоді «Паспорт»).
@@ -41,8 +41,10 @@ const IGNORE = /PERLIK/i;
 const RECENT_DAYS = 60;   // щоденний звіт — закриті періоди за стільки днів
 const SAME_DAYS = 7;      // договір HRappka і період у базі / таблиці — той самий, якщо початок і BHP різняться не більше
 const OLDER_DAYS = 31;    // договір почався раніше за BHP більше ніж на стільки днів — у базі новіший період, не чіпаємо
+const MAP_DAYS = 31;      // відділ HRappka → об'єкт (facilityMap) вчимо на парах, де початок договору й BHP різняться не більше
 const LWD_DAYS = 20;      // останній день різниться не більше — беремо HRappka
 const LWD_SMALL = `до ${LWD_DAYS} днів — беремо HRappka`, LWD_BIG = `понад ${LWD_DAYS} днів — перевірити`;
+const IGNORE_TO = "2026-07-31";   // розбіжності періодів, що закінчились до цієї дати включно, не показуємо (останній день до 20 днів — беремо з HRappka)
 
 const STATE = {
   "Pracuje": "pracuje", "Dotarł": "dotarl",
@@ -203,7 +205,7 @@ const depKey = (p) => `${p.department || ""}|${p.firm || ""}`;
 function facilityMap(pairs) {
   const m = new Map();
   for (const { w, p } of pairs) {
-    if (!p || !p.department || !w.facility_id || !p.start || !w.bhp || Math.abs(Date.parse(p.start) - Date.parse(w.bhp)) > SAME_DAYS * 864e5) continue;
+    if (!p || !p.department || !w.facility_id || !p.start || !w.bhp || Math.abs(Date.parse(p.start) - Date.parse(w.bhp)) > MAP_DAYS * 864e5) continue;
     if (!m.has(depKey(p))) m.set(depKey(p), new Map());
     const c = m.get(depKey(p));
     c.set(w.facility_id, (c.get(w.facility_id) || 0) + 1);
@@ -523,6 +525,12 @@ async function sendEmail(diffs, stats, today, full) {
 
 // відкриті періоди й закриті за RECENT_DAYS днів
 const recent = (diffs, today) => { const from = addDays(today, -RECENT_DAYS); return diffs.filter((d) => !d.w || !d.w.lwd || d.w.lwd >= from); };
+// період закінчився до IGNORE_TO: пізніший з останніх днів таблиці й HRappka (HRappka — лише не раніше BHP); відкритий — ні
+function stale(d) {
+  const w = d.w || {}, p = d.p || {};
+  const end = [w.lwd, p.lastDay && (!w.bhp || p.lastDay >= w.bhp) ? p.lastDay : null].filter(Boolean).sort().pop();
+  return !!end && end <= IGNORE_TO;
+}
 
 // Знімок і запис з HRappka — по черзі (кнопка, імпорт після таблиць, cron): наступний чекає на попередній, а не пропускається
 let CHAIN = Promise.resolve();
@@ -606,11 +614,10 @@ async function run({ full = false, dry = false, notify = false } = {}) {
     // записане (і без змін) — нова точка відліку; не записане з причини, що може зникнути, — спробуємо знову
     await snapshot(client, people.filter((p) => !applied.pending.has(p.id)), "hrz.people_applied");
     res = await diffsFor(client, people, today);
-    if (!dry) {
-      const taken = await takeLastDays(client, res.diffs, res.cur);
-      applied.lwd = taken.size;
-      res.diffs = res.diffs.filter((d) => !taken.has(d));
-    }
+    // останній день до 20 днів — з HRappka у базу (і старі періоди теж); решту розбіжностей до IGNORE_TO не показуємо
+    const taken = dry ? new Set() : await takeLastDays(client, res.diffs, res.cur);
+    applied.lwd = taken.size;
+    res.diffs = res.diffs.filter((d) => !taken.has(d) && !stale(d));
     if (!dry) await client.query(`INSERT INTO hrz.runs (kind, at) VALUES ('hrappka', now()) ON CONFLICT (kind) DO UPDATE SET at = now()`);
     await client.query(dry ? "ROLLBACK" : "COMMIT");
   } catch (e) {
@@ -650,7 +657,7 @@ async function current({ full = false } = {}) {
     const people = await loadPeople(client);
     const at = (await client.query(`SELECT max(seen_at) AS at FROM hrz.people`)).rows[0].at;
     const runs = Object.fromEntries((await client.query(`SELECT kind, at FROM hrz.runs`)).rows.map((x) => [x.kind, x.at]));
-    const { diffs } = await diffsFor(client, people, today);
+    const diffs = (await diffsFor(client, people, today)).diffs.filter((d) => !stale(d));
     return { diffs: full ? diffs : recent(diffs, today), snapshotAt: at, sheetsAt: runs.sheets || null, today, recentDays: RECENT_DAYS };
   } finally {
     client.release();
@@ -691,7 +698,7 @@ function schedule() {
   }, { timezone: "Europe/Warsaw" });
 }
 
-module.exports = { run, schedule, compare, current, refresh, afterSheets, report, toCsv, STATE, TYPES, LWD_SMALL, LWD_BIG, _test: { fetchAll, toPerson, match, plan, facilityMap, loadPeople, takeLastDays } };
+module.exports = { run, schedule, compare, current, refresh, afterSheets, report, toCsv, STATE, TYPES, LWD_SMALL, LWD_BIG, _test: { fetchAll, toPerson, match, plan, facilityMap, loadPeople, takeLastDays, stale } };
 
 if (require.main === module) {
   require("dotenv").config();

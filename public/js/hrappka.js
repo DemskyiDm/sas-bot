@@ -89,7 +89,8 @@ function render() {
   <div class="banner">Bieżący okres w bazie pochodzi z <b>HRappka</b>; tabele służą tylko do porównania — tu widać, gdzie tabela się różni.
     Podział CAINIAO APT / APT 2, Dipico / Dipico 2, Action — z tabel. Import o 6, 8, 10, 12, 16 i 20: najpierw tabele, zaraz po nich HRappka;
     mail z CSV — o 8:00. Tabele: <b>${esc(sheetsAt)}</b>, HRappka: <b>${esc(at)}</b>${apart ? ` <span class="diff">— z różnych chwil, część różnic może zniknąć po następnym imporcie</span>` : ""}.
-    ${r.full ? "Pokazane <b>wszystkie okresy</b>." : `Pokazane okresy <b>otwarte i zamknięte w ostatnich ${r.recent_days} dniach</b>.`}</div>
+    ${r.full ? "Pokazane <b>wszystkie okresy</b>." : `Pokazane okresy <b>otwarte i zamknięte w ostatnich ${r.recent_days} dniach</b>.`}
+    Ostatni dzień różny do 20 dni — bierzemy z HRappka; okresów zakończonych do 31.07.2026 nie pokazujemy.</div>
   <div class="bar">
     <span class="chip ${ST.type ? "" : "on"}" onclick="setType('')">Wszystkie<b>${base.length}</b></span>
     ${TYPES.map(([c, l]) => `<span class="chip ${ST.type === c ? "on" : ""}" onclick="setType('${c}')">${l}<b>${cnt(c)}</b></span>`).join("")}

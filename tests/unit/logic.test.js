@@ -155,7 +155,7 @@ test("hr_import.compare: статус залежить від таблиці й 
     P(23, "Zwolniony, przejście bezpośrednio", { lastDay: "2026-11-05" }), P(24, "Zwolniony, przejście bezpośrednio", { lastDay: "2026-10-01" }),
     P(25, "Rezygnacja"), P(26, "Rezygnacja", { lastDay: "2026-03-01" }), P(27, "Do zatrudnienia (=Harmonogram)"), P(28, "Długi urlop"),
     P(29, "Zwolniony, przejście bezpośrednio", { lastDay: "2026-11-05" }), P(30, "Nie dotarł"),
-    P(31, "Nie dotarł"), P(32, "Zwolniony"), P(33, "Zwolniony", { lastDay: "2026-03-05" }), P(34, "Zwolniony", { lastDay: "2026-03-20" }),
+    P(31, "Nie dotarł"), P(32, "Zwolniony"), P(33, "Zwolniony", { lastDay: "2026-03-05" }), P(34, "Zwolniony", { lastDay: "2026-03-25" }),
   ];
   const workers = [
     W(20, "pracuje"), W(21, "rezygnacja", { lwd: "2026-02-01" }), W(22, "przeniesiony", { lwd: "2026-02-01" }),
@@ -165,7 +165,7 @@ test("hr_import.compare: статус залежить від таблиці й 
   ];
   const { diffs } = hrImport.compare(people, workers, "2026-10-27");
   const got = diffs.map((d) => `${d.type}:${(d.w || d.p).id}${d.hr ? ":" + d.hr : ""}${d.note && /днів/.test(d.note) ? ":" + d.note.slice(0, 7) : ""}`).sort();
-  assert.deepEqual(got, ["Немає в таблиці:29", "Останній день:22", "Останній день:33:до 7 дн", "Останній день:34:понад 7",
+  assert.deepEqual(got, ["Немає в таблиці:29", "Останній день:22", "Останній день:33:до 20 д", "Останній день:34:понад 2",
     "Статус:22:zwolniony", "Статус:24:zwolniony", "Статус:28:urlop", "Статус:31:nie_dotarl"]);
 });
 
@@ -251,4 +251,22 @@ test("hr_import.toPerson: посада з діючого договору, бе�
   assert.equal(toPerson({ id: 1, [N]: { pl: "magazyn" }, [CUR]: { pl: "produkcja" } }).position, "produkcja");
   assert.equal(toPerson({ id: 2, [N]: { pl: "magazyn" }, [CUR]: null }).position, "magazyn");
   assert.equal(toPerson({ id: 3, [N]: null, [CUR]: null }).position, null);
+});
+
+test("hr_import.takeLastDays: останній день до 20 днів — з HRappka у поточний період; порожній у HRappka — наш", async () => {
+  const { takeLastDays } = hrImport._test;
+  const D = (id, note, lastDay, cur = {}) => ({ type: "Останній день", note, w: { id, bhp: "2026-05-01", lwd: "2026-09-14" }, p: { id, lastDay },
+    cur: { hid: 100 + id, login: `P${id}`, status: "zwolniony", bhp: "2026-05-01", lwd: "2026-09-14", ...cur } });
+  const diffs = [
+    D(1, hrImport.LWD_SMALL, "2026-10-04"),                              // 20 днів — пишемо
+    D(2, hrImport.LWD_BIG, "2026-10-20"),                                // понад 20 — ні
+    D(3, "у HRappka не внесено", null),                                  // у HRappka порожньо — лишаємо наш
+    D(4, hrImport.LWD_SMALL, "2026-09-20", { status: "rezygnacja" }),    // rezygnacja — ні
+    D(5, hrImport.LWD_SMALL, "2026-09-20", { bhp: "2026-08-01" }),       // у базі інший період — ні
+  ];
+  const q = [];
+  const client = { query: async (sql, args) => { if (/UPDATE/.test(sql)) q.push(args); } };
+  const done = await takeLastDays(client, diffs, (d) => d.cur);
+  assert.deepEqual(q, [[101, "2026-10-04"]]);
+  assert.deepEqual([...done].map((d) => d.p.id), [1]);
 });

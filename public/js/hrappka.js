@@ -18,8 +18,8 @@ const NOTE_PL = {
   hr_only: "w HRappka jest, w tabeli brak",
   hr_missing: "w HRappka nie wpisano",
   by_name: "znaleziono po nazwisku — w HRappka inny paszport / PESEL",
-  gap_small: "różnica do 7 dni — bierzemy HRappka",
-  gap_big: "różnica ponad 7 dni — sprawdzić",
+  gap_small: "różnica do 20 dni — bierzemy HRappka",
+  gap_big: "różnica ponad 20 dni — sprawdzić",
 };
 const STATUS_PL = { nie_dotarl: "Nie dotarł" };
 const PAGE = 100;

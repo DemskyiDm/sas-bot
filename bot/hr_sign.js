@@ -2,10 +2,10 @@
 // Новий працівник отримує листи з документами (umowa, załączniki, program lojalnościowy, aneksy…) і підписує їх у HRappka;
 // у таблиці EMPLOYEE_ATTACHMENT_FULL поле eSignature: SEND — надіслано, не підписано; SIGN — підписано.
 // Усієї бази HRappka (170 тис. вкладень) не тягнемо: питаємо лише за паспортами потрібних людей (фільтр на боці HRappka).
-//   • щодня о 6:00 (Варшава) — працівники з BHP від HR_SIGN_FROM (15.10.2026), які ще не підписали все;
+//   • щодня о 6:00, 10:00 і 14:00 (Варшава) — працівники з BHP від HR_SIGN_FROM (15.10.2026), які ще не підписали все;
 //     рахуються документи, надіслані від 5 днів до BHP до 10 днів після (старі періоди — ні), повторний пакет — лише останній;
 //   • о 7:00 — звіт «хто не підписав» листом з Excel на HR_SIGN_REPORT_TO (.env, через кому);
-//   • о 10:00 — нагадування працівнику в боті «перевірте посилання в e-mail» (раз на пакет, наступного дня);
+//   • о 10:00, одразу після перевірки, — нагадування працівнику в боті «перевірте посилання в e-mail» (раз на пакет, наступного дня);
 //   • з панелі — «Sprawdź podpisy» для вибраних / обʼєкта (не частіше ніж раз на хвилину на людину).
 // Анкети — лише вибрані (HR_SIGN_SURVEYS у .env, id з HRappka → Ankiety): відповіді беремо пачкою по анкеті, не по людині.
 // Доступ до HRappka — ті самі змінні .env, що й у bot/hr_import.js. Таблиці: db/migration_hr_sign.sql.
@@ -409,7 +409,7 @@ ${lostTable}
   return { ok: true, count: rows.length, to };
 }
 
-// ── Нагадування працівнику (о 10:00): документи надіслано вчора або раніше, а ще не підписано ─────
+// ── Нагадування працівнику (о 10:00, після перевірки): документи надіслано вчора або раніше, а ще не підписано ─────
 // Раз на пакет: якщо після нагадування прийшов новий пакет (пізніша дата надсилання) — нагадаємо ще раз.
 // hrs.checks.reminded_at — db/migration_hr_remind.sql (без колонки нагадування просто не йдуть).
 const REMIND_TX = {
@@ -479,13 +479,16 @@ function schedule(bot) {
   cron.schedule("0 7 * * *", async () => {
     try { await report(); } catch (e) { console.error("[hr sign] звіт:", e.message); }
   }, { timezone: "Europe/Warsaw" });
-  cron.schedule("0 6 * * *", async () => {
-    if (RUNNING) return;
-    RUNNING = true;
-    try { await daily(); } catch (e) { console.error("[hr sign] щоденна:", e.message); } finally { RUNNING = false; }
-  }, { timezone: "Europe/Warsaw" });
-  cron.schedule("0 10 * * *", async () => {
-    try { await remind(); } catch (e) { console.error("[hr sign] нагадування:", e.message); }
+  // перевірка о 6, 10, 14; о 10 нагадування — одразу після перевірки (хто підписав зранку, нагадування не отримає)
+  cron.schedule("0 6,10,14 * * *", async () => {
+    const hour = Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Warsaw", hour: "2-digit", hourCycle: "h23" }).format(new Date()));
+    if (!RUNNING) {
+      RUNNING = true;
+      try { await daily(); } catch (e) { console.error("[hr sign] перевірка:", e.message); } finally { RUNNING = false; }
+    }
+    if (hour === 10) {
+      try { await remind(); } catch (e) { console.error("[hr sign] нагадування:", e.message); }
+    }
   }, { timezone: "Europe/Warsaw" });
 }
 

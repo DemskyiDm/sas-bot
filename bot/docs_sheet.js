@@ -1,4 +1,4 @@
-// bot/docs_sheet.js — таблиця «Dokumenty pocztą 2026» (аркуші BEZPOSREDNIO і PRZENIESIENIE): о 6:00, після перевірки
+// bot/docs_sheet.js — таблиця «Dokumenty pocztą 2026» (аркуші BEZPOSREDNIO і PRZENIESIENIE): о 6, 10 і 14, після перевірки
 // підписів у HRappka (bot/hr_sign.js), бот дописує в ПОРОЖНІ клітинки й позначає їх світло-помаранчевим:
 //   • PASZPORT — для рядків від PASS_FROM (01.09.2026): працівник за ПІБ + період з BHP біля «UMOWA OD» (+ заклад, якщо однофамільці);
 //   • рядки від hr.FROM (15.10.2026):

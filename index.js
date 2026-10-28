@@ -444,7 +444,7 @@ broadcast.schedule(bot);
 require("./bot/fines").schedule(bot);   // штрафи: повідомлення працівнику
 require("./bot/fines_sheet").schedule(bot);  // штрафи → Google-таблиця: повтор незаписаних, попередження про невідомі заклади
 rec.schedule(bot);                         // замовлення: повідомлення координатору
-require("./bot/hr_sign").schedule(bot);    // підписи HRappka: 6:00 перевірка, 7:00 звіт, 10:00 нагадування працівникам
+require("./bot/hr_sign").schedule(bot);    // підписи HRappka: перевірка о 6, 10, 14; 7:00 звіт; 10:00 нагадування працівникам
 require("./bot/hr_reason").schedule(bot);  // причина звільнення з HRappka: 5:00 щодня, у понеділок — повний прохід і звіт
 require("./bot/student").schedule();       // статус студента: 10:30 нагадування «довідка закінчується / закінчилась»
 require("./api/wapp").schedule();          // міні-застосунок працівника: чернетки сторінок старші за добу — геть

@@ -33,6 +33,7 @@ const BASE = process.env.HRAPPKA_BASE_URL || "https://app.hrappka.pl";
 const PAGE = 5000;
 const LAST_DAY = `attrdef_id_${process.env.HR_LAST_DAY_ATTR || "58419"}`;
 const C = "newestUserContract_USER_CONTRACT_";
+const CUR = "currentUserContract_USER_CONTRACT_";   // діючий на сьогодні договір (немає — порожньо)
 const EMAIL_TO = (process.env.HR_IMPORT_EMAIL_TO ||
   "d.demskyi@saslogistic.pl,m.rosliakova@saslogistic.pl,o.kapkan@saslogistic.pl,d.ivanova@saslogistic.pl").split(/[,;\s]+/).filter(Boolean);
 const IGNORE = /PERLIK/i;
@@ -70,18 +71,20 @@ async function headers() {
 
 const COLUMNS = ["id", "name", "state", "birthDate", "citizenship", "idsNumberValuePASSPORT", "idsNumberValuePESEL", LAST_DAY,
   C + "startDate", C + "endDate", C + "userContract_company_COMPANY_name",
-  C + "userContract_contractor_CONTRACTOR_DEPARTMENT_name", C + "userContract_position_POSITION_name"];
+  C + "userContract_contractor_CONTRACTOR_DEPARTMENT_name", C + "userContract_position_POSITION_name", CUR + "userContract_position_POSITION_name"];
 
 function toPerson(x) {
   const end = x[C + "endDate"] || {};
-  const pos = x[C + "userContract_position_POSITION_name"];
+  // посада — з діючого договору; немає діючого (новий ще не почався, договір закрито) — з останнього
+  const pl = (v) => text(v && typeof v === "object" ? v.pl : v);
+  const pos = pl(x[CUR + "userContract_position_POSITION_name"]) || pl(x[C + "userContract_position_POSITION_name"]);
   return {
     id: Number(x.id), name: text(x.name), state: text(x.state),
     passport: normPass(x.idsNumberValuePASSPORT) || null, pesel: normPesel(x.idsNumberValuePESEL),
     birth: day(x.birthDate), citizenship: text(x.citizenship), lastDay: day(x[LAST_DAY]),
     department: text(x[C + "userContract_contractor_CONTRACTOR_DEPARTMENT_name"]),
     firm: text(x[C + "userContract_company_COMPANY_name"]),
-    position: text(pos && typeof pos === "object" ? pos.pl : pos),
+    position: pos,
     start: day(x[C + "startDate"]), end: day(end.terminationDate || end.cancelDate),
   };
 }

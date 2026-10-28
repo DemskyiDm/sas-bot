@@ -279,3 +279,26 @@ test("hr_import.stale: розбіжності періодів, що закін�
   assert.equal(stale({ w: { bhp: "2026-09-01", lwd: null }, p: { lastDay: "2026-05-01" } }), false);           // день HRappka з попереднього періоду
   assert.equal(stale({ p: { lastDay: "2026-06-01" } }), true);                                                   // немає в таблиці
 });
+
+test("hr_import: Do zatrudnienia — окремий статус; у базу — коли з'явився договір; лист — понад 30 днів від зміни картки", () => {
+  const { plan, facilityMap, stuck } = hrImport._test;
+  const P = (id, extra = {}) => ({ id, state: "Do zatrudnienia (=Harmonogram)", passport: `P${id}`, name: `N${id} X`, pesel: null, lastDay: null,
+    department: "D", firm: "F", start: "2026-11-02", ...extra });
+  const fmap = facilityMap([{ w: { facility_id: 1, bhp: "2026-05-01" }, p: P(8, { start: "2026-05-01" }) },
+    { w: { facility_id: 1, bhp: "2026-05-01" }, p: P(9, { start: "2026-05-01" }) }]);
+  const before = [P(1, { start: null, department: null }), P(2, { start: null, department: null }), P(3)];
+  const now = [P(1), P(2, { start: null, department: null }), P(3), P(4), P(5, { start: null, department: null })];
+  const { ops, pending } = plan(now, [], [], fmap, "2026-10-28", new Map(), { prev: new Map(before.map((x) => [x.id, x])) });
+  // 1 — з'явився договір; 2, 3 — нічого не змінилось; 4 — новий з договором; 5 — новий без договору: чекаємо
+  assert.deepEqual(ops.map((o) => `${o.op}:${o.p.id}:${o.t.status}:${o.t.bhp}`), ["create:1:do_zatrudnienia:2026-11-02", "create:4:do_zatrudnienia:2026-11-02"]);
+  assert.deepEqual([...pending], [5]);
+  // у таблиці такого статусу немає: unknown — без розбіжності, pracuje — розбіжність
+  const W = (id, status) => ({ id, login: `P${id}`, pesel: null, status, bhp: "2026-11-02", lwd: null, facility: "F" });
+  const { diffs } = hrImport.compare([P(1), P(2)], [W(1, "unknown"), W(2, "pracuje")], "2026-10-28");
+  assert.deepEqual(diffs.map((d) => `${d.type}:${d.w.id}:${d.hr}`), ["Статус:2:do_zatrudnienia"]);
+  // відлік — менша з дат: остання зміна картки й коли імпорт уперше побачив цей стан (HRappka щоночі оновлює картки)
+  const since = new Map([[4, { state: "Do zatrudnienia (=Harmonogram)", since: "2026-09-01" }], [5, { state: "Pracuje", since: "2026-01-01" }]]);
+  const list = stuck([P(1, { updated: "2026-09-27" }), P(2, { updated: "2026-09-28" }), P(3, { updated: "2026-08-01", state: "Pracuje" }),
+    P(4, { updated: "2026-10-28" }), P(5, { updated: "2026-10-28" })], "2026-10-28", since);
+  assert.deepEqual(list.map((p) => `${p.id}:${p.days}`), ["4:57", "1:31"]);
+});

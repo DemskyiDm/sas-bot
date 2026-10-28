@@ -362,7 +362,7 @@ function toggleStatus(page, value) {
 function updateStatusUI(page) {
   const set = selectedStatuses[page];
   const prefix = page === 'workers' ? 'wst' : 'hst';
-  const statuses = ['pracuje', 'zwolniony', 'rezygnacja', 'przeniesiony', 'urlop_l4', 'unknown'];
+  const statuses = ['pracuje', 'zwolniony', 'rezygnacja', 'przeniesiony', 'urlop_l4', 'unknown', 'do_zatrudnienia'];
   const green = '#22c55e';
   statuses.forEach(s => {
     const el = document.getElementById(`${prefix}_${s}_check`);

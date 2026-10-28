@@ -340,7 +340,7 @@ function scheduleReminder() {
 }
 
 // Імпорт: о 6, 8, 10, 12, 16, 20 — спершу таблиці (копія для порівняння), одразу за ними HRappka (люди й поточні періоди),
-// щоб порівняння бачило обидва джерела на один момент; звіт на пошту о 8:00 (bot/hr_import.js)
+// щоб порівняння бачило обидва джерела на один момент; звіт на пошту о 8:00; щопонеділка о 5:00 — хто в Do zatrudnienia понад 30 днів (bot/hr_import.js)
 require("./bot/hr_import").schedule();
 
 app.get("/api/facility-settings-all", requireAuth, async (req, res) => {

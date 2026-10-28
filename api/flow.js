@@ -125,11 +125,11 @@ async function weekData(week, siteKeys, today) {
             a AS (
               SELECT site_key,
                      count(*) FILTER (WHERE kind = 'new' AND status <> 'rezygnacja')::int AS arr_entered,
-                     count(*) FILTER (WHERE kind = 'new' AND status NOT IN ('rezygnacja', 'unknown') AND move_date <= $3::date)::int AS arr_fact,
-                     count(*) FILTER (WHERE kind = 'new' AND status = 'unknown' AND move_date <= $3::date)::int AS arr_unconf,
+                     count(*) FILTER (WHERE kind = 'new' AND status NOT IN ('rezygnacja', 'unknown', 'do_zatrudnienia') AND move_date <= $3::date)::int AS arr_fact,
+                     count(*) FILTER (WHERE kind = 'new' AND status IN ('unknown', 'do_zatrudnienia') AND move_date <= $3::date)::int AS arr_unconf,
                      count(*) FILTER (WHERE kind = 'new' AND status = 'rezygnacja')::int AS arr_rez,
                      count(*) FILTER (WHERE kind = 'transfer' AND status <> 'rezygnacja')::int AS tr_entered,
-                     count(*) FILTER (WHERE kind = 'transfer' AND status NOT IN ('rezygnacja', 'unknown') AND move_date <= $3::date)::int AS tr_fact
+                     count(*) FILTER (WHERE kind = 'transfer' AND status NOT IN ('rezygnacja', 'unknown', 'do_zatrudnienia') AND move_date <= $3::date)::int AS tr_fact
                 FROM arr GROUP BY site_key),
             d AS (
               SELECT site_key, count(*)::int AS dep_now,
@@ -187,12 +187,12 @@ function totals(rows) {
 // Люди за видом списку (для розгортання цифр)
 const ARR_KINDS = {
   arr_entered: `a.kind = 'new' AND a.status <> 'rezygnacja'`,
-  arr_fact: `a.kind = 'new' AND a.status NOT IN ('rezygnacja', 'unknown') AND a.move_date <= $4::date`,
-  arr_unconf: `a.kind = 'new' AND a.status = 'unknown' AND a.move_date <= $4::date`,
+  arr_fact: `a.kind = 'new' AND a.status NOT IN ('rezygnacja', 'unknown', 'do_zatrudnienia') AND a.move_date <= $4::date`,
+  arr_unconf: `a.kind = 'new' AND a.status IN ('unknown', 'do_zatrudnienia') AND a.move_date <= $4::date`,
   arr_rez: `a.kind = 'new' AND a.status = 'rezygnacja'`,
   tr_entered: `a.kind = 'transfer' AND a.status <> 'rezygnacja'`,
-  tr_fact: `a.kind = 'transfer' AND a.status NOT IN ('rezygnacja', 'unknown') AND a.move_date <= $4::date`,
-  arr_razem: `a.status NOT IN ('rezygnacja', 'unknown') AND a.move_date <= $4::date`,   // fakt + przeniesienia
+  tr_fact: `a.kind = 'transfer' AND a.status NOT IN ('rezygnacja', 'unknown', 'do_zatrudnienia') AND a.move_date <= $4::date`,
+  arr_razem: `a.status NOT IN ('rezygnacja', 'unknown', 'do_zatrudnienia') AND a.move_date <= $4::date`,   // fakt + przeniesienia
   arr_all: `true`,
 };
 const DEP_KINDS = {
@@ -454,7 +454,7 @@ router.get("/orders", async (req, res) => {
                FROM flow.v_orders WHERE site_key = ANY($1::text[]) AND week_start BETWEEN $2::date AND $2::date + 21`,
              [keys, cur, confirmFrom(ck.today)]),
       query(`SELECT site_key, count(DISTINCT worker_id)::int AS n FROM flow.v_rows
-              WHERE site_key = ANY($1::text[]) AND status NOT IN ('rezygnacja', 'unknown')
+              WHERE site_key = ANY($1::text[]) AND status NOT IN ('rezygnacja', 'unknown', 'do_zatrudnienia')
                 AND bhp_date <= $2::date AND (last_work_date IS NULL OR last_work_date >= $2::date)
               GROUP BY site_key`, [keys, ck.today]),
       query(`SELECT site_key, to_char(date_trunc('week', move_date), 'YYYY-MM-DD') AS week, count(*)::int AS n
@@ -1061,7 +1061,7 @@ async function dailyData(day, record) {
   // переведення з понеділка: куди і звідки (для зведення по всій фірмі)
   const weekTr = await db.query(
     `SELECT site_key, from_site, count(*)::int AS n FROM flow.arrivals($1::date, $2::date)
-      WHERE kind = 'transfer' AND status NOT IN ('rezygnacja', 'unknown') GROUP BY 1, 2`, [week, day]);
+      WHERE kind = 'transfer' AND status NOT IN ('rezygnacja', 'unknown', 'do_zatrudnienia') GROUP BY 1, 2`, [week, day]);
   const data = {
     day, week, weekEnd: addDays(week, 6), mainFrom, weekTr: weekTr.rows, pace: paceOf(st, day),
     deps: deps.rows, arrs: arrs.rows, lateDeps: lateDeps.rows, lateArrs: lateArrs.rows,
@@ -1166,8 +1166,8 @@ function buildDaily(data, ts, target, opts = {}) {
   const deps = bySite(data.deps, keys);
   const out = deps.filter((x) => !x.is_transfer), tr = deps.filter((x) => x.is_transfer);
   const arrs = bySite(data.arrs, keys);
-  const aNew = arrs.filter((x) => x.kind === "new" && !["rezygnacja", "unknown"].includes(x.status));
-  const aUnc = arrs.filter((x) => x.kind === "new" && x.status === "unknown");
+  const aNew = arrs.filter((x) => x.kind === "new" && !["rezygnacja", "unknown", "do_zatrudnienia"].includes(x.status));
+  const aUnc = arrs.filter((x) => x.kind === "new" && ["unknown", "do_zatrudnienia"].includes(x.status));
   const aTr = arrs.filter((x) => x.kind === "transfer" && x.status !== "rezygnacja");
   const aRez = arrs.filter((x) => x.status === "rezygnacja");
   const multi = data.mainFrom < data.day;
@@ -1352,7 +1352,7 @@ function dayTableSpec(data, ts, target) {
   bySite(data.arrs, keys).forEach((x) => {
     if (x.status === "rezygnacja") get(x.site_key).rez++;
     else if (x.kind === "transfer") { get(x.site_key).in++; get(x.site_key).inTr++; }
-    else if (x.status === "unknown") get(x.site_key).unc++;      // новий без статусу — як «Без статусу» в тексті
+    else if (["unknown", "do_zatrudnienia"].includes(x.status)) get(x.site_key).unc++;      // новий без статусу — як «Без статусу» в тексті
     else get(x.site_key).in++;
   });
   const items = Object.values(g).map((x) => {

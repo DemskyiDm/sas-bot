@@ -30,7 +30,8 @@ function addDays(iso, n) {
 const DOW = ["nd", "pn", "wt", "śr", "cz", "pt", "sb"];
 const dow = (iso) => DOW[new Date(iso + "T00:00:00Z").getUTCDay()];
 const pct = (a, b) => (b ? Math.round((a / b) * 100) + "%" : "—");
-const STATUS_PL = { pracuje: "pracuje", zwolniony: "zwolniony", rezygnacja: "rezygnacja", przeniesiony: "przeniesiony", unknown: "bez statusu", urlop: "urlop" };
+const STATUS_PL = { pracuje: "pracuje", zwolniony: "zwolniony", rezygnacja: "rezygnacja", przeniesiony: "przeniesiony", unknown: "bez statusu", do_zatrudnienia: "do zatrudnienia", urlop: "urlop" };
+const UNCONF = ["unknown", "do_zatrudnienia"];   // приїзд ще не підтверджено
 
 async function api(path, opts) {
   const o = opts || {};
@@ -322,7 +323,7 @@ async function openList(kind, site, date, week) {
 }
 function personRow(x, isDep, kind) {
   const notes = [];
-  if (x.status) notes.push(`<span class="tag ${x.status === "rezygnacja" ? "rez" : x.status === "unknown" ? "late" : ""}">${esc(STATUS_PL[x.status] || x.status)}</span>`);
+  if (x.status) notes.push(`<span class="tag ${x.status === "rezygnacja" ? "rez" : UNCONF.includes(x.status) ? "late" : ""}">${esc(STATUS_PL[x.status] || x.status)}</span>`);
   if (isDep && x.is_transfer) notes.push(`<span class="tag tr">przeniesienie${x.to_site ? " → " + esc(x.to_site) : ""}</span>`);
   if (!isDep && x.kind === "transfer") notes.push(`<span class="tag tr">z ${esc(x.from_site || "innego obiektu")}</span>`);
   if (kind === "dep_plan" || kind === "plan_moved") notes.push(x.still_leaving ? (x.now_date !== x.date ? `<span class="tag late">teraz ${dd(x.now_date)}</span>` : "") : `<span class="tag ok">nie wyjeżdża w tym tyg.</span>`);
@@ -364,9 +365,9 @@ async function loadDay() {
 
   const deps = r.departures, arrs = r.arrivals;
   const out = deps.filter((x) => !x.is_transfer), trOut = deps.filter((x) => x.is_transfer);
-  const aNew = arrs.filter((x) => x.kind === "new" && !["rezygnacja", "unknown"].includes(x.status));
+  const aNew = arrs.filter((x) => x.kind === "new" && !["rezygnacja", "unknown", "do_zatrudnienia"].includes(x.status));
   const aTr = arrs.filter((x) => x.kind === "transfer" && x.status !== "rezygnacja");
-  const aUnc = arrs.filter((x) => x.kind === "new" && x.status === "unknown");
+  const aUnc = arrs.filter((x) => x.kind === "new" && UNCONF.includes(x.status));
   const aRez = arrs.filter((x) => x.status === "rezygnacja");
   const after = deps.filter((x) => x.after_summary).length + arrs.filter((x) => x.after_summary).length;
   const kp = [
@@ -399,7 +400,7 @@ function dayTable(list, isDep) {
       if (isDep && x.is_transfer) notes.push(`<span class="tag tr">→ ${esc(x.to_site || "inny obiekt")}</span>`);
       if (!isDep && x.kind === "transfer") notes.push(`<span class="tag tr">z ${esc(x.from_site || "innego obiektu")}</span>`);
       if (!isDep && x.status === "rezygnacja") notes.push(`<span class="tag rez">nie dojechał</span>`);
-      if (!isDep && x.status === "unknown") notes.push(`<span class="tag late">bez statusu</span>`);
+      if (!isDep && UNCONF.includes(x.status)) notes.push(`<span class="tag late">bez statusu</span>`);
       if (x.after_summary) notes.push(`<span class="tag late" title="Wpisano po wysłaniu podsumowania — pójdzie w następnym">po podsumowaniu</span>`);
       return `<tr><td class="l">${esc(x.full_name)} <span class="sub">${esc(x.login || "")}</span></td>
         <td class="l">${esc(x.site_key)}${x.coordinator_name ? `<div class="sub">${esc(x.coordinator_name)}</div>` : ""}</td>
@@ -701,7 +702,7 @@ async function exportPeople() {
   const yes = (b) => (b ? "tak" : "");
   const seen = (x) => (x.baseline ? "przed uruchomieniem dziennika" : x.seen_at ? `${dd(x.seen_at)} ${x.seen_at.slice(11)}` : "");
   const st = (s) => STATUS_PL[s] || s || "";
-  const started = (x) => x.status !== "rezygnacja" && x.status !== "unknown" && x.date <= r.today;
+  const started = (x) => x.status !== "rezygnacja" && !UNCONF.includes(x.status) && x.date <= r.today;
   const planTxt = (x) => (!x.week_fixed ? "brak planu tygodnia" : x.planned ? "w planie" : "poza planem");
 
   // 1) Zakończyli
@@ -723,7 +724,7 @@ async function exportPeople() {
       x.kind === "transfer" ? "przeniesienie" : "nowy", x.from_site || "",
       x.status === "rezygnacja" ? "nie dojechał" : st(x.status), started(x) ? "tak" : x.date > r.today ? "jeszcze nie" : "nie", seen(x)]),
     { widths: [11, 24, 20, 12, 28, 11, 13, 22, 13, 12, 18],
-      fill: (i, c) => (c === 8 && arrs[i].status === "rezygnacja" ? XL_RED : c === 8 && arrs[i].status === "unknown" ? XL_AMBER : null) });
+      fill: (i, c) => (c === 8 && arrs[i].status === "rezygnacja" ? XL_RED : c === 8 && UNCONF.includes(arrs[i].status) ? XL_AMBER : null) });
 
   // 3) Plan wyjazdów (utrwalony w poniedziałek 0:00)
   const plan = r.plan;
@@ -748,7 +749,7 @@ async function exportPeople() {
   arrs.forEach((x) => {
     const s = g(x);
     if (x.status === "rezygnacja") s.rez++;
-    else if (x.status === "unknown" && x.date <= r.today) s.unc++;
+    else if (UNCONF.includes(x.status) && x.date <= r.today) s.unc++;
     else if (started(x)) { if (x.kind === "transfer") s.trIn++; else s.newS++; }
   });
   plan.forEach((x) => { const s = g(x); s.plan++; if (!x.now_date) s.planNo++; });

@@ -16,7 +16,10 @@
 //   Przeniesienie, Przeniesienie – czekamy → przeniesiony; Rezygnacja → rezygnacja;
 //   Zwolniony, Umowa zamknięta → rezygnacja, якщо в таблиці rezygnacja, інакше zwolniony;
 //   Zwolniony, przejście bezpośrednio → pracuje, поки сьогодні < останнього дня, потім zwolniony;
-//   Do zatrudnienia (=Harmonogram) → unknown; Nie dotarł → у базі rezygnacja (такого статусу немає), у звіті — лише проти zwolniony.
+//   Do zatrudnienia (=Harmonogram) → do_zatrudnienia (у графіку, ще не працює; у таблиці — unknown); без договору в базу не пишемо,
+//     а хто в цьому стані понад 30 днів (від останньої зміни картки або від дня, коли імпорт уперше побачив цей стан — hrz.state_since)
+//     — лист щопонеділка о 5:00 (harmonogram);
+//   Nie dotarł → у базі rezygnacja (такого статусу немає), у звіті — лише проти zwolniony.
 // Останній день різниться до 20 днів — беремо HRappka: імпорт пише його в поточний період бази; понад 20 — перевірити.
 // У HRappka останнього дня немає — лишаємо наш. Решту розбіжностей періодів, що закінчились до 31.07.2026, не показуємо (IGNORE_TO).
 // Rezygnacja — людина не почала працювати: останній день і BHP не порівнюємо (і в ротації такі періоди не рахуються — reg.v_periods).
@@ -24,6 +27,7 @@
 // Людину шукаємо за паспортом, потім за PESEL, потім за ПІБ (лише якщо таке ПІБ одне з обох боків — тоді «Паспорт»).
 // PERLIK не чіпаємо. Імпорт о 6, 8, 10, 12, 16, 20 (Варшава): таблиці → HRappka; лист — о 8:00; schedule() з index.js. Панель (hrappka.html, api/hr_import.js) рахує те саме зі знімка — current().
 // Вручну: node bot/hr_import.js [--full] [--dry] [--send] [--csv <тека>]   (--dry — без запису в БД; --send — лист)
+//         node bot/hr_import.js --harmonogram [--send]   — хто в Do zatrudnienia понад 30 днів
 // Таблиці: db/migration_hr_import.sql, db/migration_hr_current.sql. Доступ до HRappka — ті самі змінні .env, що й у bot/hr_reason.js.
 "use strict";
 
@@ -53,7 +57,7 @@ const STATE = {
   "Zwolniony": "zwolniony", "Zwolniony, przejście bezpośrednio": "zwolniony", "Umowa zamknięta": "zwolniony",
   "Rezygnacja": "rezygnacja",
   "Nie dotarł": "nie_dotarl",                     // окремий стан — порівнюємо лише з zwolniony
-  "Do zatrudnienia (=Harmonogram)": "unknown",
+  "Do zatrudnienia (=Harmonogram)": "do_zatrudnienia",
 };
 const HR_WORK = ["pracuje", "dotarl", "urlop", "l4"];
 const DB_WORK = ["pracuje", "unknown", "urlop", "l4"];
@@ -77,7 +81,8 @@ async function headers() {
 
 const COLUMNS = ["id", "name", "state", "birthDate", "citizenship", "idsNumberValuePASSPORT", "idsNumberValuePESEL", LAST_DAY,
   C + "startDate", C + "endDate", C + "userContract_company_COMPANY_name",
-  C + "userContract_contractor_CONTRACTOR_DEPARTMENT_name", C + "userContract_position_POSITION_name", CUR + "userContract_position_POSITION_name"];
+  C + "userContract_contractor_CONTRACTOR_DEPARTMENT_name", C + "userContract_position_POSITION_name", CUR + "userContract_position_POSITION_name",
+  "lastUpdateTimeSystem"];
 
 function toPerson(x) {
   const end = x[C + "endDate"] || {};
@@ -92,6 +97,7 @@ function toPerson(x) {
     firm: text(x[C + "userContract_company_COMPANY_name"]),
     position: pos,
     start: day(x[C + "startDate"]), end: day(end.terminationDate || end.cancelDate),
+    updated: day(x.lastUpdateTimeSystem),   // остання зміна картки в HRappka (у знімок не пишемо)
   };
 }
 
@@ -195,6 +201,7 @@ function expected(state, dbStatus, lastDay, today) {
 
 function statusOk(dbStatus, hr) {
   if (hr === "dotarl") return dbStatus === "pracuje" || dbStatus === "unknown";
+  if (hr === "do_zatrudnienia") return dbStatus === "do_zatrudnienia" || dbStatus === "unknown";   // у таблиці такого статусу немає
   return dbStatus === hr;
 }
 
@@ -265,6 +272,15 @@ function compare(people, workers, today, fmap = null) {
 }
 
 // ── Запис ─────────────────────────────────────────────────────────────
+// hrz.state_since — з якого дня людина в поточному стані HRappka (стан змінився — від сьогодні)
+async function trackStates(client, people, today) {
+  const x = people.filter((p) => p.state);
+  await client.query(
+    `INSERT INTO hrz.state_since (hr_employee_id, state, since) SELECT id, state, $3::date FROM unnest($1::bigint[], $2::text[]) AS t(id, state)
+     ON CONFLICT (hr_employee_id) DO UPDATE SET state = EXCLUDED.state, since = EXCLUDED.since WHERE hrz.state_since.state <> EXCLUDED.state`,
+    [x.map((p) => p.id), x.map((p) => p.state), today]);
+}
+
 // table — hrz.people (знімок) або hrz.people_applied (те, що вже записано в базу)
 async function snapshot(client, people, table = "hrz.people") {
   const prev = Number((await client.query(`SELECT count(*) AS n FROM ${table}`)).rows[0].n);
@@ -329,7 +345,7 @@ function plan(people, dbWorkers, sheets, fmap, today, rows = new Map(), { prev =
   const no = (why, p = null) => { skip[why] = (skip[why] || 0) + 1; if (p) pending.add(p.id); };
   const dbNames = new Set(dbWorkers.map((w) => normName(w.full_name)).filter(Boolean));
   const near = (a, b) => !!a && !!b && Math.abs(Date.parse(a) - Date.parse(b)) <= SAME_DAYS * 864e5;
-  const WORKING = ["pracuje", "unknown", "urlop", "l4"];
+  const WORKING = ["pracuje", "unknown", "do_zatrudnienia", "urlop", "l4"];
   const done = new Set();
   const target = (p, w) => {
     const st = STATE[p.state];
@@ -401,8 +417,10 @@ function plan(people, dbWorkers, sheets, fmap, today, rows = new Map(), { prev =
   }
   // працює в HRappka, а в базі немає — додаємо людину
   for (const p of people) {
-    if (objectOnly || done.has(p.id) || !p.passport || !["pracuje", "dotarl", "urlop", "l4", "unknown"].includes(STATE[p.state])) continue;
-    if (prev && prev.has(p.id) && prev.get(p.id).state === p.state) continue;   // працював і раніше — не нова подія
+    if (objectOnly || done.has(p.id) || !p.passport || !["pracuje", "dotarl", "urlop", "l4", "do_zatrudnienia"].includes(STATE[p.state])) continue;
+    // працював і раніше — не нова подія; Do zatrudnienia — ще й коли з'явився договір (без нього в базу не пишемо)
+    const o = prev && prev.get(p.id);
+    if (o && o.state === p.state && !(STATE[p.state] === "do_zatrudnienia" && (o.start || null) !== (p.start || null))) continue;
     // у базі є людина з таким ПІБ (паспорт змінився?) — не дублюємо, доки не з'ясують
     if (dbNames.has(normName(p.name))) { no("у базі є людина з таким ПІБ — перевірити паспорт", p); continue; }
     const t = target(p, null);
@@ -494,9 +512,13 @@ function toCsv(diffs) {
   const rows = diffs.slice().sort((a, b) => TYPES.indexOf(a.type) - TYPES.indexOf(b.type)).map((d) => [d, d.w || {}, d.p || {}]).map(([d, w, p]) => [
     d.type, d.note, w.full_name || p.name, w.login || p.passport, p.passport, p.pesel, p.birth || w.birth, w.facility, w.status, w.bhp, w.lwd,
     p.state, d.hr, p.lastDay, d.facName, p.department, p.firm, p.position, p.start]);
-  const esc = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
-  return "﻿" + [head, ...rows].map((r) => r.map(esc).join(";")).join("\r\n");
+  return csv([head, ...rows]);
 }
+const csv = (rows) => "﻿" + rows.map((r) => r.map((v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`).join(";")).join("\r\n");
+const mailer = () => require("nodemailer").createTransport({
+  host: "smtp.gmail.com", port: 465, secure: true,
+  auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
+});
 
 function summary(diffs) {
   const by = {};
@@ -505,12 +527,7 @@ function summary(diffs) {
 }
 
 async function sendEmail(diffs, stats, today, full) {
-  const nodemailer = require("nodemailer");
-  const transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com", port: 465, secure: true,
-    auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
-  });
-  const info = await transporter.sendMail({
+  const info = await mailer().sendMail({
     from: `"SAS Bot Audit" <${process.env.GMAIL_USER}>`,
     to: EMAIL_TO,
     subject: `HRappka vs таблиці (${today}${full ? ", повний" : ""}) — розбіжностей: ${diffs.length}`,
@@ -601,6 +618,7 @@ async function run({ full = false, dry = false, notify = false } = {}) {
     await client.query("BEGIN");
     const prev = new Map((await loadPeople(client, "hrz.people_applied")).map((x) => [x.id, x]));
     await snapshot(client, people);
+    if (!dry) await trackStates(client, people, today);
     if (prev.size) {
       applied = await apply(client, people, today, { dry, prev });
       // об'єкт періодів, які записала HRappka, — з таблиці (новий працівник, а рядок у таблиці з'явився пізніше)
@@ -677,6 +695,52 @@ async function report({ full = false } = {}) {
   await sendEmail(r.diffs, stats, r.today, full);
 }
 
+// ── Do zatrudnienia понад 30 днів: лист щопонеділка о 5:00 ────────────
+// Коли змінився сам стан, HRappka не віддає. Відлік — менша з дат: остання зміна картки (lastUpdateTimeSystem; але HRappka
+// щоночі сама оновлює більшість карток) і з якого дня імпорт бачить людину в цьому стані (hrz.state_since).
+const STUCK_DAYS = 30;
+const STUCK_TO = (process.env.HR_HARMONOGRAM_TO || "d.demskyi@saslogistic.pl").split(/[,;\s]+/).filter(Boolean);
+function stuck(people, today, since = new Map()) {
+  return people
+    .filter((p) => STATE[p.state] === "do_zatrudnienia" && !IGNORE.test(p.department || ""))
+    .map((p) => {
+      const s = since.get(p.id);
+      const from = [p.updated, s && s.state === p.state ? s.since : null].filter(Boolean).sort()[0];
+      return { ...p, from, days: from ? Math.round((Date.parse(today) - Date.parse(from)) / 864e5) : 0 };
+    })
+    .filter((p) => p.days > STUCK_DAYS)
+    .sort((a, b) => b.days - a.days || String(a.name).localeCompare(String(b.name)));
+}
+async function harmonogram({ send = true } = {}) {
+  const today = todayWarsaw();
+  const since = new Map((await db.query(`SELECT hr_employee_id AS id, state, to_char(since, 'YYYY-MM-DD') AS since FROM hrz.state_since`))
+    .rows.map((x) => [Number(x.id), x]));
+  const list = stuck(await fetchAll(), today, since);
+  // у базі — об'єкт і статус поточного періоду (за карткою HRappka, інакше за паспортом)
+  const r = await db.query(
+    `SELECT w.hr_employee_id::text AS hr, upper(regexp_replace(w.login, '[^A-Za-z0-9]', '', 'g')) AS pass, f.name AS facility, v.status::text AS status
+       FROM workers w JOIN v_worker_current v ON v.id = w.id LEFT JOIN facilities f ON f.id = v.facility_id`);
+  const byHr = new Map(r.rows.filter((x) => x.hr).map((x) => [x.hr, x])), byPass = new Map(r.rows.map((x) => [x.pass, x]));
+  for (const p of list) p.db = byHr.get(String(p.id)) || (p.passport && byPass.get(p.passport)) || null;
+  console.log(`[hr import] Do zatrudnienia понад ${STUCK_DAYS} днів: ${list.length}`);
+  if (send && list.length) {
+    const head = ["ПІБ", "Паспорт", "PESEL", "Відділ HRappka", "Початок договору", "Остання зміна в HRappka", "У стані з", "Днів", "Об'єкт у базі", "Статус у базі"];
+    const rows = list.map((p) => [p.name, p.passport, p.pesel, p.department, p.start, p.updated, p.from, p.days, p.db && p.db.facility, p.db && p.db.status]);
+    const info = await mailer().sendMail({
+      from: `"SAS Bot Audit" <${process.env.GMAIL_USER}>`,
+      to: STUCK_TO,
+      subject: `HRappka: Do zatrudnienia понад ${STUCK_DAYS} днів — ${list.length} (${today})`,
+      text: `Доброго дня!\n\nУ HRappka в стані «Do zatrudnienia (=Harmonogram)» понад ${STUCK_DAYS} днів: ${list.length} осіб.
+(Відлік — від останньої зміни картки в HRappka або від дня, коли імпорт уперше побачив людину в цьому стані, — що раніше.)\n\n` +
+        list.slice(0, 50).map((p) => `• ${p.name} — ${p.days} дн. (з ${p.from})${p.department ? `, ${p.department}` : ""}`).join("\n") +
+        `${list.length > 50 ? "\n…" : ""}\n\nУсі — у CSV.`,
+      attachments: [{ filename: `do_zatrudnienia_${today}.csv`, content: csv([head, ...rows]) }],
+    });
+    console.log(`[hr import] лист Do zatrudnienia надіслано: ${info.messageId}`);
+  }
+  return list;
+}
+
 function schedule() {
   const cron = require("node-cron");
   // о 6, 8, 10, 12, 16, 20: таблиці, одразу за ними HRappka (afterSheets з import_sheets.js) — обидва на один момент.
@@ -696,14 +760,20 @@ function schedule() {
     try { if (!LAST || LAST.at < started) await exclusive(() => run()); } catch (e) { err("HRappka", e); }
     try { if (notify) await report({ full: monday }); } catch (e) { err("лист", e); }
   }, { timezone: "Europe/Warsaw" });
+  // щопонеділка о 5:00 — хто в Do zatrudnienia понад 30 днів (лист на STUCK_TO)
+  cron.schedule("0 5 * * 1", () => harmonogram().catch((e) => console.error("[hr import] Do zatrudnienia:", e.message)), { timezone: "Europe/Warsaw" });
 }
 
-module.exports = { run, schedule, compare, current, refresh, afterSheets, report, toCsv, STATE, TYPES, LWD_SMALL, LWD_BIG, _test: { fetchAll, toPerson, match, plan, facilityMap, loadPeople, takeLastDays, stale } };
+module.exports = { run, schedule, compare, current, refresh, afterSheets, report, harmonogram, toCsv, STATE, TYPES, LWD_SMALL, LWD_BIG, _test: { fetchAll, toPerson, match, plan, facilityMap, loadPeople, takeLastDays, stale, stuck } };
 
 if (require.main === module) {
   require("dotenv").config();
   const a = process.argv.slice(2);
   (async () => {
+    if (a.includes("--harmonogram")) {   // node bot/hr_import.js --harmonogram [--send]
+      (await harmonogram({ send: a.includes("--send") })).forEach((p) => console.log(p.days, p.from, p.name, p.passport, p.department || "", p.db ? `→ ${p.db.facility} ${p.db.status}` : ""));
+      process.exit(0);
+    }
     const r = await run({ full: a.includes("--full"), dry: a.includes("--dry"), notify: a.includes("--send") });
     const i = a.indexOf("--csv");
     if (i !== -1 && a[i + 1]) {

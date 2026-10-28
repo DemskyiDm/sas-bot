@@ -714,7 +714,7 @@ router.get("/control", async (req, res) => {
                           AND x.outcome IN ('stays','problem','leaving') AND care.ldate(x.done_at) < fl.bhp_date + 80) AS talked,
                 EXISTS (SELECT 1 FROM public.worker_facility_history h WHERE h.worker_id = fl.worker_id
                           AND h.bhp_date <= fl.bhp_date + 80 AND COALESCE(h.last_work_date, DATE '9999-12-31') >= fl.bhp_date + 80
-                          AND h.status::text <> 'unknown') AS survived
+                          AND h.status::text NOT IN ('unknown', 'do_zatrudnienia')) AS survived
            FROM fl),
        eff AS (
          SELECT coordinator_id,

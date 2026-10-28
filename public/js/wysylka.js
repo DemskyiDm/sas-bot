@@ -43,7 +43,7 @@ async function api(path, opts) {
     return { ok: false, error: e.message };
   }
 }
-const STATUS_PL = { pracuje: "pracuje", zwolniony: "zwolniony", rezygnacja: "rezygnacja", urlop: "urlop", przeniesiony: "przeniesiony", unknown: "bez statusu" };
+const STATUS_PL = { pracuje: "pracuje", zwolniony: "zwolniony", rezygnacja: "rezygnacja", urlop: "urlop", przeniesiony: "przeniesiony", unknown: "bez statusu", do_zatrudnienia: "do zatrudnienia" };
 const LANG_PL = { uk: "ukraiński", ru: "rosyjski", pl: "polski", inne: "inny / brak" };
 
 // ── Start ─────────────────────────────────────────────────────────────

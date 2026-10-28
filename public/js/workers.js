@@ -368,7 +368,8 @@ function filterWorkers(reset = true) {
         (statusSet.has('rezygnacja') && s === 'rezygnacja') ||
         (statusSet.has('przeniesiony') && s === 'przeniesiony') ||
         (statusSet.has('urlop_l4') && (s === 'urlop' || s === 'l4')) ||
-        (statusSet.has('unknown') && (!s || s === 'unknown'));
+        (statusSet.has('unknown') && (!s || s === 'unknown')) ||
+        (statusSet.has('do_zatrudnienia') && s === 'do_zatrudnienia');
       if (!match) return false;
     }
     if (bhpFrom && (!w.bhp_date || localDate(w.bhp_date) < bhpFrom)) return false;

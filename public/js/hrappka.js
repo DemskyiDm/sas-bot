@@ -21,7 +21,7 @@ const NOTE_PL = {
   gap_small: "różnica do 20 dni — bierzemy HRappka",
   gap_big: "różnica ponad 20 dni — sprawdzić",
 };
-const STATUS_PL = { nie_dotarl: "Nie dotarł" };
+const STATUS_PL = { nie_dotarl: "Nie dotarł", do_zatrudnienia: "Do zatrudnienia" };
 const PAGE = 100;
 const ST = { data: null, full: false, type: "", fac: "", q: "", page: 0 };
 

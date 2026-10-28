@@ -544,6 +544,12 @@
                       style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
                       id="wst_unknown_check"></span>Brak statusu
                   </div>
+                  <div onclick="toggleStatus('workers','do_zatrudnienia')" id="wst_do_zatrudnienia"
+                    style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                    <span
+                      style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
+                      id="wst_do_zatrudnienia_check"></span>Do zatrudnienia
+                  </div>
                 </div>
               </div>
               <select id="workersPageSize" onchange="changeWorkersPageSize()" style="width: 80px">
@@ -905,6 +911,12 @@
                       style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
                       id="hst_unknown_check"></span>Brak statusu
                   </div>
+                  <div onclick="toggleStatus('history','do_zatrudnienia')"
+                    style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                    <span
+                      style="width:14px;height:14px;border:1px solid var(--border);border-radius:3px;display:inline-block;flex-shrink:0;"
+                      id="hst_do_zatrudnienia_check"></span>Do zatrudnienia
+                  </div>
                 </div>
               </div>
               <div style="position:relative;" id="historyReasonDropWrap">
@@ -1061,6 +1073,7 @@
           <option value="przeniesiony">Przeniesiony</option>
           <option value="urlop_l4">Urlop / L4</option>
           <option value="unknown">Brak statusu</option>
+          <option value="do_zatrudnienia">Do zatrudnienia</option>
         </select>
       </div>
       <div class="modal-field">

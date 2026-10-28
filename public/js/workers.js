@@ -262,7 +262,7 @@ async function refreshSignatures() {
     }
   } finally {
     btn.disabled = false;
-    btn.textContent = "🔄 Sprawdź podpisy";
+    btn.innerHTML = '🔄 <span class="wk-long">Sprawdź </span>podpisy';
     filterWorkers(false);
   }
 }
@@ -388,10 +388,18 @@ document.addEventListener("click", (e) => {
   const d = document.getElementById("workersDatesDrop");
   if (d && !d.hidden && !e.target.closest("#workersDatesWrap")) d.hidden = true;
 });
-// Ustawione filtry — niebieska ramka; na «Daty» — ile zakresów
+// Telefon: filtry oprócz wyszukiwania — pod przyciskiem «Filtry» (css/mobile.css)
+function toggleWorkersFilters() {
+  document.querySelector(".wk-filters").classList.toggle("open");
+}
+// Ustawione filtry — niebieska ramka; na «Daty» — ile zakresów, na «Filtry» (telefon) — ile filtrów
 function markWorkersFilters() {
   const on = (el, v) => { if (el) el.classList.toggle("on", !!v); };
   const n = WK_DATES.filter(([a, b]) => document.getElementById(a).value || document.getElementById(b).value).length;
+  const all = n + [workersCurrentGroup, workersCurrentFac, selectedStatuses.workers.size,
+    document.getElementById("workersDocs").value, document.getElementById("workersStudent").value].filter(Boolean).length;
+  document.getElementById("workersFiltersLabel").textContent = all ? `Filtry · ${all}` : "Filtry";
+  on(document.getElementById("workersFiltersBtn"), all);
   document.getElementById("workersDatesLabel").textContent = n ? `📅 Daty · ${n}` : "📅 Daty";
   on(document.getElementById("workersDatesBtn"), n);
   on(document.getElementById("workersDocs"), document.getElementById("workersDocs").value);
@@ -577,11 +585,11 @@ async function startImport() {
     const res = await apiFetch("/api/import", { method: "POST" });
     if (res && res.ok) {
       btn.textContent = "✅ Gotowe"; btn.title = res.message || "";
-      setTimeout(() => { btn.textContent = "⬇ Import z HRappka"; btn.disabled = false; }, 5000);
+      setTimeout(() => { btn.innerHTML = '⬇ Import<span class="wk-long"> z HRappka</span>'; btn.disabled = false; }, 5000);
       loadWorkersPage();
     } else {
-      btn.textContent = "❌ Blad"; setTimeout(() => { btn.textContent = "⬇ Import z HRappka"; btn.disabled = false; }, 3000);
+      btn.textContent = "❌ Blad"; setTimeout(() => { btn.innerHTML = '⬇ Import<span class="wk-long"> z HRappka</span>'; btn.disabled = false; }, 3000);
       if (res && res.error) alert(res.error);
     }
-  } catch (e) { btn.textContent = "❌ Blad"; setTimeout(() => { btn.textContent = "⬇ Import z HRappka"; btn.disabled = false; }, 3000); }
+  } catch (e) { btn.textContent = "❌ Blad"; setTimeout(() => { btn.innerHTML = '⬇ Import<span class="wk-long"> z HRappka</span>'; btn.disabled = false; }, 3000); }
 }

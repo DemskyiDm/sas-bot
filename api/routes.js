@@ -482,83 +482,159 @@ async function companyHeadcount(coordinator) {
   return { company_total: all.rows[0].n, scope: lead.rows[0].lead ? "region" : "own" };
 }
 
+// Картки «Pracownicy» і сторінка Start (GET /start): facIds — обʼєкти (null — уся фірма). TEST не рахуємо.
+async function workerCounts(facIds) {
+  const zero = { total: 0, new_this_week: 0, leaving_this_week: 0, leaving_this_month: 0, started_this_week: 0 };
+  if (facIds !== null && facIds.length === 0) return zero;
+  const params = facIds === null ? [] : [facIds];
+  const facFilter = facIds === null ? "" : "AND w.facility_id = ANY($1)";
+  const [total, newWeek, leavingWeek, leavingMonth, startedWeek] = await Promise.all([
+    db.query(
+      `SELECT COUNT(*) FROM v_worker_current w
+   WHERE w.status = 'pracuje' AND w.${NOT_TEST} ${facFilter}`,
+      params,
+    ),
+    db.query(
+      `SELECT COUNT(*) FROM v_worker_current w
+   WHERE w.bhp_date >= DATE_TRUNC('week', CURRENT_DATE)
+     AND w.status != 'rezygnacja'
+     AND w.bhp_date < DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '7 days'
+     AND w.${NOT_TEST}
+     ${facFilter}`,
+      params,
+    ),
+    db.query(
+      `SELECT COUNT(*) FROM v_worker_current w
+   WHERE w.last_work_date IS NOT NULL
+     AND w.last_work_date >= DATE_TRUNC('week', CURRENT_DATE)
+     AND w.last_work_date < DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '7 days'
+     AND w.${NOT_TEST}
+     ${facFilter}`,
+      params,
+    ),
+    db.query(
+      `SELECT COUNT(*) FROM v_worker_current w
+   WHERE w.last_work_date >= CURRENT_DATE
+     AND w.last_work_date <= DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month - 1 day'
+     AND w.${NOT_TEST}
+     ${facFilter}`,
+      params,
+    ),
+    db.query(
+      `SELECT COUNT(*) FROM v_worker_current w
+   WHERE w.bhp_date >= DATE_TRUNC('week', CURRENT_DATE)
+     AND w.bhp_date < DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '7 days'
+     AND w.status = 'pracuje'
+     AND w.${NOT_TEST}
+     ${facFilter}`,
+      params,
+    ),
+  ]);
+  return {
+    total: parseInt(total.rows[0].count),
+    new_this_week: parseInt(newWeek.rows[0].count),
+    leaving_this_week: parseInt(leavingWeek.rows[0].count),
+    leaving_this_month: parseInt(leavingMonth.rows[0].count),
+    started_this_week: parseInt(startedWeek.rows[0].count),
+  };
+}
+
 router.get("/workers/stats", requireAuth, async (req, res) => {
   try {
     const allowedFacilities = await getFacilityFilter(req.coordinator);
-    let facFilter = "";
-    const params = [];
     const company = allowedFacilities !== null ? await companyHeadcount(req.coordinator) : {};
+    res.json({ ok: true, data: { ...(await workerCounts(allowedFacilities)), ...company } });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
 
-    if (allowedFacilities !== null) {
-      if (allowedFacilities.length === 0) {
-        return res.json({
-          ok: true,
-          data: {
-            total: 0,
-            new_this_week: 0,
-            leaving_this_week: 0,
-            leaving_this_month: 0,
-            started_this_week: 0,
-            ...company,
-          },
-        });
-      }
-      params.push(allowedFacilities);
-      facFilter = `AND w.facility_id = ANY($${params.length})`;
-    }
-
-    const [total, newWeek, leavingWeek, leavingMonth, startedWeek] = await Promise.all([
-      db.query(
-        `SELECT COUNT(*) FROM v_worker_current w
-     WHERE w.status = 'pracuje' AND w.${NOT_TEST} ${facFilter}`,
-        params,
-      ),
-      db.query(
-        `SELECT COUNT(*) FROM v_worker_current w
-     WHERE w.bhp_date >= DATE_TRUNC('week', CURRENT_DATE)
-       AND w.status != 'rezygnacja'
-       AND w.bhp_date < DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '7 days'
-       AND w.${NOT_TEST}
-       ${facFilter}`,
-        params,
-      ),
-      db.query(
-        `SELECT COUNT(*) FROM v_worker_current w
-     WHERE w.last_work_date IS NOT NULL
-       AND w.last_work_date >= DATE_TRUNC('week', CURRENT_DATE)
-       AND w.last_work_date < DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '7 days'
-       AND w.${NOT_TEST}
-       ${facFilter}`,
-        params,
-      ),
-      db.query(
-        `SELECT COUNT(*) FROM v_worker_current w
-     WHERE w.last_work_date >= CURRENT_DATE
-       AND w.last_work_date <= DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month - 1 day'
-       AND w.${NOT_TEST}
-       ${facFilter}`,
-        params,
-      ),
-      db.query(
-        `SELECT COUNT(*) FROM v_worker_current w
-     WHERE w.bhp_date >= DATE_TRUNC('week', CURRENT_DATE)
-       AND w.bhp_date < DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '7 days'
-       AND w.status = 'pracuje'
-       AND w.${NOT_TEST}
-       ${facFilter}`,
-        params,
-      ),
+// ── Start — стартова сторінка панелі (public/js/start.js) ─────────────
+// Зверху — ті самі числа, що на картках «Pracownicy» (workerCounts), і години за місяць до сьогодні
+// проти того самого відрізка минулого місяця. Нижче — «Do zrobienia»: кожне число веде у вкладку з фільтром.
+// Охоплення — як у вкладках: адмін — уся фірма, інші — свої обʼєкти (coordinator_facilities); аванси — як у «Zaliczki»
+// (збережений вибір: свої / регіон / уся фірма). Години «вчора» і пропуски з 1-го числа — як у звіті координаторам
+// (bot/hours_report.js: період зі статусом pracuje на обʼєкті). TEST не рахуємо.
+// m — початок місяця, pm — початок минулого, prev_to — минулий місяць до того самого числа (не далі його кінця)
+const MONTHS = `mo AS (SELECT DATE_TRUNC('month', CURRENT_DATE)::date AS m, (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 month')::date AS pm,
+                              LEAST((DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 month')::date + (CURRENT_DATE - DATE_TRUNC('month', CURRENT_DATE)::date),
+                                    DATE_TRUNC('month', CURRENT_DATE)::date - 1) AS prev_to)`;
+router.get("/start", requireAuth, async (req, res) => {
+  try {
+    const fac = await getFacilityFilter(req.coordinator);   // null — уся фірма
+    const company = fac !== null ? await companyHeadcount(req.coordinator) : {};
+    // аванси — охоплення, як у вкладці «Zaliczki»
+    let advFac = fac, advScope = null;
+    const coord = require("../bot/coord");
+    const c = await coord.coordById(req.coordinator.coordinator_id);
+    if (c) { c.is_admin = !!req.coordinator.is_admin; const af = await coord.facsOf(c); advFac = af.all; advScope = af.scope; }
+    const REMIND = require("../bot/student").REMIND_DAYS;
+    const hrSign = require("../bot/hr_sign");
+    const one = (sql, p) => db.query(sql, p).then((r) => r.rows[0]);
+    const [w, d, hours, yest, gaps, adv, dof, stud, dz, signIds] = await Promise.all([
+      workerCounts(fac),
+      // дати — за часом бази (Europe/Warsaw), як у workerCounts; пропуски — з 1-го числа місяця вчорашнього дня по вчора
+      one(`WITH ${MONTHS}
+           SELECT to_char(CURRENT_DATE, 'YYYY-MM-DD') AS today, to_char(CURRENT_DATE - 1, 'YYYY-MM-DD') AS y,
+                  to_char(DATE_TRUNC('month', CURRENT_DATE - 1), 'YYYY-MM-DD') AS gaps_from,
+                  to_char(DATE_TRUNC('week', CURRENT_DATE), 'YYYY-MM-DD') AS week_from,
+                  to_char(DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '6 days', 'YYYY-MM-DD') AS week_to,
+                  to_char(DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month - 1 day', 'YYYY-MM-DD') AS month_end,
+                  to_char(mo.prev_to, 'YYYY-MM-DD') AS prev_to
+             FROM mo`),
+      // години: цей місяць до сьогодні й минулий — до того самого числа; обʼєкт — поточний працівника
+      one(`WITH ${MONTHS}
+           SELECT COALESCE(SUM(h.hours) FILTER (WHERE h.work_date >= mo.m), 0)::float AS cur,
+                  COALESCE(SUM(h.hours) FILTER (WHERE h.work_date < mo.m), 0)::float AS prev
+             FROM hours_log h JOIN v_worker_current w ON w.id = h.worker_id CROSS JOIN mo
+            WHERE (h.work_date BETWEEN mo.m AND CURRENT_DATE OR h.work_date BETWEEN mo.pm AND mo.prev_to)
+              AND w.${NOT_TEST} AND ($1::int[] IS NULL OR w.facility_id = ANY($1::int[]))`, [fac]),
+      one(`SELECT COUNT(DISTINCT h.worker_id)::int AS n
+             FROM worker_facility_history h JOIN workers w ON w.id = h.worker_id
+            WHERE h.status::text = 'pracuje' AND h.bhp_date <= CURRENT_DATE - 1
+              AND (h.last_work_date IS NULL OR h.last_work_date >= CURRENT_DATE - 1)
+              AND w.${NOT_TEST} AND ($1::int[] IS NULL OR h.facility_id = ANY($1::int[]))
+              AND NOT EXISTS (SELECT 1 FROM hours_log hl WHERE hl.worker_id = w.id AND hl.work_date = CURRENT_DATE - 1)`, [fac]),
+      one(`WITH d AS (
+             SELECT DISTINCT h.worker_id, gs::date AS day
+               FROM worker_facility_history h JOIN workers w ON w.id = h.worker_id
+              CROSS JOIN LATERAL generate_series(GREATEST(DATE_TRUNC('month', CURRENT_DATE - 1)::date, h.bhp_date),
+                                                 LEAST(CURRENT_DATE - 1, COALESCE(h.last_work_date, CURRENT_DATE - 1)), INTERVAL '1 day') gs
+              WHERE h.status::text = 'pracuje' AND h.bhp_date <= CURRENT_DATE - 1
+                AND (h.last_work_date IS NULL OR h.last_work_date >= DATE_TRUNC('month', CURRENT_DATE - 1))
+                AND w.${NOT_TEST} AND ($1::int[] IS NULL OR h.facility_id = ANY($1::int[])))
+           SELECT COUNT(DISTINCT worker_id)::int AS workers, COUNT(*)::int AS days FROM d
+            WHERE NOT EXISTS (SELECT 1 FROM hours_log hl WHERE hl.worker_id = d.worker_id AND hl.work_date = d.day)`, [fac]),
+      one(`SELECT COUNT(*)::int AS n FROM advances a JOIN v_worker_current w ON w.id = a.worker_id
+            WHERE a.status = 'pending' AND w.${NOT_TEST} AND ($1::int[] IS NULL OR w.facility_id = ANY($1::int[]))`, [advFac]),
+      one(`SELECT COUNT(*)::int AS n FROM day_off_requests d JOIN v_worker_current w ON w.id = d.worker_id
+            WHERE d.status = 'pending' AND w.${NOT_TEST} AND ($1::int[] IS NULL OR w.facility_id = ANY($1::int[]))`, [fac]),
+      // статус студента (bot/student.js) — у тих, хто працює (pracuje / urlop / l4)
+      one(`SELECT COUNT(*) FILTER (WHERE s.valid_until >= CURRENT_DATE AND s.valid_until <= CURRENT_DATE + $2::int)::int AS soon,
+                  COUNT(*) FILTER (WHERE s.valid_until < CURRENT_DATE)::int AS expired
+             FROM wapp.student s JOIN v_worker_current w ON w.id = s.worker_id
+            WHERE s.is_student AND w.status::text IN ('pracuje', 'urlop', 'l4')
+              AND w.${NOT_TEST} AND ($1::int[] IS NULL OR w.facility_id = ANY($1::int[]))`, [fac, REMIND])
+        .catch(() => ({ soon: 0, expired: 0 })),
+      one(`SELECT COUNT(*)::int AS n FROM v_worker_current w
+            WHERE w.status::text = 'do_zatrudnienia' AND w.${NOT_TEST} AND ($1::int[] IS NULL OR w.facility_id = ANY($1::int[]))`, [fac]),
+      // підписи HRappka — ті, кого вже перевіряли, з BHP від початку перевірок (як фільтр «Nie podpisali» у Pracownicy)
+      db.query(`SELECT k.worker_id FROM hrs.checks k JOIN v_worker_current w ON w.id = k.worker_id
+                 WHERE w.bhp_date >= $2::date AND w.${NOT_TEST} AND ($1::int[] IS NULL OR w.facility_id = ANY($1::int[]))`, [fac, hrSign.FROM])
+        .then((r) => r.rows.map((x) => x.worker_id)).catch(() => []),
     ]);
-
+    const signs = await hrSign.summary(signIds).catch(() => ({}));
+    const unsigned = Object.values(signs).filter((s) => s.found && s.total && s.signed < s.total).length;
     res.json({
-      ok: true,
-      data: {
-        total: parseInt(total.rows[0].count),
-        new_this_week: parseInt(newWeek.rows[0].count),
-        leaving_this_week: parseInt(leavingWeek.rows[0].count),
-        leaving_this_month: parseInt(leavingMonth.rows[0].count),
-        started_this_week: parseInt(startedWeek.rows[0].count),
-        ...company,
+      ok: true, ...d,
+      scope: fac === null ? "all" : company.scope, company_total: company.company_total ?? null,
+      workers: w,
+      hours: { cur: hours.cur, prev: hours.prev },
+      todo: {
+        yesterday: yest.n, gaps: gaps.workers, gap_days: gaps.days,
+        advances: adv.n, adv_scope: advScope, dayoff: dof.n, unsigned, sign_from: hrSign.FROM,
+        students_soon: stud.soon, students_expired: stud.expired, student_days: REMIND,
+        do_zatrudnienia: dz.n,
       },
     });
   } catch (err) {

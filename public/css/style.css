@@ -102,6 +102,35 @@ select:focus, input:focus { border-color: var(--accent); }
 .card-count { font-family: var(--mono); font-size: 11px; color: var(--text2); background: var(--surface2); padding: 2px 8px; border-radius: 4px; }
 .card-actions { margin-left: auto; display: flex; gap: 8px; }
 
+/* ── START (public/js/start.js) ── */
+.start-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.start-hello { font-size: 18px; font-weight: 600; }
+.start-date { font-size: 12px; color: var(--text2); margin-top: 3px; }
+.start-date::first-letter { text-transform: uppercase; }
+.start-links { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.start-links a { text-decoration: none; }
+.start-links [hidden] { display: none !important; }
+.start-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.start-tiles .stat-card { cursor: pointer; transition: border-color 0.15s; }
+.start-tiles .stat-card:hover, .start-tiles .stat-card:focus-visible { border-color: var(--accent); outline: none; }
+.start-tiles .stat-sub b { color: var(--text2); }
+.start-link { color: var(--accent); cursor: pointer; text-decoration: underline; }
+.start-up { color: var(--green); }
+.start-down { color: var(--red); }
+.start-todo-h { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 600; }
+.start-row { display: flex; align-items: center; gap: 12px; padding: 11px 16px; border-bottom: 1px solid rgba(42, 51, 71, 0.5); cursor: pointer; }
+.start-row:last-child { border-bottom: none; }
+.start-row:hover, .start-row:focus-visible { background: rgba(255, 255, 255, 0.03); outline: none; }
+.start-ic { width: 22px; text-align: center; flex-shrink: 0; }
+.start-l { flex: 1; min-width: 0; font-size: 13px; }
+.start-n { font-family: var(--mono); font-size: 16px; font-weight: 700; color: var(--accent2); text-align: right; white-space: nowrap; }
+.start-n small { display: block; font-size: 10px; font-weight: 400; color: var(--text3); }
+.start-chev { color: var(--text3); font-size: 16px; }
+.start-row.done { color: var(--text3); }
+.start-row.done .start-ic { color: var(--green); }
+.start-row.done .start-n { color: var(--text3); font-weight: 400; }
+.start-empty { padding: 20px; text-align: center; color: var(--text3); }
+
 /* ── TABLE ── */
 .table-wrap { overflow-x: auto; overflow-y: visible; }
 table { width: 100%; border-collapse: collapse; font-size: 12px; }

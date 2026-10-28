@@ -17,7 +17,8 @@
 //   Zwolniony, Umowa zamknięta → rezygnacja, якщо в таблиці rezygnacja, інакше zwolniony;
 //   Zwolniony, przejście bezpośrednio → pracuje, поки сьогодні < останнього дня, потім zwolniony;
 //   Do zatrudnienia (=Harmonogram) → unknown; Nie dotarł → у базі rezygnacja (такого статусу немає), у звіті — лише проти zwolniony.
-// Останній день різниться до 7 днів — беремо HRappka; понад 7 — перевірити (примітка в звіті).
+// Останній день різниться до 20 днів — беремо HRappka: імпорт пише його в поточний період бази; понад 20 — перевірити.
+// У HRappka останнього дня немає — лишаємо наш.
 // Rezygnacja — людина не почала працювати: останній день і BHP не порівнюємо (і в ротації такі періоди не рахуються — reg.v_periods).
 // Останній день — attrdef_id_58419, одне значення на людину: до поточного періоду належить, лише якщо >= BHP.
 // Людину шукаємо за паспортом, потім за PESEL, потім за ПІБ (лише якщо таке ПІБ одне з обох боків — тоді «Паспорт»).
@@ -40,6 +41,8 @@ const IGNORE = /PERLIK/i;
 const RECENT_DAYS = 60;   // щоденний звіт — закриті періоди за стільки днів
 const SAME_DAYS = 7;      // договір HRappka і період у базі / таблиці — той самий, якщо початок і BHP різняться не більше
 const OLDER_DAYS = 31;    // договір почався раніше за BHP більше ніж на стільки днів — у базі новіший період, не чіпаємо
+const LWD_DAYS = 20;      // останній день різниться не більше — беремо HRappka
+const LWD_SMALL = `до ${LWD_DAYS} днів — беремо HRappka`, LWD_BIG = `понад ${LWD_DAYS} днів — перевірити`;
 
 const STATE = {
   "Pracuje": "pracuje", "Dotarł": "dotarl",
@@ -246,7 +249,7 @@ function compare(people, workers, today, fmap = null) {
     if (hr === "rezygnacja" || w.status === "rezygnacja") continue;
     if (w.lwd && hrLast && w.lwd !== hrLast) {
       const gap = Math.abs(Date.parse(w.lwd) - Date.parse(hrLast)) / 864e5;
-      diffs.push({ type: "Останній день", w, p, note: gap <= 7 ? "до 7 днів — беремо HRappka" : "понад 7 днів — перевірити" });
+      diffs.push({ type: "Останній день", w, p, note: gap <= LWD_DAYS ? LWD_SMALL : LWD_BIG });
     }
     else if (!w.lwd && hrLast) diffs.push({ type: "Останній день", w, p, note: "у HRappka є, у таблиці немає" });
     else if (w.lwd && !hrLast && w.lwd <= today && (hr === "zwolniony" || hr === "przeniesiony"))
@@ -542,6 +545,28 @@ function fixedInDb(d, cur) {
   return false;
 }
 
+// Останній день у таблиці й HRappka різниться до LWD_DAYS днів — у поточний період бази пишемо день з HRappka
+// (лише той самий період: BHP як у таблиці, день HRappka не раніше BHP; rezygnacja — ні). Повертає записані розбіжності.
+async function takeLastDays(client, diffs, cur) {
+  const done = new Set();
+  for (const d of diffs) {
+    const c = d.type === "Останній день" && d.note === LWD_SMALL && d.p.lastDay ? cur(d) : null;
+    if (!c || !c.hid || c.status === "rezygnacja" || !c.lwd || c.lwd === d.p.lastDay || d.p.lastDay < c.bhp) continue;
+    if (Math.abs(Date.parse(c.lwd) - Date.parse(d.p.lastDay)) > LWD_DAYS * 864e5 || !c.bhp || !d.w.bhp
+      || Math.abs(Date.parse(c.bhp) - Date.parse(d.w.bhp)) > SAME_DAYS * 864e5) continue;
+    await client.query("SAVEPOINT lwd");
+    try {
+      await client.query(`UPDATE public.worker_facility_history SET last_work_date = $2, imported_at = now() WHERE id = $1`, [c.hid, d.p.lastDay]);
+      await client.query("RELEASE SAVEPOINT lwd");
+      done.add(d);
+    } catch (e) {
+      await client.query("ROLLBACK TO SAVEPOINT lwd");
+      console.warn(`[hr import] останній день ${c.login} ${c.full_name}: ${e.message}`);
+    }
+  }
+  return done;
+}
+
 async function diffsFor(client, people, today) {
   const sheets = await loadSheets(client);
   const pairs = match(people, sheets);
@@ -551,6 +576,7 @@ async function diffsFor(client, people, today) {
   const byId = new Map(dbw.map((w) => [w.id, w])), byHr = new Map(dbw.filter((w) => w.hr_id).map((w) => [String(w.hr_id), w]));
   const cur = (d) => (d.w && d.w.id && byId.get(d.w.id)) || (d.p && byHr.get(String(d.p.id))) || null;
   res.diffs = res.diffs.filter((d) => !(d.w && fixedInDb(d, cur(d))));
+  res.cur = cur;
   const names = new Map((await client.query(`SELECT id, name FROM public.facilities`)).rows.map((x) => [x.id, x.name]));
   for (const d of res.diffs) if (d.fac) d.facName = names.get(d.fac) || String(d.fac);
   return res;
@@ -580,6 +606,11 @@ async function run({ full = false, dry = false, notify = false } = {}) {
     // записане (і без змін) — нова точка відліку; не записане з причини, що може зникнути, — спробуємо знову
     await snapshot(client, people.filter((p) => !applied.pending.has(p.id)), "hrz.people_applied");
     res = await diffsFor(client, people, today);
+    if (!dry) {
+      const taken = await takeLastDays(client, res.diffs, res.cur);
+      applied.lwd = taken.size;
+      res.diffs = res.diffs.filter((d) => !taken.has(d));
+    }
     if (!dry) await client.query(`INSERT INTO hrz.runs (kind, at) VALUES ('hrappka', now()) ON CONFLICT (kind) DO UPDATE SET at = now()`);
     await client.query(dry ? "ROLLBACK" : "COMMIT");
   } catch (e) {
@@ -601,7 +632,7 @@ async function run({ full = false, dry = false, notify = false } = {}) {
 function applySummary(a) {
   const sk = Object.entries(a.skip).map(([k, v]) => `${k}: ${v}`).join("; ");
   return `HRappka → база: оновлено періодів ${a.update}, нових ${a.insert}, закрито попередніх ${a.close}, нових людей ${a.create}` +
-    (a.errors ? `, помилок ${a.errors.length}` : "") + (sk ? ` (пропущено — ${sk})` : "");
+    (a.lwd ? `, останній день з HRappka ${a.lwd}` : "") + (a.errors ? `, помилок ${a.errors.length}` : "") + (sk ? ` (пропущено — ${sk})` : "");
 }
 
 // Одразу після імпорту таблиць (import_sheets.js): імпорт HRappka на той самий момент. sheetsAt — коли почався
@@ -660,7 +691,7 @@ function schedule() {
   }, { timezone: "Europe/Warsaw" });
 }
 
-module.exports = { run, schedule, compare, current, refresh, afterSheets, report, toCsv, STATE, TYPES, _test: { fetchAll, toPerson, match, plan, facilityMap, loadPeople } };
+module.exports = { run, schedule, compare, current, refresh, afterSheets, report, toCsv, STATE, TYPES, LWD_SMALL, LWD_BIG, _test: { fetchAll, toPerson, match, plan, facilityMap, loadPeople, takeLastDays } };
 
 if (require.main === module) {
   require("dotenv").config();

@@ -10,6 +10,14 @@
 //     Рахуються документи й анкети, надіслані від 5 днів до «UMOWA OD» до 10 днів після (як у hr_sign).
 //   • Те, що вписано руками («в бумаге», «rezygnacja», дати), не чіпаємо ніколи.
 //   • Рядки, для яких працівника не знайшли (або знайшли кількох), — у hrs.sheet_issues → у лист о 7:00.
+// Нові працівники (addNew, після кожного імпорту HRappka — bot/hr_import.js → hrs.sheet_queue): період, який імпорт додав
+// (нова людина, новий договір або Do zatrudnienia → Pracuje / Dotarł), — рядок у першому після останнього ПІБ рядку без ПІБ
+// (дату, яку поставили заздалегідь, міняємо на сьогодні), світло-помаранчевим:
+//   DATA WYSLANIA — сьогодні; UWAGI — POWROT, якщо людина вже працювала (є раніший період, не rezygnacja); PASZPORT;
+//   NAZWISKO I IMIE — посилання на картку HRappka; ZAKLAD; UMOWA OD — BHP; KOORDYNATOR — головний координатор об'єкта.
+//   Попередній період — przeniesiony, на іншому об'єкті, закінчився не раніше ніж за TRANSFER_DAYS днів до BHP → аркуш
+//   PRZENIESIENIE (ZAKLAD Z — той об'єкт, ZAKLAD DO — новий), інакше BEZPOSREDNIO.
+//   Людина вже є в аркуші (паспорт або ПІБ) з DATA WYSLANIA ±DUP_DAYS дні від сьогодні — не дописуємо.
 // Доступ: сервісний акаунт google-key.json має бути редактором таблиці. Таблиця — DOCS_SHEET_ID у .env.
 "use strict";
 
@@ -23,7 +31,11 @@ const TABS = ["BEZPOSREDNIO", "PRZENIESIENIE"];
 const PASS_FROM = "2026-09-01";
 const BHP_NEAR = 14;                                   // днів між «UMOWA OD» і BHP періоду в базі
 const ORANGE = { red: 0.988, green: 0.898, blue: 0.804 };   // світло-помаранчевий (як «light orange 3» у Google)
-const RECHECK_H = 3;                                   // працівників, яких HRappka не перевіряла стільки годин, — перевірити
+const TRANSFER_DAYS = 14;                              // przeniesiony: попередній період закінчився не раніше ніж за стільки днів до BHP
+const DUP_DAYS = 2;                                    // людина вже вписана з такою DATA WYSLANIA (± днів) — не дописуємо
+const LINK_BLUE = { red: 0.067, green: 0.333, blue: 0.8 };
+const hrLink = (id) => `https://app.hrappka.pl/employee/${id}/data`;
+const RECHECK_H = 3;                                  // працівників, яких HRappka не перевіряла стільки годин, — перевірити
 // Документи, які мають бути підписані (частина назви файлу)
 const DOCS = [
   ["zal2", /zalacznik_do_umowy_nr_2/i],
@@ -71,6 +83,9 @@ function columns(head) {
   const find = (fn) => h.findIndex(fn);
   const c = {
     sent: find((x) => x.startsWith("DATA WYSLANIA")),
+    uwagi: find((x) => x.startsWith("UWAGI")),
+    facFrom: find((x) => x === "ZAKLAD Z"),
+    koord: find((x) => x.startsWith("KOORDYNATOR")),
     pass: find((x) => x === "PASZPORT"),
     name: find((x) => x.startsWith("NAZWISKO")),
     fac: find((x) => x === "ZAKLAD DO"),
@@ -266,10 +281,123 @@ async function sync({ dry = false, refresh = !dry, workerIds = null } = {}) {
     issues: issues.map((x) => ({ sheet: x.t.p.title.trim(), row: x.r.i + 1, name: x.r.name, fac: x.r.fac, reason: x.reason })) } : res;
 }
 
+// ── Нові працівники з HRappka ─────────────────────────────────────────
+// Куди: przeniesiony на іншому об'єкті, що закінчився не раніше ніж за TRANSFER_DAYS днів до BHP, — PRZENIESIENIE
+function tabFor(x) {
+  const moved = x.prev_status === "przeniesiony" && x.prev_fid !== x.facility_id
+    && (!x.prev_lwd || x.prev_lwd >= addDays(x.bhp, -TRANSFER_DAYS));
+  return moved ? "PRZENIESIENIE" : "BEZPOSREDNIO";
+}
+// Людина вже в аркуші: той самий паспорт або ПІБ, DATA WYSLANIA ±DUP_DAYS від today
+function isDup(values, c, x, today) {
+  const pass = cleanPass(x.login), name = nameKey(x.full_name);
+  return values.slice(1).some((r) => {
+    const sent = cellDate(r[c.sent]);
+    if (!sent || Math.abs(Date.parse(sent) - Date.parse(today)) > DUP_DAYS * 864e5) return false;
+    return (pass && cleanPass(r[c.pass]) === pass) || (!isEmpty(r[c.name]) && nameKey(r[c.name]) === name);
+  });
+}
+// Перший рядок без ПІБ після останнього заповненого (індекс з 0; може бути за межами аркуша); taken — уже зайняті в цьому запуску
+function freeRow(values, c, taken) {
+  let i = values.length - 1;
+  while (i > 0 && isEmpty((values[i] || [])[c.name])) i--;
+  i++;
+  while (taken.has(i)) i++;
+  return i;
+}
+
+// dry = true — нічого не пише, повертає план
+async function addNew({ dry = false } = {}) {
+  const q = (await db.query(`
+    SELECT q.history_id, h.worker_id, h.facility_id, h.status, to_char(h.bhp_date, 'YYYY-MM-DD') AS bhp,
+           f.name AS fac, w.login, w.full_name, w.hr_employee_id, c.full_name AS koord,
+           pv.status AS prev_status, pv.facility_id AS prev_fid, pv.fac AS prev_fac, pv.lwd AS prev_lwd,
+           EXISTS (SELECT 1 FROM public.worker_facility_history o WHERE o.worker_id = h.worker_id AND o.id <> h.id
+                      AND o.bhp_date < h.bhp_date AND o.status <> 'rezygnacja') AS worked
+      FROM hrs.sheet_queue q
+      JOIN public.worker_facility_history h ON h.id = q.history_id
+      JOIN public.workers w ON w.id = h.worker_id
+      JOIN public.facilities f ON f.id = h.facility_id
+      LEFT JOIN reg.site_owner so ON so.site_key = reg.site_key(f.group_name, f.name) AND so.valid_to IS NULL
+      LEFT JOIN public.coordinators c ON c.id = so.coordinator_id
+      LEFT JOIN LATERAL (
+        SELECT o.status, o.facility_id, fo.name AS fac, to_char(o.last_work_date, 'YYYY-MM-DD') AS lwd
+          FROM public.worker_facility_history o JOIN public.facilities fo ON fo.id = o.facility_id
+         WHERE o.worker_id = h.worker_id AND o.id <> h.id AND o.bhp_date < h.bhp_date
+         ORDER BY o.bhp_date DESC, o.id DESC LIMIT 1) pv ON true
+     WHERE q.done_at IS NULL
+     ORDER BY q.queued_at, f.name, w.full_name`)).rows;
+  if (!q.length) return { queued: 0, added: 0, rows: [], skipped: [] };
+  const sh = api();
+  const meta = await sh.spreadsheets.get({ spreadsheetId: SHEET_ID, fields: "sheets(properties(sheetId,title,gridProperties(rowCount)))" });
+  const today = warsawDate(new Date());
+  const tabs = {};
+  for (const want of TABS) {
+    const p = meta.data.sheets.map((x) => x.properties).find((x) => norm(x.title) === want);
+    if (!p) continue;
+    const values = (await sh.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `'${p.title.replace(/'/g, "''")}'`, valueRenderOption: "UNFORMATTED_VALUE" })).data.values || [];
+    tabs[want] = { p, values, c: columns(values[0] || []), taken: new Set() };
+  }
+  const plan = [], done = [];
+  for (const x of q) {
+    // поки чекав у черзі, статус змінився (rezygnacja тощо) — не вписуємо
+    if (x.status !== "pracuje") { done.push({ x, note: "status" }); continue; }
+    const want = tabFor(x), t = tabs[want];
+    if (!t || [t.c.sent, t.c.pass, t.c.name, t.c.umowa, t.c.fac].some((i) => i === -1)) { console.warn(`[docs sheet] ${want}: немає аркуша або колонок`); continue; }
+    if (TABS.some((n) => tabs[n] && isDup(tabs[n].values, tabs[n].c, x, today))) { done.push({ x, note: "exists" }); continue; }
+    const i = freeRow(t.values, t.c, t.taken);
+    t.taken.add(i);
+    const cells = [
+      [t.c.sent, "date", today],
+      [t.c.uwagi, "text", x.worked && want === "BEZPOSREDNIO" ? "POWROT" : null],
+      [t.c.pass, "text", x.login],
+      [t.c.name, "link", x.full_name],
+      [t.c.facFrom, "text", want === "PRZENIESIENIE" ? x.prev_fac : null],
+      [t.c.fac, "text", x.fac],
+      [t.c.umowa, "date", x.bhp],
+      [t.c.koord, "text", x.koord],
+    ].filter(([col, , v]) => col !== -1 && v != null && v !== "");
+    plan.push({ x, t, i, cells });
+  }
+  if (!dry && plan.length) {
+    const requests = [];
+    // рядків не вистачає — додаємо в кінець аркуша
+    for (const t of Object.values(tabs)) {
+      const need = Math.max(0, ...[...t.taken].map((i) => i + 1)) - t.p.gridProperties.rowCount;
+      if (need > 0) requests.push({ appendDimension: { sheetId: t.p.sheetId, dimension: "ROWS", length: need } });
+    }
+    for (const { x, t, i, cells } of plan) for (const [col, kind, v] of cells) {
+      const fmt = { backgroundColor: ORANGE };
+      if (kind === "date") fmt.numberFormat = { type: "DATE", pattern: "d.m.yyyy" };
+      if (kind === "link" && x.hr_employee_id) fmt.textFormat = { link: { uri: hrLink(x.hr_employee_id) }, foregroundColor: LINK_BLUE, underline: true };
+      requests.push({ updateCells: {
+        range: { sheetId: t.p.sheetId, startRowIndex: i, endRowIndex: i + 1, startColumnIndex: col, endColumnIndex: col + 1 },
+        rows: [{ values: [{ userEnteredValue: kind === "date" ? { numberValue: serial(v) } : { stringValue: String(v) }, userEnteredFormat: fmt }] }],
+        fields: "userEnteredValue,userEnteredFormat.backgroundColor" + (fmt.numberFormat ? ",userEnteredFormat.numberFormat" : "") + (fmt.textFormat ? ",userEnteredFormat.textFormat" : ""),
+      } });
+    }
+    for (let k = 0; k < requests.length; k += 500) {
+      await sh.spreadsheets.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { requests: requests.slice(k, k + 500) } });
+    }
+  }
+  if (!dry) {
+    for (const r of plan) done.push({ x: r.x, note: "added", sheet: r.t.p.title.trim(), row: r.i + 1 });
+    for (const d of done) {
+      await db.query(`UPDATE hrs.sheet_queue SET done_at = now(), note = $2, sheet = $3, row_no = $4 WHERE history_id = $1`,
+        [d.x.history_id, d.note, d.sheet || null, d.row || null]);
+    }
+  }
+  console.log(`[docs sheet] ${dry ? "(próba) " : ""}нові працівники: у черзі ${q.length}, вписано ${plan.length}, уже є ${done.filter((d) => d.note === "exists").length}`);
+  return { queued: q.length, added: plan.length,
+    rows: plan.map((r) => ({ sheet: r.t.p.title.trim(), row: r.i + 1, name: r.x.full_name,
+      cells: Object.fromEntries(r.cells.map(([col, , v]) => [Object.keys(r.t.c).find((n) => r.t.c[n] === col), v])) })),
+    skipped: done.map((d) => ({ name: d.x.full_name, note: d.note })) };
+}
+
 // Для листа о 7:00
 async function issues() {
   return (await db.query(`SELECT sheet, row_no, full_name, facility, to_char(umowa_od, 'YYYY-MM-DD') AS umowa, reason FROM hrs.sheet_issues ORDER BY sheet, row_no`)
     .catch(() => ({ rows: [] }))).rows;
 }
 
-module.exports = { sync, issues, SHEET_ID, _test: { cellDate, serial, nameKey, columns, match, prevBhp } };
+module.exports = { sync, addNew, issues, SHEET_ID, _test: { cellDate, serial, nameKey, columns, match, prevBhp, tabFor, isDup, freeRow } };

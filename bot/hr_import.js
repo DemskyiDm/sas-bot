@@ -429,12 +429,18 @@ function plan(people, dbWorkers, sheets, fmap, today, rows = new Map(), { prev =
   return { ops, skip, pending };
 }
 
+// Період почав працювати за HRappka (Pracuje / Dotarł): новий працівник, новий договір або Do zatrudnienia → працює
+// — рядок у таблиці «Dokumenty pocztą» (bot/docs_sheet.js, через hrs.sheet_queue)
+const STARTED = ["Pracuje", "Dotarł"];
+const started = (x) => x.t.status === "pracuje" && STARTED.includes(x.t.hr_state)
+  && (x.op !== "update" || (x.w.status === "do_zatrudnienia" && x.changed.includes("status")));
+
 async function write(client, ops) {
   let ok = 0;
-  const errors = [], failed = new Set(), pending = new Set();
+  const errors = [], failed = new Set(), pending = new Set(), added = [];
   const set = (t) => [t.facility_id, t.status, t.bhp, t.lwd, t.stanowisko || null, t.hr_state];
   const ins = `INSERT INTO public.worker_facility_history (worker_id, facility_id, status, bhp_date, last_work_date, stanowisko, hr_state, source_sheet, imported_at)
-               VALUES ($1, $2, $3::worker_status, $4, $5, $6, $7, 'HRappka', now())`;
+               VALUES ($1, $2, $3::worker_status, $4, $5, $6, $7, 'HRappka', now()) RETURNING id`;
   for (const x of ops) {
     if (x.op === "close" && failed.has(x.w.id)) continue;   // новий період не записався — попередній не закриваємо
     await client.query("SAVEPOINT op");
@@ -444,6 +450,7 @@ async function write(client, ops) {
           `UPDATE public.worker_facility_history SET facility_id = $2, status = $3::worker_status, bhp_date = $4, last_work_date = $5,
                   stanowisko = COALESCE($6, stanowisko), hr_state = $7, source_sheet = 'HRappka', imported_at = now() WHERE id = $1`,
           [x.w.hid, ...set(x.t)]);
+        if (started(x)) added.push(x.w.hid);
       } else if (x.op === "close") {
         await client.query(`UPDATE public.worker_facility_history SET last_work_date = $2, status = $3::worker_status, imported_at = now() WHERE id = $1`,
           [x.w.hid, x.t.lwd, x.t.status]);
@@ -456,7 +463,8 @@ async function write(client, ops) {
              VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
             [x.p.passport, x.p.name || x.p.passport, last, first.join(" ") || null, x.p.pesel, x.p.birth, x.p.id])).rows[0].id;
         }
-        await client.query(ins, [id, ...set(x.t)]);
+        const hid = (await client.query(ins, [id, ...set(x.t)])).rows[0].id;
+        if (started(x)) added.push(hid);
       }
       await client.query("RELEASE SAVEPOINT op");
       ok++;
@@ -467,7 +475,7 @@ async function write(client, ops) {
       errors.push(`${x.op} ${(x.w && x.w.login) || x.p.passport} ${x.p.name}: ${e.message}`);
     }
   }
-  return { ok, errors, pending };
+  return { ok, errors, pending, added };
 }
 
 // workers.status — статус поточного періоду (як було в import_sheets.js)
@@ -499,6 +507,13 @@ async function apply(client, people, today, { dry = false, prev = null, objectOn
   const w = await write(client, ops);
   for (const id of w.pending) pending.add(id);
   Object.assign(res, { ok: w.ok, errors: w.errors });
+  if (w.added.length) {
+    // без таблиці (db/migration_docs_sheet.sql) імпорт не зупиняємо
+    await client.query("SAVEPOINT q");
+    await client.query(`INSERT INTO hrs.sheet_queue (history_id) SELECT unnest($1::int[]) ON CONFLICT DO NOTHING`, [w.added])
+      .then(() => client.query("RELEASE SAVEPOINT q"))
+      .catch(async (e) => { await client.query("ROLLBACK TO SAVEPOINT q"); console.warn(`[hr import] hrs.sheet_queue: ${e.message}`); });
+  }
   res.births = await saveWorkers(client, match(people, await loadWorkers(client)));
   res.synced = await syncWorkerStatus(client);
   return res;
@@ -645,6 +660,8 @@ async function run({ full = false, dry = false, notify = false } = {}) {
     client.release();
   }
   for (const e of (applied.errors || []).slice(0, 20)) console.warn(`[hr import] ${e}`);
+  // нові працівники — у таблицю «Dokumenty pocztą» (require тут: docs_sheet підключає hr_sign); не вийшло — спробуємо після наступного імпорту
+  if (!dry) await require("./docs_sheet").addNew().catch((e) => console.error("[docs sheet] нові працівники:", e.message));
   if (!full) res.diffs = recent(res.diffs, today);
   const stats = { people: people.length, workers: res.pairs.length, matched: res.pairs.filter((x) => x.p).length, applied };
   if (!dry) LAST = { at: Date.now(), stats };
@@ -764,7 +781,7 @@ function schedule() {
   cron.schedule("0 5 * * 1", () => harmonogram().catch((e) => console.error("[hr import] Do zatrudnienia:", e.message)), { timezone: "Europe/Warsaw" });
 }
 
-module.exports = { run, schedule, compare, current, refresh, afterSheets, report, harmonogram, toCsv, STATE, TYPES, LWD_SMALL, LWD_BIG, _test: { fetchAll, toPerson, match, plan, facilityMap, loadPeople, takeLastDays, stale, stuck } };
+module.exports = { run, schedule, compare, current, refresh, afterSheets, report, harmonogram, toCsv, STATE, TYPES, LWD_SMALL, LWD_BIG, _test: { fetchAll, toPerson, match, plan, started, facilityMap, loadPeople, takeLastDays, stale, stuck } };
 
 if (require.main === module) {
   require("dotenv").config();

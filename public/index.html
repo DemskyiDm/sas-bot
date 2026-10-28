@@ -492,19 +492,25 @@
               <option value="sent">Nowe zaświadczenie czeka</option>
               <option value="no">Nie studenci</option>
             </select>
+            <!-- daty (BHP, ostatni dzień, student do) — w okienku; na przycisku liczba ustawionych zakresów (workers.js) -->
+            <div style="position:relative" id="workersDatesWrap">
+              <button class="wk-drop" id="workersDatesBtn" onclick="toggleWorkersDates(event)">
+                <span id="workersDatesLabel">📅 Daty</span> <span class="wk-caret">▾</span>
+              </button>
+              <div id="workersDatesDrop" class="wk-pop" hidden>
+                <div class="wk-range"><span>BHP</span>
+                  <input type="date" id="workersBhpFrom" onchange="filterWorkers()" title="BHP od" /><i>—</i>
+                  <input type="date" id="workersBhpTo" onchange="filterWorkers()" title="BHP do" /></div>
+                <div class="wk-range"><span>Ostatni dzień</span>
+                  <input type="date" id="workersLastFrom" onchange="filterWorkers()" title="Ostatni dzień od" /><i>—</i>
+                  <input type="date" id="workersLastTo" onchange="filterWorkers()" title="Ostatni dzień do" /></div>
+                <div class="wk-range"><span>Student do</span>
+                  <input type="date" id="workersStudFrom" onchange="filterWorkers()" title="Student do — od" /><i>—</i>
+                  <input type="date" id="workersStudTo" onchange="filterWorkers()" title="Student do — do" /></div>
+                <div class="wk-pop-foot"><button class="btn btn-ghost btn-sm" onclick="clearWorkersDates()">Wyczyść daty</button></div>
+              </div>
+            </div>
             <button class="btn btn-ghost btn-sm wk-clear" onclick="clearWorkersFilters()">✕ Wyczyść filtry</button>
-          </div>
-          <!-- daty: od — do -->
-          <div class="wk-dates">
-            <div class="wk-range"><span>BHP</span>
-              <input type="date" id="workersBhpFrom" onchange="filterWorkers()" title="BHP od" /><i>—</i>
-              <input type="date" id="workersBhpTo" onchange="filterWorkers()" title="BHP do" /></div>
-            <div class="wk-range"><span>Ostatni dzień</span>
-              <input type="date" id="workersLastFrom" onchange="filterWorkers()" title="Ostatni dzień od" /><i>—</i>
-              <input type="date" id="workersLastTo" onchange="filterWorkers()" title="Ostatni dzień do" /></div>
-            <div class="wk-range"><span>Student do</span>
-              <input type="date" id="workersStudFrom" onchange="filterWorkers()" title="Student do — od" /><i>—</i>
-              <input type="date" id="workersStudTo" onchange="filterWorkers()" title="Student do — do" /></div>
           </div>
           <div class="table-wrap">
             <table>

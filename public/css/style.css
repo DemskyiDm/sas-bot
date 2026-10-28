@@ -131,35 +131,59 @@ select:focus, input:focus { border-color: var(--accent); }
 .start-row.done .start-n { color: var(--text3); font-weight: 400; }
 .start-empty { padding: 20px; text-align: center; color: var(--text3); }
 
-/* ── PRACOWNICY: nagłówek, filtry, daty, stopka (index.html → #pageWorkers) ── */
+/* ── PRACOWNICY: nagłówek, filtry, stopka (index.html → #pageWorkers) ── */
 .wk-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--border); }
-.wk-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.wk-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; }
 .wk-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.wk-filters, .wk-dates { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--border); }
-.wk-filters { background: var(--surface2); }
-.wk-filters > select, .wk-filters > input, .wk-drop { height: 32px; box-sizing: border-box; }
-.wk-filters > select, .wk-drop { background: var(--surface); }
-.wk-search { flex: 1 1 220px; min-width: 180px; max-width: 340px; background: var(--surface) !important; }
-.wk-drop { padding: 0 10px; font-size: 12px; border: 1px solid var(--border); border-radius: 5px; color: var(--text2);
-  cursor: pointer; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-.wk-drop:hover { border-color: var(--accent); }
+.wk-actions .btn { height: 30px; display: inline-flex; align-items: center; gap: 5px; padding: 0 12px; font-size: 12px; font-family: inherit; border: 1px solid var(--border); }
+.wk-actions .btn-primary { border-color: var(--accent); }
+/* jeden rząd filtrów: wszystkie pola tej samej wysokości, kroju i koloru; ustawiony filtr — niebieska ramka (.on) */
+.wk-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface2); }
+.wk-filters input[type="text"], .wk-filters select, .wk-drop, .wk-clear {
+  height: 34px; box-sizing: border-box; font: inherit; font-size: 13px; color: var(--text2);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+.wk-search { flex: 1 1 260px; min-width: 200px; max-width: 380px; padding: 0 12px; color: var(--text) !important; }
+.wk-filters select { appearance: none; -webkit-appearance: none; padding: 0 30px 0 12px; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2394a3b8' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 11px center; }
+.wk-drop { padding: 0 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.wk-filters select:hover, .wk-drop:hover { border-color: #3a4560; color: var(--text); }
+.wk-filters .on, .wk-filters select.on { border-color: var(--accent); color: var(--text); background-color: rgba(59, 130, 246, 0.08); }
 .wk-caret { font-size: 10px; color: var(--text3); }
-.wk-dates { gap: 8px 18px; }
-.wk-range { display: flex; align-items: center; gap: 6px; }
-.wk-range > span { font-size: 11px; color: var(--text3); font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.5px; }
-.wk-range input[type="date"] { width: 128px; height: 28px; box-sizing: border-box; background: var(--surface2); border: 1px solid var(--border);
-  color: var(--text); border-radius: 5px; padding: 0 6px; font-size: 12px; color-scheme: dark; }
-.wk-range i { color: var(--text3); font-style: normal; font-size: 12px; }
-.wk-clear { margin-left: auto; height: 32px; }
-/* wiersze w jednej linii (długie obiekty / stanowiska — skrócone, pełna nazwa w podpowiedzi); na telefonie — karty (mobile.css) */
+.wk-clear { margin-left: auto; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; background: transparent; }
+.wk-clear:hover { color: var(--text); border-color: #3a4560; }
+/* okienko dat */
+.wk-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 400; display: grid; gap: 10px; padding: 14px 16px;
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45); }
+.wk-pop[hidden] { display: none; }
+.wk-range { display: grid; grid-template-columns: 96px auto 12px auto; align-items: center; gap: 6px; }
+.wk-range > span { font-size: 12px; color: var(--text2); }
+.wk-range input[type="date"] { width: 136px; height: 32px; box-sizing: border-box; font: inherit; font-size: 13px; background: var(--surface);
+  border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 0 8px; color-scheme: dark; }
+.wk-range input[type="date"]:focus { border-color: var(--accent); outline: none; }
+.wk-range i { color: var(--text3); font-style: normal; text-align: center; }
+.wk-pop-foot { display: flex; justify-content: flex-end; border-top: 1px solid var(--border); padding-top: 10px; }
+/* tabela: wiersz w jednej linii, drugorzędne dane — szare, ale czytelne */
+.wk-sec { color: var(--text2); font-size: 12px; }
+.wk-num { font-family: var(--mono); font-size: 11px; color: var(--text2); }
+.wk-yes { color: var(--green); font-weight: 700; }
+.badge-gray { background: rgba(148, 163, 184, 0.1); color: var(--text2); }
+.wk-ell { display: inline-block; max-width: 180px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.wk-act { white-space: nowrap; text-align: right; }
+.wk-ic { width: 28px; height: 28px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text2);
+  font-size: 15px; line-height: 1; cursor: pointer; }
+.wk-ic:hover { border-color: var(--border); background: var(--surface2); color: var(--text); }
 @media (min-width: 769px) {
-  #pageWorkers th, #pageWorkers td { padding-left: 12px; padding-right: 12px; }
+  /* nagłówek może zająć dwie linie («Ostatni / dzień») — kolumny nie są szersze niż dane */
+  #pageWorkers th { letter-spacing: 0.3px; color: var(--text2); white-space: normal; line-height: 1.3; vertical-align: bottom; }
+  #pageWorkers th, #pageWorkers td { padding-left: 8px; padding-right: 8px; }
+  #pageWorkers .wk-ell.wk-sec { max-width: 140px; }
+  #pageWorkers th:first-child, #pageWorkers td:first-child { padding-left: 16px; }
   #pageWorkers td { white-space: nowrap; }
 }
-.wk-ell { display: inline-block; max-width: 200px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
-.wk-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; border-top: 1px solid var(--border); padding: 0 16px; min-height: 44px; }
+.wk-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; border-top: 1px solid var(--border); padding: 0 16px; min-height: 48px; }
 .wk-foot .pagination { border-top: none; padding: 8px 0; }
-.wk-size { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text3); }
+.wk-size { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text3); }
+.wk-size select { height: 30px; font: inherit; font-size: 12px; }
 
 /* ── TABLE ── */
 .table-wrap { overflow-x: auto; overflow-y: visible; }

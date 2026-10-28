@@ -270,3 +270,12 @@ test("hr_import.takeLastDays: останній день до 20 днів — з 
   assert.deepEqual(q, [[101, "2026-10-04"]]);
   assert.deepEqual([...done].map((d) => d.p.id), [1]);
 });
+
+test("hr_import.stale: розбіжності періодів, що закінчились до 31.07.2026, не показуємо", () => {
+  const { stale } = hrImport._test;
+  assert.equal(stale({ w: { bhp: "2026-03-01", lwd: "2026-07-31" }, p: { lastDay: null } }), true);
+  assert.equal(stale({ w: { bhp: "2026-03-01", lwd: "2026-07-20" }, p: { lastDay: "2026-08-05" } }), false);   // HRappka — пізніше
+  assert.equal(stale({ w: { bhp: "2026-03-01", lwd: null }, p: { lastDay: null } }), false);                   // відкритий
+  assert.equal(stale({ w: { bhp: "2026-09-01", lwd: null }, p: { lastDay: "2026-05-01" } }), false);           // день HRappka з попереднього періоду
+  assert.equal(stale({ p: { lastDay: "2026-06-01" } }), true);                                                   // немає в таблиці
+});

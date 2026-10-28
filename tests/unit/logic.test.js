@@ -243,3 +243,12 @@ test("hr_import.plan: незаписане пробуємо знову, лише
   assert.equal(skip["період закрито, а в HRappka людина працює — перевірити"], 1);
   assert.equal(skip["у базі новіший період, ніж договір HRappka"], 1);
 });
+
+test("hr_import.toPerson: посада з діючого договору, без нього — з останнього", () => {
+  const { toPerson } = hrImport._test;
+  const N = "newestUserContract_USER_CONTRACT_userContract_position_POSITION_name";
+  const CUR = "currentUserContract_USER_CONTRACT_userContract_position_POSITION_name";
+  assert.equal(toPerson({ id: 1, [N]: { pl: "magazyn" }, [CUR]: { pl: "produkcja" } }).position, "produkcja");
+  assert.equal(toPerson({ id: 2, [N]: { pl: "magazyn" }, [CUR]: null }).position, "magazyn");
+  assert.equal(toPerson({ id: 3, [N]: null, [CUR]: null }).position, null);
+});

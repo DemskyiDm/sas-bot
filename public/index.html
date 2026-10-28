@@ -515,7 +515,7 @@
             <button class="btn btn-ghost btn-sm wk-clear" onclick="clearWorkersFilters()">✕ Wyczyść filtry</button>
           </div>
           <div class="table-wrap">
-            <table>
+            <table data-m-keep>
               <thead>
                 <tr id="workersHead"></tr>
               </thead>
@@ -1001,6 +1001,8 @@
       </div>
       <div style="color: var(--red); font-size: 11px; margin-top: 4px" id="wm_err"></div>
       <div class="modal-btns">
+        <!-- historia okresów (openHistoryModal) — na telefonie jedyna droga do niej z listy pracowników -->
+        <button class="btn btn-ghost" id="wm_hist" style="margin-right: auto" hidden>Historia</button>
         <button class="btn btn-ghost" onclick="closeWorkerModal()">
           Anuluj
         </button>

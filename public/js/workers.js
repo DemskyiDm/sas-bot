@@ -12,6 +12,11 @@ function escStan(s) {
 
 // ── Kolumny: які показувати в таблиці і які йдуть в Excel (окремо), вибір пам'ятає браузер ──
 const plDate = (d) => (d ? new Date(d).toLocaleDateString("pl") : "—");
+// Telefon (do 768px): zwykła tabela z własnym zestawem kolumn (domyślnie PHONE_COLS), bez kart (css/mobile.css)
+const WK_PHONE = window.matchMedia("(max-width: 768px)");
+const PHONE_COLS = ["name", "facility", "bhp", "last"];
+const phoneDate = (d) => { if (!d) return "—"; const x = new Date(d); return `${String(x.getDate()).padStart(2, "0")}.${String(x.getMonth() + 1).padStart(2, "0")}.${String(x.getFullYear()).slice(2)}`; };
+const wkDate = (d) => (WK_PHONE.matches ? phoneDate(d) : plDate(d));
 // status: polska nazwa i kolor (Excel — jak w bazie)
 const WK_STATUS = {
   pracuje: ["Pracuje", "badge-green"], urlop: ["Urlop", "badge-purple"], l4: ["L4", "badge-purple"],
@@ -21,7 +26,11 @@ const WK_STATUS = {
 const statusBadge = (s) => { const x = WK_STATUS[s] || [s || "—", "badge-blue"]; return `<span class="badge ${x[1]}"><span class="badge-dot"></span>${escStan(x[0])}</span>`; };
 const WORKER_COLS = [
   { key: "login", label: "ID", cell: (w) => `<span class="wk-num">${escStan(w.login)}</span>`, xls: (w) => w.login },
-  { key: "name", label: "Imie i Nazwisko", cell: (w) => `<span class="worker-name">${escStan(w.full_name)}</span>`, xls: (w) => w.full_name },
+  { key: "name", label: "Imie i Nazwisko", phone: "Pracownik", xls: (w) => w.full_name,
+    // na telefonie — kropka statusu przed nazwiskiem (kolumny «Status» domyślnie tam nie ma)
+    cell: (w) => (WK_PHONE.matches
+      ? `<span class="wk-nm"><i class="wk-dot st-${escStan(w.status)}" title="${escStan((WK_STATUS[w.status] || [w.status])[0])}"></i><span class="worker-name">${escStan(w.full_name)}</span></span>`
+      : `<span class="worker-name">${escStan(w.full_name)}</span>`) },
   { key: "pesel", label: "PESEL", title: "Z HRappka", cell: (w) => `<span class="wk-num">${w.pesel || "—"}</span>`, xls: (w) => w.pesel || "—" },
   { key: "birth", label: "Data ur.", title: "Z HRappka", cell: (w) => `<span class="wk-sec">${plDate(w.birth_date)}</span>`, xls: (w) => plDate(w.birth_date) },
   { key: "group", label: "Grupa", off: true, cell: (w) => `<span class="wk-ell wk-sec" title="${escStan(w.group_name)}">${escStan(w.group_name)}</span>`, xls: (w) => w.group_name || "—" },
@@ -29,19 +38,20 @@ const WORKER_COLS = [
   { key: "stan", label: "Stanowisko", cell: (w) => `<span class="wk-ell wk-sec" title="${escStan(w.stanowisko)}">${escStan(w.stanowisko)}</span>`, xls: (w) => w.stanowisko || "—" },
   { key: "status", label: "Status", cell: (w) => statusBadge(w.status), xls: (w) => w.status || "—" },
   { key: "tg", label: "Telegram", short: "TG", cell: (w) => (w.telegram_chat_id ? `<span class="wk-yes" title="Połączony z botem">✓</span>` : `<span class="wk-sec">—</span>`), xls: (w) => (w.telegram_chat_id ? "TAK" : "NIE") },
-  { key: "bhp", label: "BHP", cell: (w) => `<span class="wk-sec">${plDate(w.bhp_date)}</span>`, xls: (w) => plDate(w.bhp_date) },
-  { key: "last", label: "Ostatni dzień", cell: (w) => `<span class="wk-sec">${plDate(w.last_work_date)}</span>`, xls: (w) => plDate(w.last_work_date) },
+  { key: "bhp", label: "BHP", phone: "Początek", cell: (w) => `<span class="wk-sec">${wkDate(w.bhp_date)}</span>`, xls: (w) => plDate(w.bhp_date) },
+  { key: "last", label: "Ostatni dzień", phone: "Koniec", cell: (w) => `<span class="wk-sec">${wkDate(w.last_work_date)}</span>`, xls: (w) => plDate(w.last_work_date) },
   { key: "stud_from", label: "Student od", title: "Status studenta z HRappka", cell: (w) => `<span class="wk-sec">${plDate(w.student_from)}</span>`, xls: (w) => plDate(w.student_from) },
   { key: "stud_to", label: "Student do", title: "Status studenta z HRappka", cell: (w) => studentCell(w), xls: (w) => plDate(w.student_to) },
   { key: "docs", label: "Dokumenty", title: "Podpisy dokumentów w HRappka", cell: (w) => hrsCell(w), xls: null },
 ];
-const COLS_KEY = { table: "sas_workers_cols", excel: "sas_workers_cols_xls" };
+const COLS_KEY = { table: "sas_workers_cols", excel: "sas_workers_cols_xls", phone: "sas_workers_cols_phone" };
 // kolumny sprzed zapisania wyboru bez listy «znanych» — nowsze (np. Student od / do) dochodzą domyślnie
 const COLS_OLD = ["login", "name", "pesel", "birth", "group", "facility", "stan", "status", "tg", "bhp", "last", "docs"];
 function colsGet(kind) {
   const def = (c) => !c.off && (kind === "table" || c.xls);
   try {
     const v = JSON.parse(localStorage.getItem(COLS_KEY[kind]) || "null");
+    if (kind === "phone") return new Set(Array.isArray(v) ? v : PHONE_COLS);
     if (Array.isArray(v)) {
       const known = new Set(JSON.parse(localStorage.getItem(COLS_KEY[kind] + "_known") || "null") || COLS_OLD);
       return new Set([...v, ...WORKER_COLS.filter((c) => !known.has(c.key) && def(c)).map((c) => c.key)]);
@@ -84,25 +94,38 @@ function studentMatch(w, f) {
   if (f === "sent") return w.student && w.student_status === "sent";
   return studentState(w) === f;
 }
-const visibleCols = () => { const s = colsGet("table"); return WORKER_COLS.filter((c) => s.has(c.key)); };
+// tabela na komputerze i na telefonie — osobne zestawy kolumn
+const tableKind = () => (WK_PHONE.matches ? "phone" : "table");
+const visibleCols = () => { const s = colsGet(tableKind()); return WORKER_COLS.filter((c) => s.has(c.key)); };
 
 function renderWorkersHead() {
   const h = document.getElementById("workersHead");
-  // short — krótszy nagłówek w tabeli (pełna nazwa w podpowiedzi, w «Kolumny» i w Excelu)
-  if (h) h.innerHTML = visibleCols().map((c) => { const t = c.title || (c.short ? c.label : ""); return `<th${t ? ` title="${t}"` : ""}>${c.short || c.label}</th>`; }).join("") + "<th></th>";
+  // short — krótszy nagłówek w tabeli, phone — na telefonie (pełna nazwa w podpowiedzi, w «Kolumny» i w Excelu)
+  const name = (c) => (WK_PHONE.matches && c.phone) || c.short || c.label;
+  if (h) h.innerHTML = visibleCols().map((c) => { const t = c.title || (name(c) !== c.label ? c.label : ""); return `<th${t ? ` title="${t}"` : ""}>${name(c)}</th>`; }).join("")
+    + (WK_PHONE.matches ? "" : "<th></th>");
 }
+// telefon: dotknięcie wiersza — karta pracownika (tam też «Historia»)
+function workerRowTap(id) {
+  if (!WK_PHONE.matches) return;
+  const w = (allWorkersData || []).find((x) => x.id === id);
+  if (w) openWorkerModal(w);
+}
+(WK_PHONE.addEventListener ? WK_PHONE.addEventListener.bind(WK_PHONE, "change") : WK_PHONE.addListener.bind(WK_PHONE))(() => {
+  if (allWorkersData && allWorkersData.length) filterWorkers(false);
+});
 
 function toggleWorkersCols(e) {
   if (e) e.stopPropagation();
   const d = document.getElementById("workersColsDrop");
   if (d.style.display === "block") { d.style.display = "none"; return; }
-  const t = colsGet("table"), x = colsGet("excel");
+  const k = tableKind(), t = colsGet(k), x = colsGet("excel");
   d.innerHTML = `<div style="display:grid;grid-template-columns:1fr auto auto;gap:4px 12px;align-items:center;font-size:12px">
       <span style="font-size:10px;color:var(--text3);font-family:var(--mono)">KOLUMNA</span>
-      <span style="font-size:10px;color:var(--text3);font-family:var(--mono)">TABELA</span>
+      <span style="font-size:10px;color:var(--text3);font-family:var(--mono)">${k === "phone" ? "TELEFON" : "TABELA"}</span>
       <span style="font-size:10px;color:var(--text3);font-family:var(--mono)">EXCEL</span>
       ${WORKER_COLS.map((c) => `<span>${c.label}</span>
-        <input type="checkbox" ${t.has(c.key) ? "checked" : ""} onchange="setWorkersCol('table','${c.key}',this.checked)" />
+        <input type="checkbox" ${t.has(c.key) ? "checked" : ""} onchange="setWorkersCol('${k}','${c.key}',this.checked)" />
         ${c.xls ? `<input type="checkbox" ${x.has(c.key) ? "checked" : ""} onchange="setWorkersCol('excel','${c.key}',this.checked)" />` : "<span></span>"}`).join("")}
     </div>`;
   // fixed — щоб не ховалось під фільтрами нижче (свій контекст накладання в картці)
@@ -114,7 +137,7 @@ function setWorkersCol(kind, key, on) {
   const s = colsGet(kind);
   if (on) s.add(key); else s.delete(key);
   colsSet(kind, s);
-  if (kind === "table") { renderWorkersHead(); filterWorkers(false); }
+  if (kind !== "excel") { renderWorkersHead(); filterWorkers(false); }
 }
 document.addEventListener("click", (e) => {
   const d = document.getElementById("workersColsDrop");
@@ -456,15 +479,17 @@ function filterWorkers(reset = true) {
   document.getElementById("workersCount").textContent = filtered.length;
   const cols = visibleCols();
   renderWorkersHead();
+  // telefon: bez kolumny działań — dotknięcie wiersza otwiera pracownika (workerRowTap)
+  const phone = WK_PHONE.matches;
   document.getElementById("workersTable").innerHTML = slice.map((w) => `
-    <tr>
+    <tr${phone ? ` class="wk-tap" onclick="workerRowTap(${w.id})"` : ""}>
       ${cols.map((c) => `<td>${c.cell(w)}</td>`).join("")}
-      <td class="wk-act">
+      ${phone ? "" : `<td class="wk-act">
         <button class="wk-ic" title="Edytuj" aria-label="Edytuj" onclick='openWorkerModal(${JSON.stringify(w)})'>✎</button>
         <button class="wk-ic" title="Historia" aria-label="Historia" onclick="openHistoryModal(${w.id},'${w.full_name.replace(/'/g, "\\'").replace(/"/g, "&quot;")}')">⟲</button>
-      </td>
+      </td>`}
     </tr>`).join("") ||
-    `<tr><td colspan="${cols.length + 1}" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
+    `<tr><td colspan="${cols.length + (phone ? 0 : 1)}" style="text-align:center;color:var(--text3);padding:20px">Brak wynikow</td></tr>`;
 
   renderPagination("paginationWorkers", pageWorkers, pages, "goPageWorkers");
 }
@@ -509,7 +534,11 @@ async function openWorkerModal(worker) {
     document.getElementById("wm_status").value = worker.status;
     document.getElementById("wm_bhp").value = worker.bhp_date ? worker.bhp_date.substring(0, 10) : "";
     if (worker.facility_id) facSel.value = worker.facility_id;
+    const h = document.getElementById("wm_hist");
+    h.hidden = false;
+    h.onclick = () => { closeWorkerModal(); openHistoryModal(worker.id, worker.full_name); };
   } else {
+    document.getElementById("wm_hist").hidden = true;
     document.getElementById("workerModalTitle").textContent = "Nowy pracownik";
     ["wm_id", "wm_login", "wm_name", "wm_bhp"].forEach((id) => { document.getElementById(id).value = ""; });
     document.getElementById("wm_status").value = "pracuje";

@@ -38,7 +38,8 @@ const EMAIL_TO = (process.env.HR_IMPORT_EMAIL_TO ||
   "d.demskyi@saslogistic.pl,m.rosliakova@saslogistic.pl,o.kapkan@saslogistic.pl,d.ivanova@saslogistic.pl").split(/[,;\s]+/).filter(Boolean);
 const IGNORE = /PERLIK/i;
 const RECENT_DAYS = 60;   // щоденний звіт — закриті періоди за стільки днів
-const SAME_DAYS = 31;     // договір HRappka і період у базі / таблиці — той самий, якщо початок і BHP різняться не більше
+const SAME_DAYS = 7;      // договір HRappka і період у базі / таблиці — той самий, якщо початок і BHP різняться не більше
+const OLDER_DAYS = 31;    // договір почався раніше за BHP більше ніж на стільки днів — у базі новіший період, не чіпаємо
 
 const STATE = {
   "Pracuje": "pracuje", "Dotarł": "dotarl",
@@ -300,7 +301,7 @@ async function saveWorkers(client, pairs) {
 // Старі періоди не чіпаємо. Договір HRappka і поточний період у базі — той самий, якщо BHP різняться до SAME_DAYS днів
 // або це продовження договору на тому ж об'єкті: оновлюємо об'єкт, статус, BHP, останній день, посаду.
 // Договір HRappka новіший — новий період, а відкритий попередній закриваємо днем раніше.
-// Старіший (у базі вже новіший період) — не чіпаємо. Людину, що в HRappka працює, а в базі її немає, — додаємо.
+// Почався раніше за BHP до OLDER_DAYS днів — лише статус, останній день, посада; ще раніше (у базі вже новіший період) — не чіпаємо. Людину, що в HRappka працює, а в базі її немає, — додаємо.
 // Статусу «Nie dotarł» у базі немає — пишемо rezygnacja (не почав працювати, ніде не рахується), сам стан — у hr_state.
 const DB_STATUS = { dotarl: "pracuje", nie_dotarl: "rezygnacja" };
 
@@ -377,9 +378,9 @@ function plan(people, dbWorkers, sheets, fmap, today, rows = new Map(), { prev =
         status: w.status === "rezygnacja" ? "rezygnacja" : w.facility_id === t.facility_id ? "zwolniony" : "przeniesiony" } });
       continue;
     }
-    if (gap < -SAME_DAYS) { no("у базі новіший період, ніж договір HRappka"); continue; }
-    // той самий договір — або договір у HRappka давно новіший за період у базі (розбіжність була ще до імпорту з HRappka):
-    // тоді в поточному періоді міняємо лише статус, останній день і посаду, а BHP і об'єкт — ні
+    if (gap < -OLDER_DAYS) { no("у базі новіший період, ніж договір HRappka"); continue; }
+    // той самий договір — або договір у HRappka почався трохи раніше за BHP чи давно новіший за період у базі (розбіжність була
+    // ще до імпорту з HRappka): тоді в поточному періоді міняємо лише статус, останній день і посаду, а BHP і об'єкт — ні
     if (renewal && gap > SAME_DAYS) t.bhp = w.bhp;            // продовження договору — BHP періоду лишається
     const old = { facility_id: w.facility_id, bhp: w.bhp, lwd: w.lwd, status: w.status, stanowisko: w.stanowisko, hr_state: w.hr_state };
     let changed = Object.keys(t).filter((k) => (t[k] || null) !== (old[k] || null) && !(k === "stanowisko" && !t[k])

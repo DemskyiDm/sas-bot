@@ -85,6 +85,7 @@ async function medList(c, f0, opts) {
   const from = opts && opts.from, to = opts && opts.to;
   const r = await db.query(
     `SELECT h.id, h.worker_id, w.full_name, w.login, to_jsonb(w)->>'last_name' AS last_name, to_jsonb(w)->>'first_name' AS first_name,
+            to_jsonb(w)->>'pesel' AS pesel, to_jsonb(w)->>'birth_date' AS birth,
             h.facility_id, fa.name AS facility, to_jsonb(h)->>'stanowisko' AS stanowisko, to_char(h.bhp_date, 'YYYY-MM-DD') AS bhp,
             h.status::text AS status, ${SENT_SQL("med", "h.id")} AS ordered_at
        FROM worker_facility_history h
@@ -104,6 +105,7 @@ async function medList(c, f0, opts) {
     const s = set[x.facility_id] || {};
     return {
       id: x.id, worker_id: x.worker_id, full_name: x.full_name, last_name: n.last, first_name: n.first, login: x.login,
+      pesel: x.pesel || "", birth: x.birth ? String(x.birth).slice(0, 10) : "",
       facility: x.facility || "—", stanowisko: x.stanowisko || "", bhp: x.bhp, status: x.status,
       ordered_at: x.ordered_at, med_date: medDate(x.bhp, sent),
       med_kind: s.kind || "badanie", address: s.address || "",
@@ -250,10 +252,10 @@ async function history(c, kind) {
 // ── Листи ─────────────────────────────────────────────────────────────
 const HEAD = {
   adv: ["Lp", "Nazwisko i imię", "Paszport", "Obiekt", "Data BHP", "Data wniosku", "Kwota (zł)", "Godziny (m-c wniosku)", "Zatwierdził"],
-  med: ["Lp", "Nazwisko", "Imię", "Paszport", "Przedsiębiorstwo", "Stanowisko", "Data BHP", "Data badania", "Typ badania", "Koordynator", "Adres"],
+  med: ["Lp", "Nazwisko", "Imię", "Paszport", "PESEL / Data urodzenia", "Przedsiębiorstwo", "Stanowisko", "Data BHP", "Data badania", "Typ badania", "Koordynator", "Adres"],
   fin: ["Lp", "Nazwisko", "Imię", "Paszport", "Przedsiębiorstwo", "Data", "Rodzaj kary", "Kwota (zł)", "Uwagi", "Wystawił"],
 };
-const WIDTHS = { adv: [5, 30, 14, 26, 12, 13, 11, 12, 24], med: [5, 20, 18, 14, 26, 22, 12, 13, 18, 24, 30], fin: [5, 20, 18, 14, 26, 12, 32, 11, 30, 22] };
+const WIDTHS = { adv: [5, 30, 14, 26, 12, 13, 11, 12, 24], med: [5, 20, 18, 14, 20, 26, 22, 12, 13, 18, 24, 30], fin: [5, 20, 18, 14, 26, 12, 32, 11, 30, 22] };
 const RIGHT = { adv: [0, 6, 7], med: [0], fin: [0, 7] };
 
 function rowsOf(kind, items, std, sentIso, c) {
@@ -262,7 +264,7 @@ function rowsOf(kind, items, std, sentIso, c) {
       x.amount, x.note || "", x.created_by_name || ""]);
   }
   if (kind === "med") {
-    return items.map((x, i) => [i + 1, x.last_name, x.first_name, x.login || "", x.facility, x.stanowisko || "",
+    return items.map((x, i) => [i + 1, x.last_name, x.first_name, x.login || "", x.pesel || dmyIso(x.birth), x.facility, x.stanowisko || "",
       dmyIso(x.bhp), dmyIso(medDate(x.bhp, sentIso)), MED_KINDS[x.med_kind] || MED_KINDS.badanie,
       (c && c.full_name) || "", x.address || ""]);   // Koordynator — хто замовляє; тип і адреса — з налаштувань закладу
   }

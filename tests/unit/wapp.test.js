@@ -116,13 +116,51 @@ test("wapp: вікно правки годин — максимум 2 дні н�
   assert.equal(inPeriods(ps, "2026-10-20"), true);
 });
 
-test("student.stateOf: чинна / закінчується за 14 днів / закінчилась / без дати", () => {
+test("student.stateOf: чинна / закінчується за 45 днів / закінчилась / без дати", () => {
   const t = "2026-10-26";
   assert.equal(student.stateOf(null, t), "none");
   assert.equal(student.stateOf({ is_student: false, valid_until: "2027-01-01" }, t), "none");
   assert.equal(student.stateOf({ is_student: true, valid_until: null }, t), "unknown");
-  assert.equal(student.stateOf({ is_student: true, valid_until: "2026-11-30" }, t), "active");
+  assert.equal(student.stateOf({ is_student: true, valid_until: "2026-12-11" }, t), "active");
+  assert.equal(student.stateOf({ is_student: true, valid_until: "2026-12-10" }, t), "expiring");
   assert.equal(student.stateOf({ is_student: true, valid_until: "2026-11-08" }, t), "expiring");
   assert.equal(student.stateOf({ is_student: true, valid_until: "2026-10-26" }, t), "expiring");
   assert.equal(student.stateOf({ is_student: true, valid_until: "2026-10-25" }, t), "expired");
+});
+
+test("student.hrPlan: дати з HRappka лише коли там змінились; «довідку прийнято» — коли «до» посунулось пізніше", () => {
+  const t = "2026-10-28";
+  const rows = new Map([
+    [1, { hr_from: "2025-10-01", hr_until: "2026-10-31", status: "accepted" }],   // продовжили
+    [2, { hr_from: "2025-10-01", hr_until: "2026-10-31", status: "sent" }],       // у HRappka без змін — довідка з застосунку чекає
+    [3, { hr_from: null, hr_until: null, status: "sent" }],                       // лише з застосунку, тепер у HRappka
+    [4, { hr_from: null, hr_until: null, status: "sent" }],                       // лише з застосунку, у HRappka нічого
+    [5, { hr_from: "2025-10-01", hr_until: "2026-10-31", status: "accepted" }],   // виправили на ранішу дату
+    [6, { hr_from: "2025-10-01", hr_until: "2026-06-30", status: "accepted" }],   // прибрали в HRappka
+    [8, { hr_from: "2025-10-01", hr_until: "2026-06-30", status: "accepted" }],   // продовжили, але вже минуло
+  ]);
+  const hr = [
+    { worker_id: 1, from: "2026-10-01", to: "2027-02-28" },
+    { worker_id: 2, from: "2025-10-01", to: "2026-10-31" },
+    { worker_id: 3, from: "2026-10-01", to: "2027-02-28" },
+    { worker_id: 4, from: null, to: null },
+    { worker_id: 5, from: "2025-10-01", to: "2026-10-30" },
+    { worker_id: 6, from: null, to: null },
+    { worker_id: 7, from: "2026-10-01", to: "2027-02-28" },   // новий студент — без повідомлення
+    { worker_id: 8, from: "2025-10-01", to: "2026-09-30" },
+  ];
+  const p = student.hrPlan(rows, hr, { today: t });
+  assert.deepEqual(p.set.map((x) => x.worker_id), [1, 3, 5, 6, 7, 8]);
+  assert.deepEqual(p.accepted, [1, 3]);
+  // перше завантаження з HRappka — лише записати, без повідомлень
+  assert.deepEqual(student.hrPlan(rows, hr, { today: t, first: true }).accepted, []);
+});
+
+test("student.TX: нагадування — з кількістю днів, довідку — через застосунок", () => {
+  const tx = student.TX.uk;
+  assert.match(tx.soon("30.11.2026", 33), /до 30\.11\.2026 \(залишилось 33 дні\).*через застосунок/);
+  assert.match(tx.soon("30.11.2026", 21), /залишилось 21 день/);
+  assert.doesNotMatch(tx.soon("28.10.2026", 0), /залишилось/);
+  assert.match(student.TX.ru.soon("30.11.2026", 5), /осталось 5 дней/);
+  assert.equal(student.TX.pl.ok("01.10.2026", "28.02.2027"), "✅ Nowe zaświadczenie przyjęte. Status studenta jest ważny od 01.10.2026 do 28.02.2027.");
 });

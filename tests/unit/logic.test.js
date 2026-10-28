@@ -87,6 +87,42 @@ test("docs_sheet: дати клітинок, імена, колонки, зіс�
   assert.equal(ds.prevBhp(a, "2026-10-20"), null);
 });
 
+test("docs_sheet: нові працівники — аркуш, дублікати, вільний рядок", () => {
+  const ds = require("../../bot/docs_sheet")._test;
+  const x = { facility_id: 2, bhp: "2026-10-29", login: "FZ262065", full_name: "YELPASHEV ANDRII" };
+  assert.equal(ds.tabFor({ ...x, prev_status: "przeniesiony", prev_fid: 1, prev_lwd: "2026-10-28" }), "PRZENIESIENIE");
+  assert.equal(ds.tabFor({ ...x, prev_status: "przeniesiony", prev_fid: 1, prev_lwd: "2026-09-01" }), "BEZPOSREDNIO");   // давно — не перенос
+  assert.equal(ds.tabFor({ ...x, prev_status: "przeniesiony", prev_fid: 2, prev_lwd: "2026-10-28" }), "BEZPOSREDNIO");   // той самий об'єкт
+  assert.equal(ds.tabFor({ ...x, prev_status: "zwolniony", prev_fid: 1, prev_lwd: "2026-10-28" }), "BEZPOSREDNIO");
+  assert.equal(ds.tabFor({ ...x, prev_status: null }), "BEZPOSREDNIO");
+  const head = ["DATA WYSLANIA", "UWAGI ", "PASZPORT", "NAZWISKO I IMIE", "ZAKLAD Z", "ZAKLAD DO", "UMOWA OD", "ANKIETA", "DOKUMENTY",
+    "UMOWA", "ZAKWATEROWANIE", "PROGRAM LOJALNOŚCIOWY ( ZGODA/ODMOWA)", "PROGRAM LOJALNOŚCIOWY PODPISANY ( TAK/NIE )", "Rezygnacja z ubezp. STUDENTA ", "KOORDYNATOR"];
+  const c = ds.columns(head);
+  assert.deepEqual([c.sent, c.uwagi, c.facFrom, c.fac, c.koord], [0, 1, 4, 5, 14]);
+  const b = ds.columns(["DATA WYSLANIA", "UWAGI ", "PASZPORT", "NAZWISKO I IMIE", "ZAKLAD", "UMOWA OD"]);
+  assert.deepEqual([b.fac, b.facFrom, b.koord], [4, -1, -1]);
+  const v = [head, ["27.10.2026", "", "FZ 262065", "X"], ["20.10.2026", "", "", "Andrii Yelpashev"], [46323], [46323], []];
+  assert.equal(ds.isDup(v, c, x, "2026-10-28"), true);                         // паспорт, дата за день
+  assert.equal(ds.isDup(v, c, { ...x, login: "" }, "2026-10-28"), false);      // ПІБ є, але дата за 8 днів
+  assert.equal(ds.isDup(v, c, { ...x, login: "" }, "2026-10-22"), true);
+  assert.equal(ds.isDup(v, c, x, "2026-11-05"), false);
+  assert.equal(ds.freeRow(v, c, new Set()), 3);                                 // рядок із датою заздалегідь
+  assert.equal(ds.freeRow(v, c, new Set([3, 4])), 5);
+  assert.equal(ds.freeRow([head], c, new Set()), 1);
+});
+
+test("hr_import.started: у таблицю — Pracuje / Dotarł з HRappka", () => {
+  const { started } = require("../../bot/hr_import")._test;
+  const t = (hr_state, status = "pracuje") => ({ status, hr_state });
+  assert.equal(started({ op: "create", t: t("Dotarł") }), true);
+  assert.equal(started({ op: "insert", t: t("Pracuje") }), true);
+  assert.equal(started({ op: "insert", t: t("Do zatrudnienia (=Harmonogram)", "do_zatrudnienia") }), false);
+  assert.equal(started({ op: "insert", t: t("Zwolniony, przejście bezpośrednio") }), false);
+  assert.equal(started({ op: "update", w: { status: "do_zatrudnienia" }, t: t("Pracuje"), changed: ["status", "hr_state"] }), true);
+  assert.equal(started({ op: "update", w: { status: "pracuje" }, t: t("Pracuje"), changed: ["hr_state"] }), false);
+  assert.equal(started({ op: "update", w: { status: "unknown" }, t: t("Pracuje"), changed: ["status"] }), false);   // з таблиць, не з HRappka
+});
+
 const reason = require("../../bot/hr_reason");
 test("hr_reason.decide: причина належить періоду, якщо змінилася після BHP і до +10 днів", () => {
   const ctx = { today: "2026-11-30", jstart: "2026-01-01" };

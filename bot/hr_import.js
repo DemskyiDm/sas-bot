@@ -647,7 +647,8 @@ function schedule() {
     const err = (where, e) => console.error(`[hr import] ${where}:`, e.response ? JSON.stringify(e.response.data).slice(0, 300) : e.message);
     try {
       const r = await require("../import_sheets").runImport();   // через чергу імпортів (api/flow.js)
-      if (r && r.skipped) console.warn("[hr import] імпорт таблиць пропущено (інший ще йде) — HRappka з попередньою копією таблиць");
+      // runImport повертає { skipped: "locked" }, лише коли інший імпорт іще йде (звичайний результат теж має skipped — лічильники аркушів)
+      if (r && r.skipped === "locked") console.warn("[hr import] імпорт таблиць пропущено (інший ще йде) — HRappka з попередньою копією таблиць");
     } catch (e) { err("таблиці", e); }
     // таблиці не дійшли до HRappka (пропуск, помилка) — HRappka все одно
     try { if (!LAST || LAST.at < started) await exclusive(() => run()); } catch (e) { err("HRappka", e); }

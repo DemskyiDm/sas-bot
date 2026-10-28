@@ -121,97 +121,6 @@ router.get("/missing", requireAuth, async (req, res) => {
   }
 });
 
-// ── Monthly stats ─────────────────────────────────────────────
-router.get("/stats", requireAuth, async (req, res) => {
-  try {
-    const { month, facility_id } = req.query;
-    const m = month || new Date().toISOString().substring(0, 7);
-    const allowedFacilities = await getFacilityFilter(req.coordinator);
-
-    // TEST-работники не входят ни в один счётчик статистики
-    let facWhere = `w.status = 'pracuje' AND w.${NOT_TEST}`;
-    const facParams = [];
-    const dateParams = [`${m}-01`];
-
-    if (facility_id) {
-      facParams.push(facility_id);
-      dateParams.push(facility_id);
-      facWhere += ` AND w.facility_id = $${facParams.length}`;
-    } else if (allowedFacilities !== null) {
-      if (allowedFacilities.length === 0) {
-        return res.json({
-          ok: true,
-          data: { workers: 0, hours: 0, missing: 0, advances: 0 },
-        });
-      }
-      facParams.push(allowedFacilities);
-      dateParams.push(allowedFacilities);
-      facWhere += ` AND w.facility_id = ANY($${facParams.length})`;
-    }
-
-    const dateWhere = facWhere.replace(
-      /\$(\d+)/g,
-      (_, n) => `$${parseInt(n) + 1}`,
-    );
-
-    let advWhere = `a.status = 'pending' AND w.${NOT_TEST}`;
-    const advParams = [];
-    if (facility_id) {
-      advParams.push(facility_id);
-      advWhere += ` AND w.facility_id = $${advParams.length}`;
-    } else if (allowedFacilities !== null) {
-      advParams.push(allowedFacilities);
-      advWhere += ` AND w.facility_id = ANY($${advParams.length})`;
-    }
-
-
-    const [workers, hours, missing, advances] = await Promise.all([
-      db.query(
-        `SELECT COUNT(*) FROM v_worker_current w WHERE ${facWhere}`,
-        facParams,
-      ),
-      db.query(
-        `SELECT COALESCE(SUM(h.hours), 0) AS total
-         FROM hours_log h
-         JOIN v_worker_current w ON w.id = h.worker_id
-         WHERE DATE_TRUNC('month', h.work_date) = $1::date AND ${dateWhere}`,
-        dateParams,
-      ),
-      db.query(
-        `SELECT COUNT(DISTINCT w.id) AS cnt
-         FROM v_worker_current w
-         WHERE ${dateWhere}
-           AND NOT EXISTS (
-             SELECT 1 FROM hours_log h
-             WHERE h.worker_id = w.id
-               AND DATE_TRUNC('month', h.work_date) = $1::date
-           )`,
-        dateParams,
-      ),
-      db.query(
-        `SELECT COUNT(*) AS count
-   FROM advances a
-   JOIN v_worker_current w ON w.id = a.worker_id
-   WHERE ${advWhere}`,
-        advParams,
-      ),
-    ]);
-
-    res.json({
-      ok: true,
-      data: {
-        workers: parseInt(workers.rows[0].count),
-        hours: parseFloat(hours.rows[0].total),
-        missing: parseInt(missing.rows[0].cnt),
-        advances: parseInt(advances.rows[0].count),
-      },
-    });
-  } catch (err) {
-    console.error("Stats error:", err.message);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
 // ── Edit hours (web) ──────────────────────────────────────────
 router.post("/hours", requireAuth, async (req, res) => {
   try {
@@ -468,8 +377,8 @@ router.get("/history", requireAuth, async (req, res) => {
   }
 });
 
-// ── Workers stats ─────────────────────────────────────────────
-// Плитка «Wszyscy»: адмін — уся фірма; координатор / регіональний — свої обʼєкти (регіон),
+// ── Лічильники сторінки Start ─────────────────────────────────
+// «Pracuje»: адмін — уся фірма; координатор / регіональний — свої обʼєкти (регіон),
 // а під ними — уся фірма (company_total; scope: own | region — є обʼєкти як регіональний).
 async function companyHeadcount(coordinator) {
   const [all, lead] = await Promise.all([
@@ -482,7 +391,7 @@ async function companyHeadcount(coordinator) {
   return { company_total: all.rows[0].n, scope: lead.rows[0].lead ? "region" : "own" };
 }
 
-// Картки «Pracownicy» і сторінка Start (GET /start): facIds — обʼєкти (null — уся фірма). TEST не рахуємо.
+// Сторінка Start (GET /start): facIds — обʼєкти (null — уся фірма). TEST не рахуємо.
 async function workerCounts(facIds) {
   const zero = { total: 0, new_this_week: 0, leaving_this_week: 0, leaving_this_month: 0, started_this_week: 0 };
   if (facIds !== null && facIds.length === 0) return zero;
@@ -539,18 +448,8 @@ async function workerCounts(facIds) {
   };
 }
 
-router.get("/workers/stats", requireAuth, async (req, res) => {
-  try {
-    const allowedFacilities = await getFacilityFilter(req.coordinator);
-    const company = allowedFacilities !== null ? await companyHeadcount(req.coordinator) : {};
-    res.json({ ok: true, data: { ...(await workerCounts(allowedFacilities)), ...company } });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
 // ── Start — стартова сторінка панелі (public/js/start.js) ─────────────
-// Зверху — ті самі числа, що на картках «Pracownicy» (workerCounts), і години за місяць до сьогодні
+// Зверху — працівники (workerCounts: так рахувались колишні картки «Pracownicy») і години за місяць до сьогодні
 // проти того самого відрізка минулого місяця. Нижче — «Do zrobienia»: кожне число веде у вкладку з фільтром.
 // Охоплення — як у вкладках: адмін — уся фірма, інші — свої обʼєкти (coordinator_facilities); аванси — як у «Zaliczki»
 // (збережений вибір: свої / регіон / уся фірма). Години «вчора» і пропуски з 1-го числа — як у звіті координаторам

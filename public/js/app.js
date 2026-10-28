@@ -116,7 +116,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
   initMonthSelect();
   loadFacilities();
-  loadStats();
   // #page=advances / #page=dayoff … — z mini-panelu w Telegramie; bez — strona startowa
   const hp = (/^#page=(\w+)$/.exec(location.hash) || [])[1];
   showPage(hp && document.getElementById("page" + hp.charAt(0).toUpperCase() + hp.slice(1)) ? hp : currentPage);
@@ -206,17 +205,10 @@ function showPage(page) {
     settings: "Ustawienia",
     dayoff: "Вихідні",
   };
-  document.getElementById("statsHours").style.display =
-    page === "hours" ? "" : "none";
-  document.getElementById("statsMissing").style.display =
-    page === "missing" ? "" : "none";
-  document.getElementById("statsWorkers").style.display =
-    page === "workers" ? "" : "none";
   loadPage(page);
 }
 
 async function loadAll() {
-  loadStats();
   loadPage(currentPage);
 }
 
@@ -224,10 +216,7 @@ async function loadPage(page) {
   if (page === "start") loadStartPage();
   if (page === "hours") loadWorkers();
   if (page === "advances") loadAdvances();
-  if (page === "workers") {
-    loadWorkersPage();
-    loadWorkerStats();
-  }
+  if (page === "workers") loadWorkersPage();
   if (page === "dayoff") loadDayoffPage();
   if (page === "medical" && typeof loadMedicalPage === "function") loadMedicalPage();   // public/js/office.js
   if (page === "medset" && typeof loadMedSettingsPage === "function") loadMedSettingsPage();
@@ -244,48 +233,6 @@ async function loadFacilities() {
     if (!res) return;
     facilities = res.data;
   } catch (e) { }
-}
-
-// ── STATS ─────────────────────────────────────────────────────
-async function loadStats() {
-  try {
-    const month = document.getElementById("monthSelect").value;
-    const fid = document.getElementById("facilitySelect")?.value || "";
-    const data_res = await apiFetch(
-      `/api/stats?month=${month}${fid ? "&facility_id=" + fid : ""}`,
-    );
-    if (!data_res) return;
-    const { data } = data_res;
-    document.getElementById("statWorkers").textContent = data.workers;
-    document.getElementById("statHours").textContent = Math.round(data.hours);
-    document.getElementById("statMissing").textContent = data.missing;
-    document.getElementById("statMissingWorkers").textContent = data.workers;
-    document.getElementById("statMissingHours").textContent = Math.round(
-      data.hours,
-    );
-    document.getElementById("statMissingCount").textContent = data.missing;
-    // плитки вкладки «Pracownicy» (Wszyscy, Przyjęcia, Odejścia) заповнює тільки loadWorkerStats (workers.js):
-    // інакше, якщо ця відповідь приходила пізніше, там лишались «—» і число за вибраним обʼєктом
-  } catch (e) {
-    console.error(e);
-  }
-}
-
-async function loadStatsByFacility(facilityId) {
-  try {
-    const month = document.getElementById("monthSelect").value;
-    const fid = facilityId || "";
-    const data_res = await apiFetch(
-      `/api/stats?month=${month}${fid ? "&facility_id=" + fid : ""}`,
-    );
-    if (!data_res || !data_res.data) return;
-    const { data } = data_res;
-    document.getElementById("statWorkers").textContent = data.workers;
-    document.getElementById("statHours").textContent = Math.round(data.hours);
-    document.getElementById("statMissing").textContent = data.missing;
-  } catch (e) {
-    console.error(e);
-  }
 }
 
 // ── REMINDERS ─────────────────────────────────────────────────

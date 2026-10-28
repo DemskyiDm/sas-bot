@@ -177,90 +177,6 @@
         </div>
       </div>
 
-      <!-- STATS: HOURS -->
-      <div class="stats-row" id="statsHours" style="display: none; grid-template-columns: repeat(3, 1fr)">
-        <div class="stat-card blue">
-          <div class="stat-label">Pracownicy</div>
-          <div class="stat-value" id="statWorkers">—</div>
-          <div class="stat-sub">aktywnych</div>
-        </div>
-        <div class="stat-card green">
-          <div class="stat-label">Godziny</div>
-          <div class="stat-value" id="statHours">—</div>
-          <div class="stat-sub">w tym miesiacu</div>
-        </div>
-        <div class="stat-card red">
-          <div class="stat-label">Braki</div>
-          <div class="stat-value" id="statMissing">—</div>
-          <div class="stat-sub">osob z brakami</div>
-        </div>
-      </div>
-
-      <!-- STATS: MISSING -->
-      <div class="stats-row" id="statsMissing" style="display: none; grid-template-columns: repeat(3, 1fr)">
-        <div class="stat-card blue">
-          <div class="stat-label">Pracownicy</div>
-          <div class="stat-value" id="statMissingWorkers">—</div>
-          <div class="stat-sub">aktywnych</div>
-        </div>
-        <div class="stat-card green">
-          <div class="stat-label">Godziny</div>
-          <div class="stat-value" id="statMissingHours">—</div>
-          <div class="stat-sub">w tym miesiacu</div>
-        </div>
-        <div class="stat-card red">
-          <div class="stat-label">Braki</div>
-          <div class="stat-value" id="statMissingCount">—</div>
-          <div class="stat-sub">osob z brakami</div>
-        </div>
-      </div>
-
-      <!-- STATS: WORKERS -->
-      <div class="stats-row" id="statsWorkers" style="display: none; grid-template-columns: repeat(4, 1fr)">
-        <div class="stat-card blue" style="display:flex;flex-direction:column;">
-          <div class="stat-label">Wszyscy</div>
-          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
-            <div class="stat-value" id="statAllWorkers">—</div>
-            <div class="stat-sub" id="statAllSub">aktywnych</div>
-            <!-- координатор / регіональний: уся фірма під своїми (workers.js → loadWorkerStats) -->
-            <div id="statAllCompany" hidden style="margin-top:8px;padding-top:6px;border-top:1px solid var(--border);font-size:12px;color:var(--text2);text-align:center"></div>
-          </div>
-        </div>
-
-        <div class="stat-card green" style="display:grid;grid-template-columns:1fr 1fr;gap:0">
-          <div style="display:flex;flex-direction:column;border-right:1px solid var(--border);">
-            <div class="stat-label" style="padding:12px 16px 0">Przyjecia</div>
-            <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
-              <div class="stat-value" id="statNewWorkers">—</div>
-              <div class="stat-sub">w tym tygodniu</div>
-            </div>
-          </div>
-          <div style="display:flex;flex-direction:column;">
-            <div class="stat-label" style="padding:12px 16px 0">Podjęli pracę</div>
-            <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
-              <div class="stat-value" id="statStartedWorkers">—</div>
-              <div class="stat-sub">Status pracuje</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="stat-card orange" style="display:flex;flex-direction:column;">
-          <div class="stat-label">Zwolnienia</div>
-          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
-            <div class="stat-value" id="statLeavingWeek">—</div>
-            <div class="stat-sub">w tym tygodniu</div>
-          </div>
-        </div>
-
-        <div class="stat-card red" style="display:flex;flex-direction:column;">
-          <div class="stat-label">Do konca mies.</div>
-          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
-            <div class="stat-value" id="statLeavingMonth">—</div>
-            <div class="stat-sub">zwolnienia</div>
-          </div>
-        </div>
-      </div>
-
       <!-- PAGE: HOURS -->
       <div id="pageHours" style="display: none">
         <div class="card">
@@ -455,39 +371,28 @@
       <!-- PAGE: WORKERS -->
       <div id="pageWorkers" style="display: none">
         <div class="card">
-          <div style="
-                display: flex;
-                align-items: center;
-                padding: 14px 16px;
-                border-bottom: 1px solid var(--border);
-                gap: 10px;
-                flex-wrap: wrap;
-              ">
-            <span style="font-size: 13px; font-weight: 600">Pracownicy</span>
-            <span class="card-count" id="workersCount">0</span>
-            <div style="
-                  margin-left: auto;
-                  display: flex;
-                  gap: 8px;
-                  flex-wrap: wrap;
-                  align-items: center;
-                ">
-              <input type="text" id="workersSearch" placeholder="Szukaj pracownika..." style="width: 180px"
-                oninput="filterWorkers()" />
+          <!-- nagłówek: tytuł i liczba | działania -->
+          <div class="wk-head">
+            <div class="wk-title">Pracownicy <span class="card-count" id="workersCount">0</span></div>
+            <div class="wk-actions">
+              <button class="btn btn-primary btn-sm" onclick="openWorkerModal(null)">+ Dodaj</button>
+              <button class="btn btn-ghost btn-sm" onclick="startImport()" id="importBtn">⬇ Import z HRappka</button>
               <!-- podpisy dokumentów w HRappka (workers.js → HRS, api/hr_sign.js) -->
-              <select id="workersDocs" onchange="filterWorkers()" title="Podpisy dokumentów w HRappka (BHP od 15.10.2026)">
-                <option value="">Dokumenty: wszyscy</option>
-                <option value="unsigned">Nie podpisali</option>
-                <option value="signed">Wszystko podpisane</option>
-                <option value="missing">Brak w HRappka</option>
-              </select>
               <button class="btn btn-ghost btn-sm" id="workersDocsBtn" onclick="refreshSignatures()" title="Sprawdź teraz w HRappka (widoczni na liście, BHP od 15.10)">🔄 Sprawdź podpisy</button>
-              <div style="display:flex;gap:6px;align-items:center;">
-                <div style="position:relative;" id="workersGroupDropWrap">
-                  <button onclick="toggleWorkersGroupDrop()"
-                    style="height:34px;padding:0 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;">
-                    <span id="workersGroupLabel">📁 Grupa...</span> <span style="font-size:9px">▼</span>
-                  </button>
+              <div style="position:relative" id="workersColsWrap">
+                <button class="btn btn-ghost btn-sm" onclick="toggleWorkersCols(event)" title="Kolumny w tabeli i w Excelu">⚙ Kolumny</button>
+                <div id="workersColsDrop" style="display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:300;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.35);white-space:nowrap"></div>
+              </div>
+              <button class="btn btn-ghost btn-sm" onclick="exportToExcel('workers')">📥 Excel</button>
+            </div>
+          </div>
+          <!-- filtry: szukaj, grupa, obiekt, status, dokumenty, student -->
+          <div class="wk-filters">
+            <input type="text" id="workersSearch" class="wk-search" placeholder="🔍 Szukaj: nazwisko, ID, PESEL…" oninput="filterWorkers()" />
+            <div style="position:relative;" id="workersGroupDropWrap">
+              <button class="wk-drop" onclick="toggleWorkersGroupDrop()">
+                <span id="workersGroupLabel">📁 Grupa...</span> <span class="wk-caret">▾</span>
+              </button>
                   <div id="workersGroupDrop"
                     style="display:none;position:absolute;top:38px;left:0;background:var(--surface2);border:1px solid var(--border);border-radius:8px;min-width:240px;max-height:400px;overflow-y:auto;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.4);padding:6px 0;">
                     <div
@@ -498,13 +403,11 @@
                     </div>
                     <div id="workersGroupList"></div>
                   </div>
-                </div>
-
-                <div style="position:relative;" id="workersFacDropWrap">
-                  <button onclick="toggleWorkersFacDrop()"
-                    style="height:34px;padding:0 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;">
-                    <span id="workersFacLabel">🏭 Obiekt...</span> <span style="font-size:9px">▼</span>
-                  </button>
+            </div>
+            <div style="position:relative;" id="workersFacDropWrap">
+              <button class="wk-drop" onclick="toggleWorkersFacDrop()">
+                <span id="workersFacLabel">🏭 Obiekt...</span> <span class="wk-caret">▾</span>
+              </button>
                   <div id="workersFacDrop"
                     style="display:none;position:absolute;top:38px;left:0;background:var(--surface2);border:1px solid var(--border);border-radius:8px;min-width:240px;max-height:400px;overflow-y:auto;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.4);padding:6px 0;">
                     <div
@@ -515,15 +418,13 @@
                     </div>
                     <div id="workersFacList"></div>
                   </div>
-                </div>
-              </div>
-              <div style="position:relative;" id="statusDropWrap">
-                <button onclick="toggleStatusDrop('workers')"
-                  style="height:34px;padding:0 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;">
-                  <span id="workersStatusLabel">Wszystkie statusy</span> ▾
-                </button>
+            </div>
+            <div style="position:relative;" id="statusDropWrap">
+              <button class="wk-drop" onclick="toggleStatusDrop('workers')">
+                <span id="workersStatusLabel">Wszystkie statusy</span> <span class="wk-caret">▾</span>
+              </button>
                 <div id="workersStatusDrop"
-                  style="display:none;position:absolute;top:38px;right:0;background:var(--surface2);border:1px solid var(--border);border-radius:8px;z-index:999;min-width:180px;padding:6px 0;box-shadow:0 8px 24px rgba(0,0,0,.4);">
+                  style="display:none;position:absolute;top:38px;left:0;background:var(--surface2);border:1px solid var(--border);border-radius:8px;z-index:999;min-width:180px;padding:6px 0;box-shadow:0 8px 24px rgba(0,0,0,.4);">
                   <div onclick="toggleStatus('workers','')" id="wst_all"
                     style="padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;">
                     <span
@@ -574,82 +475,36 @@
                       id="wst_do_zatrudnienia_check"></span>Do zatrudnienia
                   </div>
                 </div>
-              </div>
-              <select id="workersPageSize" onchange="changeWorkersPageSize()" style="width: 80px">
-                <option value="10">10</option>
-                <option value="20">20</option>
-                <option value="50">50</option>
-                <option value="100">100</option>
-                <option value="99999">Wszystkie</option>
-              </select>
-              <button class="btn btn-primary btn-sm" onclick="openWorkerModal(null)">
-                + Dodaj
-              </button>
-              <button class="btn btn-ghost btn-sm" onclick="startImport()" id="importBtn">
-                ⬇ Import z HRappka
-              </button>
-              <div style="position:relative" id="workersColsWrap">
-                <button class="btn btn-ghost btn-sm" onclick="toggleWorkersCols(event)" title="Kolumny w tabeli i w Excelu">⚙ Kolumny</button>
-                <div id="workersColsDrop" style="display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:300;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.35);white-space:nowrap"></div>
-              </div>
-              <button class="btn btn-ghost btn-sm" onclick="exportToExcel('workers')">
-                📥 Excel
-              </button>
             </div>
-          </div>
-          <div style="
-                display: flex;
-                align-items: center;
-                padding: 8px 16px;
-                border-bottom: 1px solid var(--border);
-                gap: 12px;
-                flex-wrap: wrap;
-                background: var(--surface2);
-              ">
-            <div style="display: flex; align-items: center; gap: 6px">
-              <span style="
-                    font-size: 11px;
-                    color: var(--text3);
-                    font-family: var(--mono);
-                  ">BHP:</span>
-              <input type="date" id="workersBhpFrom" onchange="filterWorkers()" style="width: 130px" title="BHP od" />
-              <span style="color: var(--text3); font-size: 12px">—</span>
-              <input type="date" id="workersBhpTo" onchange="filterWorkers()" style="width: 130px" title="BHP do" />
-            </div>
-            <div style="display: flex; align-items: center; gap: 6px">
-              <span style="
-                    font-size: 11px;
-                    color: var(--text3);
-                    font-family: var(--mono);
-                  ">Ostatni dzień:</span>
-              <input type="date" id="workersLastFrom" onchange="filterWorkers()" style="width: 130px" />
-              <span style="color: var(--text3); font-size: 12px">—</span>
-              <input type="date" id="workersLastTo" onchange="filterWorkers()" style="width: 130px" />
-            </div>
+            <select id="workersDocs" onchange="filterWorkers()" title="Podpisy dokumentów w HRappka (BHP od 15.10.2026)">
+              <option value="">Dokumenty: wszyscy</option>
+              <option value="unsigned">Nie podpisali</option>
+              <option value="signed">Wszystko podpisane</option>
+              <option value="missing">Brak w HRappka</option>
+            </select>
             <!-- status studenta (workers.js → studentState, bot/student.js) -->
-            <div style="display: flex; align-items: center; gap: 6px">
-              <span style="
-                    font-size: 11px;
-                    color: var(--text3);
-                    font-family: var(--mono);
-                  ">Student:</span>
-              <select id="workersStudent" onchange="filterWorkers()" style="width: 170px" title="Status studenta z HRappka">
-                <option value="">Wszyscy</option>
-                <option value="yes">Studenci</option>
-                <option value="active">Status ważny</option>
-                <option value="expiring">Kończy się (≤ 45 dni)</option>
-                <option value="expired">Wygasł</option>
-                <option value="sent">Nowe zaświadczenie czeka</option>
-                <option value="no">Nie studenci</option>
-              </select>
-              <span style="font-size: 11px; color: var(--text3); font-family: var(--mono)">do:</span>
-              <input type="date" id="workersStudFrom" onchange="filterWorkers()" style="width: 130px" title="Student do — od" />
-              <span style="color: var(--text3); font-size: 12px">—</span>
-              <input type="date" id="workersStudTo" onchange="filterWorkers()" style="width: 130px" title="Student do — do" />
-            </div>
-            <button class="btn btn-ghost btn-sm" onclick="clearWorkersFilters()" style="margin-left: auto">
-              ✕ Wyczyść filtry
-            </button>
+            <select id="workersStudent" onchange="filterWorkers()" title="Status studenta z HRappka">
+              <option value="">Student: wszyscy</option>
+              <option value="yes">Studenci</option>
+              <option value="active">Status ważny</option>
+              <option value="expiring">Kończy się (≤ 45 dni)</option>
+              <option value="expired">Wygasł</option>
+              <option value="sent">Nowe zaświadczenie czeka</option>
+              <option value="no">Nie studenci</option>
+            </select>
+            <button class="btn btn-ghost btn-sm wk-clear" onclick="clearWorkersFilters()">✕ Wyczyść filtry</button>
+          </div>
+          <!-- daty: od — do -->
+          <div class="wk-dates">
+            <div class="wk-range"><span>BHP</span>
+              <input type="date" id="workersBhpFrom" onchange="filterWorkers()" title="BHP od" /><i>—</i>
+              <input type="date" id="workersBhpTo" onchange="filterWorkers()" title="BHP do" /></div>
+            <div class="wk-range"><span>Ostatni dzień</span>
+              <input type="date" id="workersLastFrom" onchange="filterWorkers()" title="Ostatni dzień od" /><i>—</i>
+              <input type="date" id="workersLastTo" onchange="filterWorkers()" title="Ostatni dzień do" /></div>
+            <div class="wk-range"><span>Student do</span>
+              <input type="date" id="workersStudFrom" onchange="filterWorkers()" title="Student do — od" /><i>—</i>
+              <input type="date" id="workersStudTo" onchange="filterWorkers()" title="Student do — do" /></div>
           </div>
           <div class="table-wrap">
             <table>
@@ -667,7 +522,19 @@
                 </tr>
               </tbody>
             </table>
+          </div>
+          <!-- strony i liczba wierszy -->
+          <div class="wk-foot">
             <div id="paginationWorkers"></div>
+            <label class="wk-size">Na stronie
+              <select id="workersPageSize" onchange="changeWorkersPageSize()">
+                <option value="10">10</option>
+                <option value="20">20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="99999">Wszystkie</option>
+              </select>
+            </label>
           </div>
         </div>
       </div>

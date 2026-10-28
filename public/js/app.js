@@ -3,7 +3,7 @@ let allWorkers = [];
 let facilities = [];
 let currentFacility = "";
 let editState = {};
-let currentPage = "hours";
+let currentPage = "start";   // strona startowa (public/js/start.js)
 let SESSION = localStorage.getItem("sas_session");
 let CURRENT_USER = JSON.parse(localStorage.getItem("sas_user") || "null");
 
@@ -116,10 +116,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
   initMonthSelect();
   loadFacilities();
-  loadAll();
-  // #page=advances / #page=dayoff … — z mini-panelu w Telegramie
+  loadStats();
+  // #page=advances / #page=dayoff … — z mini-panelu w Telegramie; bez — strona startowa
   const hp = (/^#page=(\w+)$/.exec(location.hash) || [])[1];
-  if (hp && hp !== "hours" && document.getElementById("page" + hp.charAt(0).toUpperCase() + hp.slice(1))) showPage(hp);
+  showPage(hp && document.getElementById("page" + hp.charAt(0).toUpperCase() + hp.slice(1)) ? hp : currentPage);
   tgStatus();
 });
 
@@ -175,6 +175,7 @@ function initMonthSelect() {
 function showPage(page) {
   currentPage = page;
   [
+    "start",
     "hours",
     "missing",
     "advances",
@@ -197,6 +198,7 @@ function showPage(page) {
     el.classList.toggle("active", el.dataset.page === page);
   });
   const titles = {
+    start: "Start",
     hours: "Przeglad godzin",
     advances: "Zaliczki",
     workers: "Pracownicy",
@@ -219,6 +221,7 @@ async function loadAll() {
 }
 
 async function loadPage(page) {
+  if (page === "start") loadStartPage();
   if (page === "hours") loadWorkers();
   if (page === "advances") loadAdvances();
   if (page === "workers") {

@@ -39,7 +39,8 @@
       <div class="nav-group" data-g="work">
         <div class="nav-gh" onclick="toggleNavGroup('work')"><span>Codzienna praca</span><span class="n"></span><span class="chev">▾</span></div>
         <div class="nav-gb">
-          <div class="nav-item active" data-page="hours" onclick="showPage('hours')">📊 Godziny</div>
+          <div class="nav-item active" data-page="start" onclick="showPage('start')">🏠 Start</div>
+          <div class="nav-item" data-page="hours" onclick="showPage('hours')">📊 Godziny</div>
           <div class="nav-item" data-page="advances" onclick="showPage('advances')">💰 Zaliczki</div>
           <div class="nav-item" data-page="workers" onclick="showPage('workers')">👥 Pracownicy</div>
           <div class="nav-item" data-page="dayoff" onclick="showPage('dayoff')">🏖️ Вихідні</div>
@@ -154,8 +155,30 @@
 
 
     <div class="content">
+      <!-- PAGE: START — strona startowa (public/js/start.js, GET /api/start) -->
+      <div id="pageStart">
+        <div class="start-head">
+          <div>
+            <div class="start-hello" id="startHello">Dzień dobry</div>
+            <div class="start-date" id="startDate"></div>
+          </div>
+          <div class="start-links">
+            <!-- pokazujemy razem z pozycjami menu (fetch /api/board/me, /api/regional/me na dole strony) -->
+            <a id="startBoard" class="btn btn-ghost btn-sm" href="zarzad.html" hidden>📊 Pulpit kierownika →</a>
+            <a id="startRegion" class="btn btn-ghost btn-sm" href="region.html" hidden>🚦 Region →</a>
+            <button class="btn btn-ghost btn-sm" onclick="loadStartPage()" title="Odśwież">⟳</button>
+          </div>
+        </div>
+        <div id="startBody"></div>
+        <div class="start-tiles" id="startTiles"></div>
+        <div class="card start-todo">
+          <div class="start-todo-h"><span>Do zrobienia</span><span class="card-count" id="startTodoCount"></span></div>
+          <div id="startTodo"></div>
+        </div>
+      </div>
+
       <!-- STATS: HOURS -->
-      <div class="stats-row" id="statsHours" style="grid-template-columns: repeat(3, 1fr)">
+      <div class="stats-row" id="statsHours" style="display: none; grid-template-columns: repeat(3, 1fr)">
         <div class="stat-card blue">
           <div class="stat-label">Pracownicy</div>
           <div class="stat-value" id="statWorkers">—</div>
@@ -239,7 +262,7 @@
       </div>
 
       <!-- PAGE: HOURS -->
-      <div id="pageHours">
+      <div id="pageHours" style="display: none">
         <div class="card">
           <div style="
                 display: flex;
@@ -1146,6 +1169,7 @@
   <script src="/js/hours.js"></script>
   <script src="/js/workers.js"></script>
   <script src="/js/modules.js"></script>
+  <script src="/js/start.js"></script>
   <script src="/js/office.js"></script>
   <script src="/js/fines.js"></script>  <!-- «Kary» (po office.js — korzysta z ofcEsc / ofcToast) -->  <!-- «Wyślij do biura» (zaliczki) i «Badania lekarskie» -->
 
@@ -1246,11 +1270,11 @@ document.querySelector('.sidebar')?.addEventListener('click', (e) => {
 })();
 fetch('/api/regional/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
   .then(function (r) { return r.ok ? r.json() : null; })
-  .then(function (d) { if (d && d.has_access) document.getElementById('regionLink').style.display = ''; })
+  .then(function (d) { if (d && d.has_access) { document.getElementById('regionLink').style.display = ''; document.getElementById('startRegion').hidden = false; } })
   .catch(function () {});
 fetch('/api/board/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
   .then(function (r) { return r.ok ? r.json() : null; })
-  .then(function (d) { if (d && d.has_access) document.getElementById('boardLink').style.display = ''; })
+  .then(function (d) { if (d && d.has_access) { document.getElementById('boardLink').style.display = ''; document.getElementById('startBoard').hidden = false; } })
   .catch(function () {});
 fetch('/api/flow/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
   .then(function (r) { return r.ok ? r.json() : null; })

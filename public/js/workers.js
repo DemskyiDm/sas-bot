@@ -26,17 +26,59 @@ const WORKER_COLS = [
   { key: "tg", label: "Telegram", cell: (w) => `<span style="font-family:var(--mono);font-size:11px;color:var(--text3)">${w.telegram_chat_id ? "✅" : "—"}</span>`, xls: (w) => (w.telegram_chat_id ? "TAK" : "NIE") },
   { key: "bhp", label: "BHP", cell: (w) => `<span style="font-size:11px;color:var(--text3)">${plDate(w.bhp_date)}</span>`, xls: (w) => plDate(w.bhp_date) },
   { key: "last", label: "Ostatni dzień", cell: (w) => `<span style="font-size:11px;color:var(--text3)">${plDate(w.last_work_date)}</span>`, xls: (w) => plDate(w.last_work_date) },
+  { key: "stud_from", label: "Student od", title: "Status studenta z HRappka", cell: (w) => `<span style="font-size:11px;color:var(--text3)">${plDate(w.student_from)}</span>`, xls: (w) => plDate(w.student_from) },
+  { key: "stud_to", label: "Student do", title: "Status studenta z HRappka", cell: (w) => studentCell(w), xls: (w) => plDate(w.student_to) },
   { key: "docs", label: "Dokumenty", title: "Podpisy dokumentów w HRappka", cell: (w) => hrsCell(w), xls: null },
 ];
 const COLS_KEY = { table: "sas_workers_cols", excel: "sas_workers_cols_xls" };
+// kolumny sprzed zapisania wyboru bez listy «znanych» — nowsze (np. Student od / do) dochodzą domyślnie
+const COLS_OLD = ["login", "name", "pesel", "birth", "group", "facility", "stan", "status", "tg", "bhp", "last", "docs"];
 function colsGet(kind) {
+  const def = (c) => !c.off && (kind === "table" || c.xls);
   try {
     const v = JSON.parse(localStorage.getItem(COLS_KEY[kind]) || "null");
-    if (Array.isArray(v)) return new Set(v);
+    if (Array.isArray(v)) {
+      const known = new Set(JSON.parse(localStorage.getItem(COLS_KEY[kind] + "_known") || "null") || COLS_OLD);
+      return new Set([...v, ...WORKER_COLS.filter((c) => !known.has(c.key) && def(c)).map((c) => c.key)]);
+    }
   } catch (e) {}
-  return new Set(WORKER_COLS.filter((c) => !c.off && (kind === "table" || c.xls)).map((c) => c.key));
+  return new Set(WORKER_COLS.filter(def).map((c) => c.key));
 }
-function colsSet(kind, set) { try { localStorage.setItem(COLS_KEY[kind], JSON.stringify([...set])); } catch (e) {} }
+function colsSet(kind, set) {
+  try {
+    localStorage.setItem(COLS_KEY[kind], JSON.stringify([...set]));
+    localStorage.setItem(COLS_KEY[kind] + "_known", JSON.stringify(WORKER_COLS.map((c) => c.key)));
+  } catch (e) {}
+}
+
+// ── Status studenta (bot/student.js: HRappka «Student od / do», zaświadczenie z aplikacji pracownika) ──
+const STUDENT_SOON = 45;   // jak REMIND_DAYS w bot/student.js — od tylu dni przed końcem bot przypomina co tydzień
+// none | unknown (student bez daty) | active | expiring | expired
+function studentState(w) {
+  if (!w.student) return "none";
+  if (!w.student_to) return "unknown";
+  const t = localDate(new Date());
+  if (w.student_to < t) return "expired";
+  const soon = new Date(t + "T12:00:00Z");
+  soon.setUTCDate(soon.getUTCDate() + STUDENT_SOON);
+  return w.student_to <= soon.toISOString().slice(0, 10) ? "expiring" : "active";
+}
+function studentCell(w) {
+  const st = studentState(w);
+  if (st === "none") return `<span style="color:var(--text3)">—</span>`;
+  const color = { expired: "var(--red)", expiring: "var(--orange)", active: "var(--text2)" }[st] || "var(--text3)";
+  const tip = { expired: "Status wygasł", expiring: `Kończy się w ciągu ${STUDENT_SOON} dni — bot przypomina co tydzień`, active: "Status ważny", unknown: "Student bez daty" }[st]
+    + (w.student_source === "hrappka" ? " · HRappka" : w.student_source === "app" ? " · data z aplikacji pracownika" : "");
+  const sent = w.student_status === "sent" ? ` <span title="Pracownik wysłał nowe zaświadczenie przez aplikację — czeka na wpis w HRappka">📨</span>` : "";
+  return `<span style="font-size:11px;color:${color};${st === "active" ? "" : "font-weight:600"}" title="${tip}">${w.student_to ? plDate(w.student_to) : "bez daty"}</span>${sent}`;
+}
+function studentMatch(w, f) {
+  if (!f) return true;
+  if (f === "yes") return studentState(w) !== "none";
+  if (f === "no") return studentState(w) === "none";
+  if (f === "sent") return w.student && w.student_status === "sent";
+  return studentState(w) === f;
+}
 const visibleCols = () => { const s = colsGet("table"); return WORKER_COLS.filter((c) => s.has(c.key)); };
 
 function renderWorkersHead() {
@@ -355,6 +397,9 @@ function filterWorkers(reset = true) {
   const bhpTo = document.getElementById("workersBhpTo").value;
   const lastFrom = document.getElementById("workersLastFrom").value;
   const lastTo = document.getElementById("workersLastTo").value;
+  const stud = document.getElementById("workersStudent").value;
+  const studFrom = document.getElementById("workersStudFrom").value;
+  const studTo = document.getElementById("workersStudTo").value;
 
   const filtered = allWorkersData.filter((w) => {
     if (q && !w.full_name.toLowerCase().includes(q) && !w.login.toLowerCase().includes(q) && !(w.pesel || "").includes(q)) return false;
@@ -378,6 +423,9 @@ function filterWorkers(reset = true) {
     if (lastTo && (!w.last_work_date || localDate(w.last_work_date) > lastTo)) return false;
     const docs = document.getElementById("workersDocs") ? document.getElementById("workersDocs").value : "";
     if (docs && !(hrsInScope(w) && hrsState(w) === docs)) return false;
+    if (!studentMatch(w, stud)) return false;
+    if (studFrom && (!w.student_to || w.student_to < studFrom)) return false;
+    if (studTo && (!w.student_to || w.student_to > studTo)) return false;
     return true;
   });
   window._workersFiltered = filtered;
@@ -415,7 +463,7 @@ function clearWorkersFilters() {
   document.getElementById('workersFacLabel').textContent = '🏭 Obiekt...';
   document.getElementById('workersFacLabel').style.color = 'var(--text2)';
   buildWorkersFacList();
-  ["workersSearch", "workersBhpFrom", "workersBhpTo", "workersLastFrom", "workersLastTo"]
+  ["workersSearch", "workersBhpFrom", "workersBhpTo", "workersLastFrom", "workersLastTo", "workersStudent", "workersStudFrom", "workersStudTo"]
     .forEach((id) => { document.getElementById(id).value = ""; });
   selectedStatuses.workers.clear();
   updateStatusUI('workers');

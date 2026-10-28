@@ -50,10 +50,11 @@ const L = {
     dof_off: "Вихідні на вашому обʼєкті замовляються не через застосунок.",
     // студент
     st_cur: { active: "Чинна довідка в офісі", expiring: "Довідка скоро закінчується", expired: "Довідка закінчилась", unknown: "Ви студент — дата довідки невідома", none: "Довідки в офісі ще немає" },
-    st_sent: (d) => `Надіслано ${d}`, st_until: (d) => `діє до ${d}`,
+    st_sent: (d) => `Надіслано ${d}`, st_until: (d) => `діє до ${d}`, st_period: (a, b) => `з ${a} до ${b}`,
+    st_wait: (d) => `Нову довідку надіслано ${d} — чекає перевірки в офісі`,
     st_new: "Нова довідка", scan: "Сфотографувати", file: "Файл або PDF", add_page: "Ще сторінка",
     valid: "Дійсна до", school: "Навчальний заклад", optional: "Необовʼязково",
-    st_hint: "Довідку треба оновлювати щосеместру. Бот нагадає за 14 днів до кінця терміну.",
+    st_hint: "Довідку треба оновлювати щосеместру. За 1,5 місяця до кінця терміну бот нагадуватиме щотижня, а коли офіс прийме нову довідку — повідомить.",
     send_office: "Надіслати в офіс", need_pages: "Додайте фото або файл довідки.", need_valid: "Вкажіть, до якої дати дійсна довідка.",
     pages_n: (n) => `${n} стор.`,
     // документи
@@ -116,10 +117,11 @@ const L = {
     dof_ok: "Заявка принята.", dof_rej: (d, n) => `Отклонено: ${d}. Выходной на ближайшие ${n} дня — только заранее.`,
     dof_off: "Выходные на вашем объекте заказываются не через приложение.",
     st_cur: { active: "Действующая справка в офисе", expiring: "Справка скоро закончится", expired: "Справка закончилась", unknown: "Вы студент — дата справки неизвестна", none: "Справки в офисе ещё нет" },
-    st_sent: (d) => `Отправлено ${d}`, st_until: (d) => `действует до ${d}`,
+    st_sent: (d) => `Отправлено ${d}`, st_until: (d) => `действует до ${d}`, st_period: (a, b) => `с ${a} до ${b}`,
+    st_wait: (d) => `Новая справка отправлена ${d} — ждёт проверки в офисе`,
     st_new: "Новая справка", scan: "Сфотографировать", file: "Файл или PDF", add_page: "Ещё страница",
     valid: "Действует до", school: "Учебное заведение", optional: "Необязательно",
-    st_hint: "Справку нужно обновлять каждый семестр. Бот напомнит за 14 дней до конца срока.",
+    st_hint: "Справку нужно обновлять каждый семестр. За 1,5 месяца до конца срока бот будет напоминать каждую неделю, а когда офис примет новую справку — сообщит.",
     send_office: "Отправить в офис", need_pages: "Добавьте фото или файл справки.", need_valid: "Укажите, до какой даты действует справка.",
     pages_n: (n) => `${n} стр.`,
     dc_q: "Что отправляете? Можно несколько — получится один PDF.",
@@ -180,10 +182,11 @@ const L = {
     dof_ok: "Wniosek przyjęty.", dof_rej: (d, n) => `Odrzucono: ${d}. Wolne na najbliższe ${n} dni — tylko z wyprzedzeniem.`,
     dof_off: "Wolne na Twoim obiekcie zamawia się inaczej niż przez aplikację.",
     st_cur: { active: "Ważne zaświadczenie w biurze", expiring: "Zaświadczenie wkrótce wygaśnie", expired: "Zaświadczenie wygasło", unknown: "Jesteś studentem — data zaświadczenia nieznana", none: "Biuro nie ma jeszcze zaświadczenia" },
-    st_sent: (d) => `Wysłano ${d}`, st_until: (d) => `ważne do ${d}`,
+    st_sent: (d) => `Wysłano ${d}`, st_until: (d) => `ważne do ${d}`, st_period: (a, b) => `od ${a} do ${b}`,
+    st_wait: (d) => `Nowe zaświadczenie wysłano ${d} — czeka na sprawdzenie w biurze`,
     st_new: "Nowe zaświadczenie", scan: "Zrób zdjęcie", file: "Plik lub PDF", add_page: "Kolejna strona",
     valid: "Ważne do", school: "Uczelnia / szkoła", optional: "Opcjonalnie",
-    st_hint: "Zaświadczenie trzeba odnawiać co semestr. Bot przypomni 14 dni przed końcem ważności.",
+    st_hint: "Zaświadczenie trzeba odnawiać co semestr. Na 1,5 miesiąca przed końcem ważności bot będzie przypominał co tydzień, a gdy biuro przyjmie nowe zaświadczenie — da znać.",
     send_office: "Wyślij do biura", need_pages: "Dodaj zdjęcie lub plik zaświadczenia.", need_valid: "Podaj, do kiedy zaświadczenie jest ważne.",
     pages_n: (n) => `${n} str.`,
     dc_q: "Co wysyłasz? Można kilka — powstanie jeden PDF.",
@@ -244,10 +247,11 @@ const L = {
     dof_ok: "Request received.", dof_rej: (d, n) => `Rejected: ${d}. Days off within the next ${n} days — only in advance.`,
     dof_off: "Days off at your site are not requested in the app.",
     st_cur: { active: "Valid certificate at the office", expiring: "Your certificate expires soon", expired: "Your certificate has expired", unknown: "You are a student — certificate date unknown", none: "The office has no certificate yet" },
-    st_sent: (d) => `Sent ${d}`, st_until: (d) => `valid until ${d}`,
+    st_sent: (d) => `Sent ${d}`, st_until: (d) => `valid until ${d}`, st_period: (a, b) => `from ${a} to ${b}`,
+    st_wait: (d) => `New certificate sent ${d} — waiting for the office to check it`,
     st_new: "New certificate", scan: "Take a photo", file: "File or PDF", add_page: "Another page",
     valid: "Valid until", school: "School / university", optional: "Optional",
-    st_hint: "Renew the certificate every semester. The bot will remind you 14 days before it expires.",
+    st_hint: "Renew the certificate every semester. From 1.5 months before it expires the bot will remind you every week, and it will let you know when the office accepts the new one.",
     send_office: "Send to the office", need_pages: "Add a photo or file of the certificate.", need_valid: "Enter the date the certificate is valid until.",
     pages_n: (n) => `${n} p.`,
     dc_q: "What are you sending? Several are fine — it becomes one PDF.",
@@ -1409,7 +1413,9 @@ function addHtml(where, kind, idx, label, text) {
 function renderStudent() {
   const t = T(), s = ST.stud, st = ST.me.student || { state: "none" };
   const cls = { active: "ok", expiring: "warn", expired: "bad" }[st.state] || "none";
-  const sub = [st.doc_at ? t.st_sent(ddY(isoOf(st.doc_at))) : "", st.valid_until ? t.st_until(ddY(st.valid_until)) : ""].filter(Boolean).join(" · ");
+  // період статусу (HRappka); довідка з застосунку ще не перевірена — окремим рядком
+  const period = st.valid_from && st.valid_until ? t.st_period(ddY(st.valid_from), ddY(st.valid_until)) : st.valid_until ? t.st_until(ddY(st.valid_until)) : "";
+  const sub = [period, st.status === "sent" && st.doc_at ? t.st_wait(ddY(isoOf(st.doc_at))) : ""].filter(Boolean).join(" · ");
   const isPdf = s.pages.length === 1 && s.pages[0].type === "pdf";
   const imgs = isPdf ? "" : s.pages.map((p, i) => shotHtml(p, "student", "", i, t.page_n(i + 1))).join("");
   if (!s.valid) s.valid = "";
@@ -1807,7 +1813,7 @@ function demoApi(path, o) {
       month: { total: monthSum(t0.slice(0, 7)), missing, edit: { from: addDays(t0, -2), to: addDays(t0, 1) } },
       advance: { enabled: true, amount: 300, pay_date: addDays(t0, [5, 4, 10, 9, 8, 7, 6][dow(t0)]), pending: D.adv.some((x) => x.status === "pending"), history: D.adv },
       dayoff: { enabled: true, horizon: 14, min_days: 3, near: [1, 2, 3].map((n) => addDays(t0, n)), taken, history: D.dof },
-      student: st ? { ...st, state: st.valid_until < addDays(t0, 14) ? "expiring" : "active" } : { state: "none" },
+      student: st ? { ...st, state: st.valid_until <= addDays(t0, 45) ? "expiring" : "active" } : { state: "none" },
       docs: D.docs, office: { email: true },
     });
   }
@@ -1835,7 +1841,7 @@ function demoApi(path, o) {
   if (path === "/docs") {
     const id = D.docs.length + 1;
     D.docs.unshift({ id, kinds: o.body.kinds, pages: o.body.pages.length, created_at: new Date().toISOString(), mailed: true });
-    if (o.body.kinds.includes("student")) D.student = { is_student: true, valid_until: o.body.valid_until, doc_at: new Date().toISOString() };
+    if (o.body.kinds.includes("student")) D.student = { is_student: true, valid_until: o.body.valid_until, status: "sent", doc_at: new Date().toISOString() };
     return wait({ ok: true, id, pages: o.body.pages.length, mailed: true });
   }
   if (/^\/docs\/\d+\/chat$/.test(path)) return wait({ ok: true });

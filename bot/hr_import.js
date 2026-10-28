@@ -7,6 +7,7 @@
 //   • об'єкт: відділ + фірма HRappka; де один відділ — кілька наших об'єктів (CAINIAO APT / APT 2, Dipico / Dipico 2,
 //     Action…), — об'єкт з таблиці (рядок того самого договору);
 //   • workers.pesel, workers.birth_date, workers.hr_employee_id ← картка HRappka;
+//   • «Student od / do» (attrdef_id_61654 / 61655) → wapp.student (bot/student.js → syncHr; змінилось «до» — працівнику «довідку прийнято»);
 //   • таблиці (import_sheets.js) пишуть лише копію hrz.sheet_periods; одразу після кожного імпорту таблиць — імпорт
 //     HRappka (afterSheets), тож порівняння бачить обидва джерела на один момент (hrz.runs — коли);
 //   • звіт: таблиці ↔ HRappka — статус, останній день, об'єкт, інший паспорт, кого немає в одній із систем. CSV на пошту.
@@ -37,6 +38,8 @@ const db = require("../db");
 const BASE = process.env.HRAPPKA_BASE_URL || "https://app.hrappka.pl";
 const PAGE = 5000;
 const LAST_DAY = `attrdef_id_${process.env.HR_LAST_DAY_ATTR || "58419"}`;
+const STUDENT_FROM = `attrdef_id_${process.env.HR_STUDENT_FROM_ATTR || "61654"}`;   // «Student od» → wapp.student (bot/student.js)
+const STUDENT_TO = `attrdef_id_${process.env.HR_STUDENT_TO_ATTR || "61655"}`;       // «Student do»
 const C = "newestUserContract_USER_CONTRACT_";
 const CUR = "currentUserContract_USER_CONTRACT_";   // діючий на сьогодні договір (немає — порожньо)
 const EMAIL_TO = (process.env.HR_IMPORT_EMAIL_TO ||
@@ -82,7 +85,7 @@ async function headers() {
 const COLUMNS = ["id", "name", "state", "birthDate", "citizenship", "idsNumberValuePASSPORT", "idsNumberValuePESEL", LAST_DAY,
   C + "startDate", C + "endDate", C + "userContract_company_COMPANY_name",
   C + "userContract_contractor_CONTRACTOR_DEPARTMENT_name", C + "userContract_position_POSITION_name", CUR + "userContract_position_POSITION_name",
-  "lastUpdateTimeSystem"];
+  "lastUpdateTimeSystem", STUDENT_FROM, STUDENT_TO];
 
 function toPerson(x) {
   const end = x[C + "endDate"] || {};
@@ -98,6 +101,7 @@ function toPerson(x) {
     position: pos,
     start: day(x[C + "startDate"]), end: day(end.terminationDate || end.cancelDate),
     updated: day(x.lastUpdateTimeSystem),   // остання зміна картки в HRappka (у знімок не пишемо)
+    studentFrom: day(x[STUDENT_FROM]), studentTo: day(x[STUDENT_TO]),   // статус студента — одразу в wapp.student (у знімок не пишемо)
   };
 }
 
@@ -628,7 +632,7 @@ async function run({ full = false, dry = false, notify = false } = {}) {
   const today = todayWarsaw();
   const people = await fetchAll();
   const client = await db.pool.connect();
-  let res, applied;
+  let res, applied, stud = null;
   try {
     await client.query("BEGIN");
     const prev = new Map((await loadPeople(client, "hrz.people_applied")).map((x) => [x.id, x]));
@@ -646,6 +650,8 @@ async function run({ full = false, dry = false, notify = false } = {}) {
     }
     // записане (і без змін) — нова точка відліку; не записане з причини, що може зникнути, — спробуємо знову
     await snapshot(client, people.filter((p) => !applied.pending.has(p.id)), "hrz.people_applied");
+    // статус студента: «Student od / do» → wapp.student (після apply — нові працівники вже пов'язані з карткою HRappka)
+    stud = await studentSync(client, people, today);
     res = await diffsFor(client, people, today);
     // останній день до 20 днів — з HRappka у базу (і старі періоди теж); решту розбіжностей до IGNORE_TO не показуємо
     const taken = dry ? new Set() : await takeLastDays(client, res.diffs, res.cur);
@@ -660,6 +666,10 @@ async function run({ full = false, dry = false, notify = false } = {}) {
     client.release();
   }
   for (const e of (applied.errors || []).slice(0, 20)) console.warn(`[hr import] ${e}`);
+  if (stud) {
+    console.log(`[hr import] студенти: у HRappka ${stud.students}, змінилось ${stud.changed}${stud.first ? " (перше завантаження)" : ""}, «довідку прийнято» ${stud.accepted.length}${dry ? " — DRY" : ""}`);
+    if (!dry) await require("./student").notifyAccepted(stud.accepted).catch((e) => console.error("[student] довідку прийнято:", e.message));
+  }
   // нові працівники — у таблицю «Dokumenty pocztą» (require тут: docs_sheet підключає hr_sign); не вийшло — спробуємо після наступного імпорту
   if (!dry) await require("./docs_sheet").addNew().catch((e) => console.error("[docs sheet] нові працівники:", e.message));
   if (!full) res.diffs = recent(res.diffs, today);
@@ -669,6 +679,20 @@ async function run({ full = false, dry = false, notify = false } = {}) {
     `таблиці: ${stats.workers} людей, знайдено в HRappka ${stats.matched}; розбіжностей ${res.diffs.length}\n${summary(res.diffs)}`);
   if (notify) await sendEmail(res.diffs, stats, today, full);
   return { ...res, stats, today };
+}
+
+// окремою точкою збереження: збій статусу студента не скасовує імпорт людей і періодів
+async function studentSync(client, people, today) {
+  await client.query("SAVEPOINT student");
+  try {
+    const r = await require("./student").syncHr(client, people, today);
+    await client.query("RELEASE SAVEPOINT student");
+    return r;
+  } catch (e) {
+    await client.query("ROLLBACK TO SAVEPOINT student");
+    console.error("[hr import] статус студента:", e.message);
+    return null;
+  }
 }
 
 function applySummary(a) {

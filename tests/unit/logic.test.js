@@ -289,6 +289,14 @@ test("hr_import.toPerson: посада з діючого договору, бе�
   assert.equal(toPerson({ id: 3, [N]: null, [CUR]: null }).position, null);
 });
 
+test("hr_import.toPerson: статус студента — «Student od / do» (attrdef_id_61654 / 61655)", () => {
+  const { toPerson } = hrImport._test;
+  const p = toPerson({ id: 1, attrdef_id_61654: "2025-10-01", attrdef_id_61655: "2026-02-28" });
+  assert.deepEqual([p.studentFrom, p.studentTo], ["2025-10-01", "2026-02-28"]);
+  const q = toPerson({ id: 2, attrdef_id_61654: null, attrdef_id_61655: "" });
+  assert.deepEqual([q.studentFrom, q.studentTo], [null, null]);
+});
+
 test("hr_import.takeLastDays: останній день до 20 днів — з HRappka у поточний період; порожній у HRappka — наш", async () => {
   const { takeLastDays } = hrImport._test;
   const D = (id, note, lastDay, cur = {}) => ({ type: "Останній день", note, w: { id, bhp: "2026-05-01", lwd: "2026-09-14" }, p: { id, lastDay },

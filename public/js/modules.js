@@ -726,49 +726,10 @@ async function updateTime(fid) {
 }
 
 // ── EXCEL EXPORT ──────────────────────────────────────────────
+// Pracownicy — ta sama lista, co w tabeli (workers.js → filterWorkers: szukaj, statusy, daty, podpisy, student)
 function getFilteredWorkers() {
-  const q = (
-    document.getElementById("workersSearch").value || ""
-  ).toLowerCase();
-  const statusSet = selectedStatuses.workers;
-  const bhpFrom = document.getElementById("workersBhpFrom").value;
-  const bhpTo = document.getElementById("workersBhpTo").value;
-  const lastFrom = document.getElementById("workersLastFrom").value;
-  const lastTo = document.getElementById("workersLastTo").value;
-
-  return allWorkersData.filter((w) => {
-    if (
-      q &&
-      !w.full_name.toLowerCase().includes(q) &&
-      !w.login.toLowerCase().includes(q)
-    )
-      return false;
-    if (workersCurrentFac && w.facility_name !== workersCurrentFac) return false;
-    if (!workersCurrentFac && workersCurrentGroup && (w.group_name || w.facility_name) !== workersCurrentGroup) return false;
-    if (statusSet.size > 0) {
-      const s = (w.status || '').toLowerCase();
-      const match =
-        (statusSet.has('pracuje') && s === 'pracuje') ||
-        (statusSet.has('zwolniony') && s === 'zwolniony') ||
-        (statusSet.has('rezygnacja') && s === 'rezygnacja') ||
-        (statusSet.has('przeniesiony') && s === 'przeniesiony') ||
-        (statusSet.has('urlop_l4') && (s === 'urlop' || s === 'l4')) ||
-        (statusSet.has('unknown') && (!s || s === 'unknown')) ||
-        (statusSet.has('do_zatrudnienia') && s === 'do_zatrudnienia');
-      if (!match) return false;
-    }
-    if (bhpFrom && (!w.bhp_date || localDate(w.bhp_date) < bhpFrom))
-      return false;
-    if (bhpTo && (!w.bhp_date || localDate(w.bhp_date) > bhpTo)) return false;
-    if (
-      lastFrom &&
-      (!w.last_work_date || localDate(w.last_work_date) < lastFrom)
-    )
-      return false;
-    if (lastTo && (!w.last_work_date || localDate(w.last_work_date) > lastTo))
-      return false;
-    return true;
-  });
+  if (!window._workersFiltered) filterWorkers(false);
+  return window._workersFiltered || allWorkersData;
 }
 
 function getFilteredDayoff() {

@@ -87,7 +87,7 @@ test("docs_sheet: дати клітинок, імена, колонки, зіс�
   assert.equal(ds.prevBhp(a, "2026-10-20"), null);
 });
 
-test("docs_sheet: програма лояльності — лише об'єкти зі списку, інакше «nie dotyczy»", () => {
+test("docs_sheet: програма лояльності — лише об'єкти зі списку, інакше колонки програми порожні", () => {
   const ds = require("../../bot/docs_sheet")._test;
   const facs = new Set([1, 6, 7]);
   const w = { periods: [{ bhp: "2026-03-01", fid: 7 }, { bhp: "2026-10-20", fid: 50 }] };

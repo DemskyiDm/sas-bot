@@ -6,7 +6,7 @@
 //       DOKUMENTY    — дата, коли всі 5 документів підписані (załącznik nr 2, załącznik nr 1 PPK, potrącenie, PIT-2, kara);
 //       PROGRAM LOJALNOŚCIOWY ( ZGODA/NIE ) — відповідь в анкеті: ZGODA / NIE;
 //       PROGRAM LOJALNOŚCIOWY PODPISANY     — дата підпису документа program_lojalnosciowy;
-//         об'єкт не бере участі в програмі (немає в CAMPAIGN_FACILITY_IDS, .env) — в обох «nie dotyczy»;
+//         об'єкт не бере участі в програмі (немає в CAMPAIGN_FACILITY_IDS, .env) — обидві не заповнюємо;
 //         об'єкт — з періоду працівника в базі, найближчого до «UMOWA OD»;
 //       Rezygnacja z ubezp. STUDENTA        — відповідь «zainteresowany prywatnym ubezpieczeniem zdrowotnym?»: TAK / NIE.
 //     Рахуються документи й анкети, надіслані від 5 днів до «UMOWA OD» до 10 днів після (як у hr_sign).
@@ -53,7 +53,6 @@ const DOCS = [
 const LOYAL_DOC = /program_lojal/i;
 // Об'єкти, що беруть участь у програмі лояльності (як акція в bot/campaign.js); порожньо — усі
 const LOYAL_FACS = new Set(String(process.env.CAMPAIGN_FACILITY_IDS || "").split(",").map((x) => parseInt(x, 10)).filter(Boolean));
-const NOT_APPLICABLE = "nie dotyczy";
 const SURVEYS = [72966, 87549];                        // «Ankieta do pracownika» — два види
 
 let SHEETS = null;
@@ -152,7 +151,7 @@ function facilityAt(worker, anchor) {
   const dist = (p) => Math.abs(Date.parse(p.bhp) - Date.parse(anchor));
   return worker.periods.reduce((a, b) => (dist(b) < dist(a) ? b : a)).fid;
 }
-// Програма лояльності на об'єкті цього рядка: false — «nie dotyczy»; невідомо (немає періоду) або список порожній — true
+// Програма лояльності на об'єкті цього рядка: false — колонки програми не заповнюємо; невідомо (немає періоду) або список порожній — true
 function inLoyalty(worker, anchor, facs = LOYAL_FACS) {
   if (!facs.size) return true;
   const fid = facilityAt(worker, anchor);
@@ -263,9 +262,6 @@ async function sync({ dry = false, refresh = !dry, workerIds = null } = {}) {
     if (inLoyalty(r.worker, r.umowa || r.sent)) {
       put(t, r, t.c.loyal, "text", s.loyal);
       put(t, r, t.c.loyalSigned, "date", s.loyalSigned);
-    } else {
-      put(t, r, t.c.loyal, "text", NOT_APPLICABLE);
-      put(t, r, t.c.loyalSigned, "text", NOT_APPLICABLE);
     }
     put(t, r, t.c.student, "text", s.student);
   }

@@ -90,7 +90,10 @@ app.use("/admin", adminRoutes);
 // Тільки від Telegram: без цього будь-хто міг надіслати підроблений update від імені координатора
 app.post("/webhook", async (req, res) => {
   if (!require("./api/tg").webhookSecretOk(req.headers["x-telegram-bot-api-secret-token"], process.env.WEBHOOK_SECRET)) {
-    console.warn(`[webhook] без секрету від ${req.ip}`);
+    // через сайт панелі (Caddy → 127.0.0.1) справжня адреса — у X-Forwarded-For; іншим цей заголовок не віримо
+    const local = /^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(req.ip || "");
+    const fwd = local && String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+    console.warn(`[webhook] без секрету від ${fwd ? `${fwd} (через сайт панелі)` : req.ip}`);
     return res.sendStatus(401);
   }
   res.sendStatus(200);

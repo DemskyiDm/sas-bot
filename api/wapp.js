@@ -12,6 +12,7 @@
 //   POST /api/wapp/dayoff          { dates: [YYYY-MM-DD] }
 //   POST /api/wapp/pages           тіло — JPEG (image/jpeg) або PDF (application/pdf), до 12 МБ → { id } (тимчасово, 24 год)
 //   POST /api/wapp/docs            { kinds, pages: [id], cards?: [id], valid_until?, school? } → PDF в офіс (WORKER_DOCS_EMAIL) + статус студента
+//                                  копія — координаторам об'єкта, які ввімкнули її в боті (coordCopies)
 //                                  cards — обрізані сторони карти побиту: у PDF у реальному розмірі, дві на аркуш
 //   POST /api/wapp/docs/:id/chat   надіслати PDF працівнику в чат з ботом
 //   POST /api/wapp/camtest         звіт тесту камери (тимчасово) → лог сервера
@@ -307,6 +308,21 @@ router.post("/pages", auth, (req, res) => {
 });
 
 // Лист в офіс з PDF у вкладенні. Помилка пошти не скасовує відправку: документ збережено, лист можна повторити з панелі.
+// Копія — координаторам об'єкта працівника (головний і помічники), які ввімкнули це кнопкою в боті
+// (bot/coord.js → «📎 Документи на пошту», tgc.prefs.docs_mail); адреси з офісного списку не дублюємо
+async function coordCopies(facilityId, to) {
+  if (!facilityId) return [];
+  const r = await db.query(
+    `SELECT DISTINCT lower(trim(c.email)) AS email
+       FROM reg.v_access v
+       JOIN public.coordinators c ON c.id = v.coordinator_id
+       JOIN tgc.prefs p ON p.coordinator_id = c.id
+      WHERE v.facility_id = $1 AND v.kinds && ARRAY['main', 'helper'] AND p.docs_mail AND COALESCE(trim(c.email), '') <> ''`,
+    [facilityId]).catch((e) => { console.error("[wapp] копія координаторам:", e.message); return { rows: [] }; });
+  const office = new Set(to.map((x) => x.toLowerCase()));
+  return r.rows.map((x) => x.email).filter((x) => !office.has(x));
+}
+
 async function mailOffice(w, doc, kinds, buf, name) {
   const to = wapp.CFG.docsEmail;
   const mail = require("./mail");
@@ -322,12 +338,13 @@ async function mailOffice(w, doc, kinds, buf, name) {
     <table cellpadding="6" style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px">
     ${rows.map(([k, v]) => `<tr><td style="color:#555;border-bottom:1px solid #eee">${esc(k)}</td><td style="border-bottom:1px solid #eee"><b>${esc(v)}</b></td></tr>`).join("")}
     </table>`;
+  const cc = await coordCopies(w.facility_id, to);
   try {
     await mail.send({
-      to, subject: `Dokumenty pracownika: ${w.full_name} (${w.login}) — ${kinds.map((k) => KIND_PL[k]).join(", ")}`,
+      to, cc, subject: `Dokumenty pracownika: ${w.full_name} (${w.login}) — ${kinds.map((k) => KIND_PL[k]).join(", ")}`,
       html, attachments: [{ name, contentType: "application/pdf", content: buf }],
     });
-    await db.query(`UPDATE wapp.docs SET mailed_to = $2, mailed_at = now(), mail_error = NULL WHERE id = $1`, [doc.id, to.join(", ")]);
+    await db.query(`UPDATE wapp.docs SET mailed_to = $2, mailed_at = now(), mail_error = NULL WHERE id = $1`, [doc.id, [...to, ...cc].join(", ")]);
     return { mailed: true };
   } catch (e) {
     console.error("[wapp] mail", doc.id, e.message);

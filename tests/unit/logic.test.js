@@ -97,6 +97,15 @@ test("docs_sheet: програма лояльності — лише об'єкт
   assert.equal(ds.inLoyalty(w, "2026-10-21", new Set()), true);            // список порожній — усі в програмі
 });
 
+test("docs_sheet: HRappka для таблиці — 30 днів від UMOWA OD, без неї — від DATA WYSLANIA", () => {
+  const ds = require("../../bot/docs_sheet")._test;
+  const t = "2026-11-30";
+  assert.equal(ds.recheckRow({ umowa: "2026-10-31", sent: "2026-10-29" }, t), true);    // рівно 30 днів
+  assert.equal(ds.recheckRow({ umowa: "2026-10-30", sent: "2026-10-29" }, t), false);   // 31 день — більше не питаємо
+  assert.equal(ds.recheckRow({ umowa: null, sent: "2026-11-02" }, t), true);
+  assert.equal(ds.recheckRow({ umowa: null, sent: "2026-10-20" }, t), false);
+});
+
 test("docs_sheet: нові працівники — аркуш, дублікати, вільний рядок", () => {
   const ds = require("../../bot/docs_sheet")._test;
   const x = { facility_id: 2, bhp: "2026-10-29", login: "FZ262065", full_name: "YELPASHEV ANDRII" };

@@ -12,6 +12,8 @@
 //     Рахуються документи й анкети, надіслані від 5 днів до «UMOWA OD» до 10 днів після (як у hr_sign).
 //   • Те, що вписано руками («в бумаге», «rezygnacja», дати), не чіпаємо ніколи.
 //   • Рядки, для яких працівника не знайшли (або знайшли кількох), — у hrs.sheet_issues → у лист о 7:00.
+//   • HRappka для таблиці питаємо, поки від «UMOWA OD» (немає — від DATA WYSLANIA) минуло не більше STOP_DAYS днів;
+//     старші рядки заповнюємо лише з того, що вже є в базі (щоденна перевірка непідписаних — окремо, bot/hr_sign.js).
 // Нові працівники (addNew, після кожного імпорту HRappka — bot/hr_import.js → hrs.sheet_queue): період, який імпорт додав
 // (нова людина, новий договір або Do zatrudnienia → Pracuje / Dotarł), — рядок у першому після останнього ПІБ рядку без ПІБ
 // (дату, яку поставили заздалегідь, міняємо на сьогодні), світло-помаранчевим:
@@ -38,6 +40,8 @@ const DUP_DAYS = 2;                                    // людина вже в
 const LINK_BLUE = { red: 0.067, green: 0.333, blue: 0.8 };
 const hrLink = (id) => `https://app.hrappka.pl/employee/${id}/data`;
 const RECHECK_H = 3;                                  // працівників, яких HRappka не перевіряла стільки годин, — перевірити
+const STOP_DAYS = 30;                                 // від «UMOWA OD» минуло більше — для таблиці HRappka не питаємо
+const recheckRow = (r, today) => (r.umowa || r.sent) >= addDays(today, -STOP_DAYS);
 // Документи, які мають бути підписані (частина назви файлу)
 const DOCS = [
   ["zal2", /zalacznik_do_umowy_nr_2/i],
@@ -232,9 +236,10 @@ async function sync({ dry = false, refresh = !dry, workerIds = null } = {}) {
     if (m.worker && (!only || only.has(m.worker.id))) { r.worker = m.worker; matched.push(r); }
     else if (!m.worker && !only && r.sent >= hr.FROM && r.sent < today) issues.push({ t, r, reason: m.reason });
   }
-  // свіжі дані з HRappka для тих, кого давно не перевіряли (щоденна перевірка бере лише непідписаних)
+  // свіжі дані з HRappka для тих, кого давно не перевіряли (щоденна перевірка бере лише непідписаних),
+  // і лише в рядках, де від «UMOWA OD» минуло не більше STOP_DAYS днів
   const fillRows = matched.filter((r) => r.sent >= hr.FROM);
-  const wids = [...new Set(fillRows.map((r) => r.worker.id))];
+  const wids = [...new Set(fillRows.filter((r) => recheckRow(r, today)).map((r) => r.worker.id))];
   if (wids.length && refresh) {
     const stale = (await db.query(
       `SELECT x FROM unnest($1::int[]) AS x WHERE NOT EXISTS (SELECT 1 FROM hrs.checks k WHERE k.worker_id = x AND k.checked_at > now() - ($2 || ' hours')::interval)`,
@@ -423,4 +428,4 @@ async function issues() {
     .catch(() => ({ rows: [] }))).rows;
 }
 
-module.exports = { sync, addNew, issues, SHEET_ID, _test: { cellDate, serial, nameKey, columns, match, prevBhp, inLoyalty, tabFor, isDup, freeRow } };
+module.exports = { sync, addNew, issues, SHEET_ID, _test: { cellDate, serial, nameKey, columns, match, prevBhp, inLoyalty, recheckRow, tabFor, isDup, freeRow } };

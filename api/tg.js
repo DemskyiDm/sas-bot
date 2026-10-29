@@ -46,6 +46,14 @@ function verifyInitData(initData, botToken, nowS) {
   return { user, authDate, startParam: params.get("start_param") || null };
 }
 
+// ── Вебхук: заголовок X-Telegram-Bot-Api-Secret-Token = WEBHOOK_SECRET (задається в setWebhook, set-webhook.js) ──
+// Без секрету в .env — пропускаємо все (як раніше); із секретом — лише запити, що його несуть.
+function webhookSecretOk(given, secret) {
+  if (!secret) return true;
+  const a = Buffer.from(String(given || "")), b = Buffer.from(String(secret));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 function requireAuth(req, res, next) {
   const token = req.headers["x-session"] || req.query.session;
   if (!token || !sessions[token]) return res.status(401).json({ ok: false, error: "Unauthorized" });
@@ -376,4 +384,4 @@ router.post("/unlink", requireAuth, async (req, res) => {
   } catch (e) { fail(res, e); }
 });
 
-module.exports = { router, verifyInitData };
+module.exports = { router, verifyInitData, webhookSecretOk };

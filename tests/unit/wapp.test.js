@@ -5,7 +5,7 @@ const crypto = require("crypto");
 
 const pdf = require("../../bot/pdf");
 const student = require("../../bot/student");
-const { verifyInitData } = require("../../api/tg");
+const { verifyInitData, webhookSecretOk } = require("../../api/tg");
 const wapp = require("../../api/wapp");
 
 // Найменший «JPEG» для розбору заголовка: SOI, APP0, SOF0 (w×h, канали), SOS, EOI
@@ -163,4 +163,12 @@ test("student.TX: нагадування — з кількістю днів, д�
   assert.doesNotMatch(tx.soon("28.10.2026", 0), /залишилось/);
   assert.match(student.TX.ru.soon("30.11.2026", 5), /осталось 5 дней/);
   assert.equal(student.TX.pl.ok("01.10.2026", "28.02.2027"), "✅ Nowe zaświadczenie przyjęte. Status studenta jest ważny od 01.10.2026 do 28.02.2027.");
+});
+
+test("webhookSecretOk: без секрету в .env — пропуск, із секретом — лише точний збіг", () => {
+  assert.equal(webhookSecretOk(undefined, ""), true);
+  assert.equal(webhookSecretOk(undefined, "s3cret-s3cret-123"), false);
+  assert.equal(webhookSecretOk("wrong", "s3cret-s3cret-123"), false);
+  assert.equal(webhookSecretOk("s3cret-s3cret-12", "s3cret-s3cret-123"), false);
+  assert.equal(webhookSecretOk("s3cret-s3cret-123", "s3cret-s3cret-123"), true);
 });

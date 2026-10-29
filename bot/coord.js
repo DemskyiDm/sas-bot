@@ -84,6 +84,10 @@ const TX = {
     b_panel: "Відкрити панель", b_digest: "Зведення зараз", b_adv: (n) => `Аванси (${n})`, b_dof: (n) => `Вихідні (${n})`,
     b_gaps: (n) => `Без годин (${n})`, b_plan: "План набору", b_lang: "Мова → русский",
     b_digest_on: "Ранкова зведення: увімк.", b_digest_off: "Ранкова зведення: вимк.",
+    b_docs_on: "📎 Документи на пошту: увімк.", b_docs_off: "📎 Документи на пошту: вимк.",
+    docs_on: (e) => `Копії документів, які працівники ваших об'єктів надсилають із застосунку, надходитимуть на ${e}.`,
+    docs_off: "Копії документів працівників більше не надходитимуть на пошту.",
+    docs_noemail: "У панелі немає вашого e-mail — попросіть адміністратора додати його, тоді ввімкніть ще раз.",
     lang_set: "Мову змінено: українська.",
     link_ask: (name, facs) => `<b>Підтвердіть вхід у панель</b>\n${name}\n${facs}\n\nЦе ви?`,
     link_yes: "Так, привʼязати", link_no: "Ні, це не я",
@@ -136,6 +140,10 @@ const TX = {
     b_panel: "Открыть панель", b_digest: "Сводка сейчас", b_adv: (n) => `Авансы (${n})`, b_dof: (n) => `Выходные (${n})`,
     b_gaps: (n) => `Без часов (${n})`, b_plan: "План набора", b_lang: "Мова → українська",
     b_digest_on: "Утренняя сводка: вкл.", b_digest_off: "Утренняя сводка: выкл.",
+    b_docs_on: "📎 Документы на почту: вкл.", b_docs_off: "📎 Документы на почту: выкл.",
+    docs_on: (e) => `Копии документов, которые работники ваших объектов отправляют из приложения, будут приходить на ${e}.`,
+    docs_off: "Копии документов работников больше не будут приходить на почту.",
+    docs_noemail: "В панели нет вашего e-mail — попросите администратора добавить его, потом включите ещё раз.",
     lang_set: "Язык изменён: русский.",
     link_ask: (name, facs) => `<b>Подтвердите вход в панель</b>\n${name}\n${facs}\n\nЭто вы?`,
     link_yes: "Да, привязать", link_no: "Нет, это не я",
@@ -229,9 +237,10 @@ function webAppBtn(text, hash) {
 
 // ── Координатор ──────────────────────────────────────────────────────
 const COORD_SQL = `
-  SELECT c.id, c.full_name, c.role, c.telegram_chat_id, to_jsonb(c)->>'lang' AS lang, COALESCE(c.is_active, true) AS is_active,
+  SELECT c.id, c.full_name, c.role, c.telegram_chat_id, to_jsonb(c)->>'lang' AS lang, COALESCE(c.is_active, true) AS is_active, c.email,
          COALESCE(ca.is_admin, false) AS is_admin, ca.username,
-         p.lang AS pref_lang, COALESCE(p.digest, true) AS digest, COALESCE(p.notify, true) AS notify, p.scope
+         p.lang AS pref_lang, COALESCE(p.digest, true) AS digest, COALESCE(p.notify, true) AS notify, p.scope,
+         COALESCE(to_jsonb(p)->>'docs_mail', 'false')::boolean AS docs_mail
     FROM public.coordinators c
     LEFT JOIN LATERAL (SELECT is_admin, username FROM public.coordinator_auth WHERE coordinator_id = c.id
                         ORDER BY is_admin DESC LIMIT 1) ca ON true
@@ -422,6 +431,8 @@ async function sendMenu(c) {
     [{ text: t.b_adv(p.adv), callback_data: "KC:ls:adv" }, { text: t.b_dof(p.dof), callback_data: "KC:ls:dof" }],
     [{ text: t.b_digest, callback_data: "KC:dg" }, { text: t.b_plan, callback_data: "KC:pl:show" }],
     [{ text: c.digest ? t.b_digest_on : t.b_digest_off, callback_data: "KC:dgt" }, { text: t.b_lang, callback_data: "KC:lang" }],
+    // копія документів працівників своїх об'єктів на пошту (api/wapp.js → mailOffice)
+    [{ text: c.docs_mail ? t.b_docs_on : t.b_docs_off, callback_data: "KC:dmt" }],
   ];
   return send(c.telegram_chat_id, t.menu(esc(c.full_name)) + (CFG.webapp ? "" : `\n\n${t.menu_nowebapp}`), kb);
 }
@@ -1142,6 +1153,15 @@ async function onCallback(cq) {
         [c.id, langOf(c), !c.digest]);
       await answer(cq.id, !c.digest ? t.b_digest_on : t.b_digest_off);
       return sendMenu(await coordById(c.id));
+    case "dmt": {
+      const email = String(c.email || "").trim();
+      if (!c.docs_mail && !email) return answer(cq.id, t.docs_noemail, true);
+      await db.query(`INSERT INTO tgc.prefs (coordinator_id, lang, docs_mail) VALUES ($1, $2, $3)
+                      ON CONFLICT (coordinator_id) DO UPDATE SET docs_mail = EXCLUDED.docs_mail, updated_at = now()`,
+        [c.id, langOf(c), !c.docs_mail]);
+      await answer(cq.id, !c.docs_mail ? t.docs_on(email) : t.docs_off, true);
+      return sendMenu(await coordById(c.id));
+    }
     case "lang": {
       const nl = langOf(c) === "ru" ? "uk" : "ru";
       await db.query(`INSERT INTO tgc.prefs (coordinator_id, lang) VALUES ($1, $2)

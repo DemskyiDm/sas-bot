@@ -16,7 +16,7 @@ const db = require("../db");
 
 const BASE = process.env.HRAPPKA_BASE_URL || "https://app.hrappka.pl";
 const FROM = /^\d{4}-\d{2}-\d{2}$/.test(process.env.HR_SIGN_FROM || "") ? process.env.HR_SIGN_FROM : "2026-10-15";
-const BATCH = 200;                 // паспортів в одному запиті
+const BATCH = 50;                  // паспортів в одному запиті: HRappka відповідає ~25 с на 50, на 150–200 — понад хвилину (тайм-аут)
 const PAGE = 2000;                 // рядків на сторінку відповіді
 const COOLDOWN_S = 60;             // ручна перевірка тієї самої людини — не частіше
 const normPass = (s) => String(s || "").replace(/\s+/g, "").toUpperCase();
@@ -205,7 +205,8 @@ async function check(ids) {
   const byPass = new Map();
   w.rows.forEach((x) => { const p = normPass(x.login); if (p) byPass.set(p, x.id); });
   const passes = [...byPass.keys()];
-  let docs = 0, surveys = 0, signedNow = 0;
+  let docs = 0, surveys = 0, signedNow = 0, checked = 0;
+  const errors = [];
   const m = await db.query(`SELECT to_char(min(bhp_date) - $2::int, 'YYYY-MM-DD') AS d FROM v_worker_current WHERE id = ANY($1::int[])`, [ids, WINDOW_BEFORE]);
   const since = m.rows[0].d || FROM;
   let cache = null;
@@ -215,14 +216,16 @@ async function check(ids) {
     const partIds = part.map((p) => byPass.get(p));
     let rows;
     try {
-      rows = await fetchDocs(part);
+      // HRappka не відповіла — ще одна спроба; знову ні — ця порція з помилкою, решту перевіряємо далі
+      rows = await fetchDocs(part).catch(() => fetchDocs(part));
     } catch (e) {
       const msg = String((e.response && JSON.stringify(e.response.data)) || e.message).slice(0, 300);
       await db.query(
         `INSERT INTO hrs.checks (worker_id, checked_at, found, error) SELECT unnest($1::int[]), now(), false, $2
          ON CONFLICT (worker_id) DO UPDATE SET checked_at = now(), error = EXCLUDED.error`, [partIds, msg]);
-      console.error("[hr sign] HRappka:", msg);
-      return { checked: i, docs, signed_now: signedNow, error: msg };
+      console.error(`[hr sign] HRappka (${part.length} осіб):`, msg);
+      errors.push({ n: part.length, msg });
+      continue;
     }
     const found = new Set();
     const client = await db.pool.connect();
@@ -256,6 +259,7 @@ async function check(ids) {
     } finally {
       client.release();
     }
+    checked += part.length;
     // анкети тієї ж партії; не вдалося — документи вже збережені, анкети спробуємо наступного разу
     try {
       surveys += (await syncSurveys(partIds, part, byPass, rows, answers)).surveys;
@@ -263,7 +267,9 @@ async function check(ids) {
       console.error("[hr sign] анкети:", e.message);
     }
   }
-  return { checked: passes.length, docs, surveys, signed_now: signedNow };
+  const failed = errors.reduce((a, x) => a + x.n, 0);
+  return { checked, docs, surveys, signed_now: signedNow,
+    ...(errors.length ? { error: `nie sprawdzono ${failed} z ${passes.length}: ${errors[0].msg}` } : {}) };
 }
 
 // Щоденна: BHP від FROM, ще не все підписано (або ще не перевіряли / документів не знайшли)

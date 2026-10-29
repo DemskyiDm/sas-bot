@@ -87,6 +87,16 @@ test("docs_sheet: дати клітинок, імена, колонки, зіс�
   assert.equal(ds.prevBhp(a, "2026-10-20"), null);
 });
 
+test("docs_sheet: програма лояльності — лише об'єкти зі списку, інакше «nie dotyczy»", () => {
+  const ds = require("../../bot/docs_sheet")._test;
+  const facs = new Set([1, 6, 7]);
+  const w = { periods: [{ bhp: "2026-03-01", fid: 7 }, { bhp: "2026-10-20", fid: 50 }] };
+  assert.equal(ds.inLoyalty(w, "2026-10-21", facs), false);   // найближчий до UMOWA OD — об'єкт 50, не в програмі
+  assert.equal(ds.inLoyalty(w, "2026-03-03", facs), true);    // той самий працівник у березні — об'єкт 7
+  assert.equal(ds.inLoyalty({ periods: [] }, "2026-10-21", facs), true);   // об'єкт невідомий — не чіпаємо
+  assert.equal(ds.inLoyalty(w, "2026-10-21", new Set()), true);            // список порожній — усі в програмі
+});
+
 test("docs_sheet: нові працівники — аркуш, дублікати, вільний рядок", () => {
   const ds = require("../../bot/docs_sheet")._test;
   const x = { facility_id: 2, bhp: "2026-10-29", login: "FZ262065", full_name: "YELPASHEV ANDRII" };

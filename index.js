@@ -87,7 +87,12 @@ app.use("/api", require("./api/reports"));
 app.use("/admin", adminRoutes);
 
 // ── Webhook endpoint ──────────────────────────────────────────
+// Тільки від Telegram: без цього будь-хто міг надіслати підроблений update від імені координатора
 app.post("/webhook", async (req, res) => {
+  if (!require("./api/tg").webhookSecretOk(req.headers["x-telegram-bot-api-secret-token"], process.env.WEBHOOK_SECRET)) {
+    console.warn(`[webhook] без секрету від ${req.ip}`);
+    return res.sendStatus(401);
+  }
   res.sendStatus(200);
   try {
     // групи Telegram: запам'ятати чат для зведень «Wyjazdy / przyjazdy», боту працівників там робити нічого

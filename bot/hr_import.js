@@ -14,6 +14,7 @@
 //     Щодня — відкриті періоди й закриті за останні 60 днів; у понеділок — усі.
 // Статуси HRappka → наші (решта — кандидати / історичні: період не чіпаємо, у звіті — лише якщо в таблиці людина працює):
 //   Pracuje → pracuje; Dotarł → pracuje (у таблиці може бути ще unknown); Urlop, Długi urlop → urlop; L4, Długi L4 → l4;
+//   Długi urlop при unknown у таблиці — у звіті не розбіжність;
 //   Przeniesienie, Przeniesienie – czekamy → przeniesiony; Rezygnacja → rezygnacja;
 //   Zwolniony, Umowa zamknięta → rezygnacja, якщо в таблиці rezygnacja, інакше zwolniony;
 //   Zwolniony, przejście bezpośrednio → pracuje, поки сьогодні < останнього дня, потім zwolniony;
@@ -257,7 +258,9 @@ function compare(people, workers, today, fmap = null) {
     // останній день з HRappka належить цьому періоду, лише якщо він не раніше BHP
     const hrLast = p.lastDay && (!w.bhp || p.lastDay >= w.bhp) ? p.lastDay : null;
     const hr = expected(p.state, w.status, hrLast || w.lwd, today);
-    if (hr ? !statusOk(w.status, hr) : dbWork) diffs.push({ type: "Статус", w, p, hr });
+    // «Długi urlop» у HRappka при unknown у таблиці — не розбіжність (координатори так і ведуть)
+    const longLeave = p.state === "Długi urlop" && w.status === "unknown";
+    if (!longLeave && (hr ? !statusOk(w.status, hr) : dbWork)) diffs.push({ type: "Статус", w, p, hr });
     // rezygnacja — людина не почала працювати: ні BHP, ні останній день не порівнюємо
     if (hr === "rezygnacja" || w.status === "rezygnacja") continue;
     if (w.lwd && hrLast && w.lwd !== hrLast) {

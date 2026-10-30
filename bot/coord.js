@@ -7,7 +7,8 @@
 //  • ранкова зведення (COORD_DIGEST_TIME, 07:30): приїзди / останні дні, без годин, що чекає рішення
 //  • план набору в неділю (з api/flow.js): таблиця на 3 тижні, «Підтвердити як є», відсутні цифри — кнопками
 //  • пошук картки працівника: координатор пише прізвище (кирилицею теж) або ID працівника
-//  • номер полісу студентів (bot/student_policy.js): з 10 числа о 10:00 запит, номер — відповіддю; /polis, кнопка в меню
+//  • номер полісу студентів (bot/student_policy.js): з 10 числа о 10:00 запит, номер — відповіддю; /polis, кнопка в меню;
+//    новий номер — повідомлення студентам, які мають право, і підсумок координатору
 //
 //  .env (pm2 restart після зміни):
 //    TG_WEBAPP_URL=https://sas-panel.duckdns.org/tg/   адреса мініпанелі (HTTPS); без неї кнопки «Panel» не буде
@@ -135,7 +136,8 @@ const TX = {
     c_pol: (n, m) => `Поліс (${m}): <code>${n}</code>`, c_pol_none: "Поліс: так, номер ще не внесено", c_pol_no: "Поліс: відмовився",
     pol_ask: (m) => `🎓 <b>Номер полісу студентів на ${m}</b>\nНадішліть номер відповіддю на це повідомлення.`,
     pol_cur: (m, n) => `Зараз: ${m} — <code>${n}</code>`, pol_bad: "Це не схоже на номер полісу (латиниця і цифри, 3–40 знаків). Надішліть ще раз відповіддю.",
-    pol_saved: (m, n, k) => `✅ Поліс на ${m}: <code>${n}</code>\nПобачать студенти, які погодились на страхування: ${k}.`,
+    pol_saved: (m, n) => `✅ Поліс на ${m}: <code>${n}</code>`, pol_same: "Номер той самий — студентам повторно не надсилаємо.",
+    pol_sent: (k, n) => `📨 Студентам надіслано «номер полісу оновлено»: ${k} з ${n}.`,
     b_pol_edit: "✏️ Змінити", pol_ph: "Номер полісу", b_pol: "🎓 Поліс студентів",
     h_title: (n, m) => `<b>${n}</b> · години за ${m}`, h_none: "Цього місяця записів немає.", total: "Разом",
     hist_t: (n) => `<b>${n}</b> · історія закладів`, now: "досі",
@@ -196,7 +198,8 @@ const TX = {
     c_pol: (n, m) => `Полис (${m}): <code>${n}</code>`, c_pol_none: "Полис: да, номер ещё не внесён", c_pol_no: "Полис: отказался",
     pol_ask: (m) => `🎓 <b>Номер полиса студентов на ${m}</b>\nОтправьте номер ответом на это сообщение.`,
     pol_cur: (m, n) => `Сейчас: ${m} — <code>${n}</code>`, pol_bad: "Это не похоже на номер полиса (латиница и цифры, 3–40 знаков). Отправьте ещё раз ответом.",
-    pol_saved: (m, n, k) => `✅ Полис на ${m}: <code>${n}</code>\nУвидят студенты, согласившиеся на страховку: ${k}.`,
+    pol_saved: (m, n) => `✅ Полис на ${m}: <code>${n}</code>`, pol_same: "Номер тот же — студентам повторно не отправляем.",
+    pol_sent: (k, n) => `📨 Студентам отправлено «номер полиса обновлён»: ${k} из ${n}.`,
     b_pol_edit: "✏️ Изменить", pol_ph: "Номер полиса", b_pol: "🎓 Полис студентов",
     h_title: (n, m) => `<b>${n}</b> · часы за ${m}`, h_none: "В этом месяце записей нет.", total: "Итого",
     hist_t: (n) => `<b>${n}</b> · история объектов`, now: "по сей день",
@@ -1019,12 +1022,14 @@ async function policyAnswer(c, text) {
     chat_id: c.telegram_chat_id, text: t.pol_bad, reply_markup: { force_reply: true, input_field_placeholder: t.pol_ph },
   });
   const ym = todayISO().slice(0, 7);
-  await pol.save(ym, text, c.id);
-  const k = await db.query(
-    `SELECT count(DISTINCT s.worker_id)::int AS n FROM hrs.surveys s JOIN v_worker_current v ON v.id = s.worker_id
-      WHERE s.answers->>'insurance' = 'TAK' AND v.status::text IN ('pracuje', 'urlop', 'l4')`).catch(() => ({ rows: [{ n: "?" }] }));
-  return send(c.telegram_chat_id, t.pol_saved(polMonth(c, ym), esc(pol.clean(text)), k.rows[0].n),
-    [[{ text: t.b_pol_edit, callback_data: "KC:po:e" }]]);
+  const changed = await pol.save(ym, text, c.id);
+  await send(c.telegram_chat_id, t.pol_saved(polMonth(c, ym), esc(pol.clean(text))), [[{ text: t.b_pol_edit, callback_data: "KC:po:e" }]]);
+  if (!changed) return send(c.telegram_chat_id, t.pol_same);
+  // студентам — у фоні (по 60 мс на повідомлення), координатору — підсумок
+  pol.notify(ym, text)
+    .then((r) => send(c.telegram_chat_id, t.pol_sent(r.sent, r.total)))
+    .catch((e) => console.error("[coord] policy notify", e.message));
+  return null;
 }
 // з DUE_DAY числа о REMIND_AT — поки номера на поточний місяць немає (tick, раз на день)
 async function policyRemind(now = new Date()) {

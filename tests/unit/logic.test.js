@@ -377,3 +377,8 @@ test("student_policy: номер полісу — латиниця, цифри, 
   assert.deepEqual(["PL/NNW/2026/1187", "123", "ab-12.3"].map(pol.valid), [true, true, true]);
   assert.deepEqual(["hello", "12", "номер 123", "/polis", "1".repeat(41)].map(pol.valid), [false, false, false, false, false]);
 });
+
+test("student_policy.TX: «номер оновлено» — з номером і місяцем, усіма мовами", () => {
+  const pol = require("../../bot/student_policy");
+  for (const l of ["uk", "ru", "pl", "en"]) assert.match(pol.TX[l]("X 2026", "PL/1"), /X 2026: PL\/1$/);
+});

@@ -454,6 +454,7 @@ require("./bot/fines_sheet").schedule(bot);  // штрафи → Google-табл
 rec.schedule(bot);                         // замовлення: повідомлення координатору
 require("./bot/hr_sign").schedule(bot);    // підписи HRappka: перевірка о 6, 10, 14; 7:00 звіт; 10:00 нагадування працівникам
 require("./bot/hr_reason").schedule(bot);  // причина звільнення з HRappka: 5:00 щодня, у понеділок — повний прохід і звіт
+require("./bot/pesel_report").schedule();  // понеділок 9:00 — лист «працюють без PESEL» (NO_PESEL_REPORT_TO / HR_SIGN_REPORT_TO)
 require("./bot/student").schedule();       // статус студента: 10:30 — щотижня за 45 днів до кінця «донесіть нову довідку», після кінця — раз
 require("./api/wapp").schedule();          // міні-застосунок працівника: чернетки сторінок старші за добу — геть
 

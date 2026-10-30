@@ -211,18 +211,19 @@ test("hr_import.compare: статус залежить від таблиці й 
     P(25, "Rezygnacja"), P(26, "Rezygnacja", { lastDay: "2026-03-01" }), P(27, "Do zatrudnienia (=Harmonogram)"), P(28, "Długi urlop"),
     P(29, "Zwolniony, przejście bezpośrednio", { lastDay: "2026-11-05" }), P(30, "Nie dotarł"),
     P(31, "Nie dotarł"), P(32, "Zwolniony"), P(33, "Zwolniony", { lastDay: "2026-03-05" }), P(34, "Zwolniony", { lastDay: "2026-03-25" }),
-    P(35, "Urlop"),
+    P(35, "Urlop"), P(36, "Przeniesienie"), P(37, "Przeniesienie – czekamy", { lastDay: "2026-10-01" }),
   ];
   const workers = [
     W(20, "pracuje"), W(21, "rezygnacja", { lwd: "2026-02-01" }), W(22, "przeniesiony", { lwd: "2026-02-01" }),
     W(23, "pracuje", { lwd: "2026-11-05" }), W(24, "pracuje", { lwd: "2026-10-01" }), W(25, "rezygnacja", { lwd: "2026-02-01" }),
     W(26, "rezygnacja"), W(27, "unknown"), W(28, "unknown"),
     W(31, "zwolniony"), W(32, "rezygnacja"), W(33, "zwolniony", { lwd: "2026-03-01" }), W(34, "zwolniony", { lwd: "2026-03-01" }),
-    W(35, "unknown"),
+    W(35, "unknown"), W(36, "przeniesiony", { lwd: "2026-10-20" }), W(37, "przeniesiony", { lwd: "2026-10-26" }),
   ];
   const { diffs } = hrImport.compare(people, workers, "2026-10-27");
   const got = diffs.map((d) => `${d.type}:${(d.w || d.p).id}${d.hr ? ":" + d.hr : ""}${d.note && /днів/.test(d.note) ? ":" + d.note.slice(0, 7) : ""}`).sort();
-  // 28: «Długi urlop» при unknown — не розбіжність; 35: звичайний «Urlop» при unknown — розбіжність
+  // 28: «Długi urlop» при unknown — не розбіжність; 35: звичайний «Urlop» при unknown — розбіжність;
+  // 36, 37: Przeniesienie — останній день не порівнюємо (HRappka його стирає)
   assert.deepEqual(got, ["Немає в таблиці:29", "Останній день:22", "Останній день:33:до 20 д", "Останній день:34:понад 2",
     "Статус:22:zwolniony", "Статус:24:zwolniony", "Статус:31:nie_dotarl", "Статус:35:urlop"]);
 });

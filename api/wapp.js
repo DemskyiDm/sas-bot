@@ -32,6 +32,7 @@ const { verifyInitData } = require("./tg");
 const { requireAuth } = require("./admin");
 const pdf = require("../bot/pdf");
 const student = require("../bot/student");
+const policy = require("../bot/student_policy");
 const wapp = require("../bot/worker_app");
 const { getSettingsByFacility } = require("../bot/settings");
 
@@ -174,6 +175,8 @@ router.get("/me", auth, async (req, res) => {
         history: dof.rows.map((x) => ({ id: x.id, days: x.days || [], status: x.status, note: x.note })),
       },
       student: st,
+      // поліс страхування студентів (bot/student_policy.js): лише хто відповів TAK в анкеті
+      policy: await policy.forWorker(w.id, st.state).catch(() => null),
       docs: docs.rows,
       office: { email: wapp.CFG.docsEmail.length > 0 },
     });

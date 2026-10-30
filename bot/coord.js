@@ -7,6 +7,7 @@
 //  • ранкова зведення (COORD_DIGEST_TIME, 07:30): приїзди / останні дні, без годин, що чекає рішення
 //  • план набору в неділю (з api/flow.js): таблиця на 3 тижні, «Підтвердити як є», відсутні цифри — кнопками
 //  • пошук картки працівника: координатор пише прізвище (кирилицею теж) або ID працівника
+//  • номер полісу студентів (bot/student_policy.js): з 10 числа о 10:00 запит, номер — відповіддю; /polis, кнопка в меню
 //
 //  .env (pm2 restart після зміни):
 //    TG_WEBAPP_URL=https://sas-panel.duckdns.org/tg/   адреса мініпанелі (HTTPS); без неї кнопки «Panel» не буде
@@ -131,6 +132,11 @@ const TX = {
     b_hours: "Години за місяць", b_hist: "Історія", b_open: "Відкрити в панелі", b_fine: "⚠️ Штраф",
     c_docs: (s, n) => `Документи HRappka: ${s === n ? "✅" : "❌"} підписано ${s} з ${n}`, c_docs_none: "Документи HRappka: не знайдено", c_docs_wait: "не підписані",
     c_student: (st, d) => `Студент: ${{ active: `✅ довідка до ${d}`, expiring: `⚠️ довідка до ${d}`, expired: `❌ довідка закінчилась ${d}`, unknown: "так, без дати довідки" }[st]}`,
+    c_pol: (n, m) => `Поліс (${m}): <code>${n}</code>`, c_pol_none: "Поліс: так, номер ще не внесено", c_pol_no: "Поліс: відмовився",
+    pol_ask: (m) => `🎓 <b>Номер полісу студентів на ${m}</b>\nНадішліть номер відповіддю на це повідомлення.`,
+    pol_cur: (m, n) => `Зараз: ${m} — <code>${n}</code>`, pol_bad: "Це не схоже на номер полісу (латиниця і цифри, 3–40 знаків). Надішліть ще раз відповіддю.",
+    pol_saved: (m, n, k) => `✅ Поліс на ${m}: <code>${n}</code>\nПобачать студенти, які погодились на страхування: ${k}.`,
+    b_pol_edit: "✏️ Змінити", pol_ph: "Номер полісу", b_pol: "🎓 Поліс студентів",
     h_title: (n, m) => `<b>${n}</b> · години за ${m}`, h_none: "Цього місяця записів немає.", total: "Разом",
     hist_t: (n) => `<b>${n}</b> · історія закладів`, now: "досі",
   },
@@ -187,6 +193,11 @@ const TX = {
     b_hours: "Часы за месяц", b_hist: "История", b_open: "Открыть в панели", b_fine: "⚠️ Штраф",
     c_docs: (s, n) => `Документы HRappka: ${s === n ? "✅" : "❌"} подписано ${s} из ${n}`, c_docs_none: "Документы HRappka: не найдены", c_docs_wait: "не подписаны",
     c_student: (st, d) => `Студент: ${{ active: `✅ справка до ${d}`, expiring: `⚠️ справка до ${d}`, expired: `❌ справка закончилась ${d}`, unknown: "да, без даты справки" }[st]}`,
+    c_pol: (n, m) => `Полис (${m}): <code>${n}</code>`, c_pol_none: "Полис: да, номер ещё не внесён", c_pol_no: "Полис: отказался",
+    pol_ask: (m) => `🎓 <b>Номер полиса студентов на ${m}</b>\nОтправьте номер ответом на это сообщение.`,
+    pol_cur: (m, n) => `Сейчас: ${m} — <code>${n}</code>`, pol_bad: "Это не похоже на номер полиса (латиница и цифры, 3–40 знаков). Отправьте ещё раз ответом.",
+    pol_saved: (m, n, k) => `✅ Полис на ${m}: <code>${n}</code>\nУвидят студенты, согласившиеся на страховку: ${k}.`,
+    b_pol_edit: "✏️ Изменить", pol_ph: "Номер полиса", b_pol: "🎓 Полис студентов",
     h_title: (n, m) => `<b>${n}</b> · часы за ${m}`, h_none: "В этом месяце записей нет.", total: "Итого",
     hist_t: (n) => `<b>${n}</b> · история объектов`, now: "по сей день",
   },
@@ -211,6 +222,7 @@ const hmNow = (d) => new Intl.DateTimeFormat("pl-PL", { timeZone: WAW, hour: "2-
 const ddhm = (d) => (d ? `${dd(isoDay(new Date(d)))} ${hmNow(new Date(d))}` : "");
 const hmToMin = (s) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || "").trim()); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
 const monthName = (lang, d) => new Intl.DateTimeFormat(lang === "ru" ? "ru-RU" : "uk-UA", { timeZone: WAW, month: "long" }).format(d || new Date());
+const polMonth = (c, ym) => `${monthName(langOf(c), new Date(ym + "-15T12:00:00Z"))} ${ym.slice(0, 4)}`;
 const weekdayDate = (lang, iso) => {
   const d = new Date(iso + "T12:00:00Z");
   const wd = new Intl.DateTimeFormat(lang === "ru" ? "ru-RU" : "uk-UA", { weekday: "short", timeZone: "UTC" }).format(d);
@@ -433,6 +445,8 @@ async function sendMenu(c) {
     [{ text: c.digest ? t.b_digest_on : t.b_digest_off, callback_data: "KC:dgt" }, { text: t.b_lang, callback_data: "KC:lang" }],
     // копія документів працівників своїх об'єктів на пошту (api/wapp.js → mailOffice)
     [{ text: c.docs_mail ? t.b_docs_on : t.b_docs_off, callback_data: "KC:dmt" }],
+    // номер полісу студентів — лише тому, хто його вносить (STUDENT_POLICY_COORD)
+    require("./student_policy").isEditor(c.id) ? [{ text: t.b_pol, callback_data: "KC:po:e" }] : [],
   ];
   return send(c.telegram_chat_id, t.menu(esc(c.full_name)) + (CFG.webapp ? "" : `\n\n${t.menu_nowebapp}`), kb);
 }
@@ -982,6 +996,50 @@ async function planAnswer(c, value) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
+//  Поліс страхування студентів (bot/student_policy.js): нагадування з полем відповіді, номер — відповіддю на нього
+// ══════════════════════════════════════════════════════════════════════
+const POL_MARK = "🎓";   // з цього починається запит номера — так впізнаємо відповідь на нього
+async function policyAsk(c, withCurrent) {
+  const t = T(c);
+  const pol = require("./student_policy");
+  const ym = todayISO().slice(0, 7);
+  let text = t.pol_ask(polMonth(c, ym));
+  const cur = withCurrent && (await pol.latest());
+  if (cur) text += "\n" + t.pol_cur(polMonth(c, cur.month), esc(cur.number));
+  const r = await tg("sendMessage", {
+    chat_id: c.telegram_chat_id, text, parse_mode: "HTML",
+    reply_markup: { force_reply: true, input_field_placeholder: t.pol_ph },
+  });
+  return r && r.ok ? r.result.message_id : null;
+}
+async function policyAnswer(c, text) {
+  const t = T(c);
+  const pol = require("./student_policy");
+  if (!pol.valid(text)) return tg("sendMessage", {
+    chat_id: c.telegram_chat_id, text: t.pol_bad, reply_markup: { force_reply: true, input_field_placeholder: t.pol_ph },
+  });
+  const ym = todayISO().slice(0, 7);
+  await pol.save(ym, text, c.id);
+  const k = await db.query(
+    `SELECT count(DISTINCT s.worker_id)::int AS n FROM hrs.surveys s JOIN v_worker_current v ON v.id = s.worker_id
+      WHERE s.answers->>'insurance' = 'TAK' AND v.status::text IN ('pracuje', 'urlop', 'l4')`).catch(() => ({ rows: [{ n: "?" }] }));
+  return send(c.telegram_chat_id, t.pol_saved(polMonth(c, ym), esc(pol.clean(text)), k.rows[0].n),
+    [[{ text: t.b_pol_edit, callback_data: "KC:po:e" }]]);
+}
+// з DUE_DAY числа о REMIND_AT — поки номера на поточний місяць немає (tick, раз на день)
+async function policyRemind(now = new Date()) {
+  const pol = require("./student_policy");
+  if (Number(isoDay(now).slice(8, 10)) < pol.DUE_DAY) return 0;
+  if (await pol.ofMonth(isoDay(now).slice(0, 7))) return 0;
+  let n = 0;
+  for (const id of pol.COORDS) {
+    const c = await coordById(id);
+    if (c && c.is_active && c.telegram_chat_id && (await policyAsk(c, true))) n++;
+  }
+  return n;
+}
+
+// ══════════════════════════════════════════════════════════════════════
 //  Пошук і картка працівника
 // ══════════════════════════════════════════════════════════════════════
 // Кирилиця → латиниця (як у паспортах / в базі): «коваль» → koval; кілька варіантів для г/и/е
@@ -1076,6 +1134,9 @@ async function card(c, workerId) {
   try {
     const st = await require("./student").get(x.id);
     if (st.state !== "none") L.push(t.c_student(st.state, st.valid_until ? dd(st.valid_until) + "." + st.valid_until.slice(0, 4) : ""));
+    // поліс страхування студентів (bot/student_policy.js): лише тим, кого питали в анкеті
+    const pol = await require("./student_policy").forWorker(x.id);
+    if (pol) L.push(pol.consent !== "TAK" ? t.c_pol_no : pol.number ? t.c_pol(esc(pol.number), polMonth(c, pol.month)) : t.c_pol_none);
   } catch (e) { /* без міграції — без рядка */ }
   // «Штраф» — мініпанель з формою (bot/fines.js); лише там, де координатор може виписувати
   let fineBtn = null;
@@ -1186,6 +1247,9 @@ async function onCallback(cq) {
         return m ? send(chatId, m.text, m.kb) : null;
       }
       return answer(cq.id);
+    case "po":
+      await answer(cq.id);
+      return require("./student_policy").isEditor(c.id) ? policyAsk(c, true) : null;
     case "cd": await answer(cq.id); return card(c, parseInt(p[2], 10));
     case "hm": await answer(cq.id); return cardHours(c, parseInt(p[2], 10));
     case "hi": await answer(cq.id); return cardHistory(c, parseInt(p[2], 10));
@@ -1232,6 +1296,17 @@ async function onUpdate(bot, u) {
       await sendDigest(c, { force: true });
       return true;
     }
+    // поліс студентів: /polis — запит номера; відповідь на запит (🎓 …) — номер
+    const polEditor = require("./student_policy").isEditor(c.id);
+    if (polEditor && ["/polis", "/поліс", "/полис"].includes(cmd)) {
+      await policyAsk(c, true);
+      return true;
+    }
+    const re = m.reply_to_message;
+    if (polEditor && re && re.from && re.from.is_bot && String(re.text || "").startsWith(POL_MARK) && !text.startsWith("/")) {
+      await policyAnswer(c, text);
+      return true;
+    }
     if (isWorker) return false;
     if (text.startsWith("/")) {
       await sendMenu(c);
@@ -1263,6 +1338,8 @@ async function tick(now = new Date()) {
     await sendDigestAll();
   }
   if (min >= 4 * 60 + 10 && min < 4 * 60 + 40 && (await claim("menu", day))) await syncMenuButtons();
+  const pol = hmToMin(require("./student_policy").REMIND_AT);
+  if (min >= pol && min < pol + 180 && (await claim("policy", day))) await policyRemind(now);
 }
 function schedule() {
   if (TIMER) return;
@@ -1273,5 +1350,5 @@ function schedule() {
 module.exports = {
   CFG, onUpdate, notifyNew, afterDecision, sendPlanReminder, schedule, digestData, createLinkCode, botUsername,
   coordByChat, coordById, langOf, facsOf, listRequests, setMenuButton, clearMenuButton, syncMenuButtons, sendDigestAll,
-  _test: { setTg: (fn) => { TG = fn; }, tick, latinVariants, planStatus, search, card, sendDigest, sendMenu, onCallback, TX },
+  _test: { setTg: (fn) => { TG = fn; }, tick, policyRemind, latinVariants, planStatus, search, card, sendDigest, sendMenu, onCallback, TX },
 };

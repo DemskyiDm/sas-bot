@@ -54,6 +54,8 @@ const L = {
     st_wait: (d) => `Нову довідку надіслано ${d} — чекає перевірки в офісі`,
     st_new: "Нова довідка", scan: "Сфотографувати", file: "Файл або PDF", add_page: "Ще сторінка",
     valid: "Дійсна до", school: "Навчальний заклад", optional: "Необовʼязково",
+    pol_title: "Поліс медичного страхування", pol_for: (m) => `${m} · торкніться, щоб скопіювати`, pol_wait: "Номер на цей місяць ще не внесли — зʼявиться тут", pol_copied: "Номер полісу скопійовано",
+    pol_hint: "Номер полісу змінюється щомісяця — новий зʼявляється тут, як правило, 10 числа.",
     st_hint: "Довідку треба оновлювати щосеместру. За 1,5 місяця до кінця терміну бот нагадуватиме щотижня, а коли офіс прийме нову довідку — повідомить.",
     send_office: "Надіслати в офіс", need_pages: "Додайте фото або файл довідки.", need_valid: "Вкажіть, до якої дати дійсна довідка.",
     pages_n: (n) => `${n} стор.`,
@@ -121,6 +123,8 @@ const L = {
     st_wait: (d) => `Новая справка отправлена ${d} — ждёт проверки в офисе`,
     st_new: "Новая справка", scan: "Сфотографировать", file: "Файл или PDF", add_page: "Ещё страница",
     valid: "Действует до", school: "Учебное заведение", optional: "Необязательно",
+    pol_title: "Полис медицинского страхования", pol_for: (m) => `${m} · нажмите, чтобы скопировать`, pol_wait: "Номер на этот месяц ещё не внесли — появится здесь", pol_copied: "Номер полиса скопирован",
+    pol_hint: "Номер полиса меняется каждый месяц — новый появляется здесь, как правило, 10 числа.",
     st_hint: "Справку нужно обновлять каждый семестр. За 1,5 месяца до конца срока бот будет напоминать каждую неделю, а когда офис примет новую справку — сообщит.",
     send_office: "Отправить в офис", need_pages: "Добавьте фото или файл справки.", need_valid: "Укажите, до какой даты действует справка.",
     pages_n: (n) => `${n} стр.`,
@@ -186,6 +190,8 @@ const L = {
     st_wait: (d) => `Nowe zaświadczenie wysłano ${d} — czeka na sprawdzenie w biurze`,
     st_new: "Nowe zaświadczenie", scan: "Zrób zdjęcie", file: "Plik lub PDF", add_page: "Kolejna strona",
     valid: "Ważne do", school: "Uczelnia / szkoła", optional: "Opcjonalnie",
+    pol_title: "Polisa ubezpieczenia zdrowotnego", pol_for: (m) => `${m} · dotknij, aby skopiować`, pol_wait: "Numer na ten miesiąc nie został jeszcze wpisany — pojawi się tutaj", pol_copied: "Skopiowano numer polisy",
+    pol_hint: "Numer polisy zmienia się co miesiąc — nowy pojawia się tutaj zwykle 10. dnia miesiąca.",
     st_hint: "Zaświadczenie trzeba odnawiać co semestr. Na 1,5 miesiąca przed końcem ważności bot będzie przypominał co tydzień, a gdy biuro przyjmie nowe zaświadczenie — da znać.",
     send_office: "Wyślij do biura", need_pages: "Dodaj zdjęcie lub plik zaświadczenia.", need_valid: "Podaj, do kiedy zaświadczenie jest ważne.",
     pages_n: (n) => `${n} str.`,
@@ -251,6 +257,8 @@ const L = {
     st_wait: (d) => `New certificate sent ${d} — waiting for the office to check it`,
     st_new: "New certificate", scan: "Take a photo", file: "File or PDF", add_page: "Another page",
     valid: "Valid until", school: "School / university", optional: "Optional",
+    pol_title: "Health insurance policy", pol_for: (m) => `${m} · tap to copy`, pol_wait: "This month's number hasn't been entered yet — it will appear here", pol_copied: "Policy number copied",
+    pol_hint: "The policy number changes every month — the new one usually appears here on the 10th.",
     st_hint: "Renew the certificate every semester. From 1.5 months before it expires the bot will remind you every week, and it will let you know when the office accepts the new one.",
     send_office: "Send to the office", need_pages: "Add a photo or file of the certificate.", need_valid: "Enter the date the certificate is valid until.",
     pages_n: (n) => `${n} p.`,
@@ -497,6 +505,7 @@ async function renderHome() {
     <section class="card flush">
       <h2 class="sec-t">${esc(t.sec_docs)}</h2>
       <button class="li" onclick="go('student')">${I.cap}<span class="l"><b>${esc(t.st_title)}</b><small class="${stCls}">${esc(stTxt)}</small></span>${I.chev}</button>
+      ${polRow()}
       <button class="li" onclick="go('docs')">${I.id}<span class="l"><b>${esc(t.dc_title)}</b><small>${esc(lastDoc ? t.dc_last(ddY(isoOf(lastDoc.created_at))) : t.dc_none)}</small></span>${I.chev}</button>
     </section>
     <section class="card flush" style="padding-bottom:6px">
@@ -1410,6 +1419,19 @@ function addHtml(where, kind, idx, label, text) {
 }
 
 // ── Довідка студента ────────────────────────────────────────────────────
+// Поліс страхування студентів (api/wapp.js → policy): лише хто відповів TAK в анкеті й зі статусом студента, що не закінчився
+function polRow() {
+  const t = T(), p = ST.me && ST.me.policy;
+  if (!p || p.consent !== "TAK" || (ST.me.student || {}).state === "expired") return "";
+  return p.number
+    ? `<button class="li" onclick="copyPol()">${I.ok}<span class="l"><b>${esc(t.pol_title)}: ${esc(p.number)}</b><small class="ok">${esc(t.pol_for(monthTitle(p.month)))}</small></span></button>`
+    : `<div class="li">${I.info}<span class="l"><b>${esc(t.pol_title)}</b><small>${esc(t.pol_wait)}</small></span></div>`;
+}
+function copyPol() {
+  const n = ST.me && ST.me.policy && ST.me.policy.number;
+  if (!n) return;
+  if (navigator.clipboard) navigator.clipboard.writeText(n).then(() => toast(T().pol_copied), () => {});
+}
 function renderStudent() {
   const t = T(), s = ST.stud, st = ST.me.student || { state: "none" };
   const cls = { active: "ok", expiring: "warn", expired: "bad" }[st.state] || "none";
@@ -1422,6 +1444,7 @@ function renderStudent() {
   $("view").innerHTML = `
     <div class="banner ${cls}">${st.state === "none" ? I.cap : st.state === "active" ? I.ok : I.warn}
       <span class="l"><b>${esc(t.st_cur[st.state] || t.st_cur.none)}</b>${sub ? `<span>${esc(sub)}</span>` : ""}</span></div>
+    ${polRow() ? `<section class="card flush">${polRow()}</section><p class="note">${I.info}<span>${esc(t.pol_hint)}</span></p>` : ""}
     <section class="card">
       <b style="font-size:17px">${esc(t.st_new)}</b>
       ${isPdf ? shotHtml(s.pages[0], "student", "", 0) : imgs ? `<div class="slots">${imgs}</div>` : ""}
@@ -1814,6 +1837,7 @@ function demoApi(path, o) {
       advance: { enabled: true, amount: 300, pay_date: addDays(t0, [5, 4, 10, 9, 8, 7, 6][dow(t0)]), pending: D.adv.some((x) => x.status === "pending"), history: D.adv },
       dayoff: { enabled: true, horizon: 14, min_days: 3, near: [1, 2, 3].map((n) => addDays(t0, n)), taken, history: D.dof },
       student: st ? { ...st, state: st.valid_until <= addDays(t0, 45) ? "expiring" : "active" } : { state: "none" },
+      policy: { consent: "TAK", number: "PL/NNW/2026/1187", month: t0.slice(0, 7) },
       docs: D.docs, office: { email: true },
     });
   }

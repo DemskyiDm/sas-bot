@@ -369,3 +369,11 @@ test("hr_import: Do zatrudnienia — окремий статус; у базу �
     P(4, { updated: "2026-10-28" }), P(5, { updated: "2026-10-28" })], "2026-10-28", since);
   assert.deepEqual(list.map((p) => `${p.id}:${p.days}`), ["4:57", "1:31"]);
 });
+
+test("student_policy: номер полісу — латиниця, цифри, / - . і пробіли; хоч одна цифра", () => {
+  const pol = require("../../bot/student_policy");
+  assert.equal(pol.clean("  pl/nnw/2026/1187 "), "PL/NNW/2026/1187");
+  assert.equal(pol.clean("ab  12"), "AB 12");
+  assert.deepEqual(["PL/NNW/2026/1187", "123", "ab-12.3"].map(pol.valid), [true, true, true]);
+  assert.deepEqual(["hello", "12", "номер 123", "/polis", "1".repeat(41)].map(pol.valid), [false, false, false, false, false]);
+});

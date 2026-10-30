@@ -24,6 +24,7 @@
 //   Nie dotarł → у базі rezygnacja (такого статусу немає), у звіті — лише проти zwolniony.
 // Останній день різниться до 20 днів — беремо HRappka: імпорт пише його в поточний період бази; понад 20 — перевірити.
 // У HRappka останнього дня немає — лишаємо наш. Решту розбіжностей періодів, що закінчились до 31.07.2026, не показуємо (IGNORE_TO).
+// Przeniesienie / Przeniesienie – czekamy — останній день не порівнюємо (при переведенні HRappka його стирає).
 // Rezygnacja — людина не почала працювати: останній день і BHP не порівнюємо (і в ротації такі періоди не рахуються — reg.v_periods).
 // Останній день — attrdef_id_58419, одне значення на людину: до поточного періоду належить, лише якщо >= BHP.
 // Людину шукаємо за паспортом, потім за PESEL, потім за ПІБ (лише якщо таке ПІБ одне з обох боків — тоді «Паспорт»).
@@ -263,6 +264,8 @@ function compare(people, workers, today, fmap = null) {
     if (!longLeave && (hr ? !statusOk(w.status, hr) : dbWork)) diffs.push({ type: "Статус", w, p, hr });
     // rezygnacja — людина не почала працювати: ні BHP, ні останній день не порівнюємо
     if (hr === "rezygnacja" || w.status === "rezygnacja") continue;
+    // Przeniesienie (і «– czekamy») у HRappka — останній день не порівнюємо: при переведенні HRappka його стирає
+    if (STATE[p.state] === "przeniesiony") continue;
     if (w.lwd && hrLast && w.lwd !== hrLast) {
       const gap = Math.abs(Date.parse(w.lwd) - Date.parse(hrLast)) / 864e5;
       diffs.push({ type: "Останній день", w, p, note: gap <= LWD_DAYS ? LWD_SMALL : LWD_BIG });

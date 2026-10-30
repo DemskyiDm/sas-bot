@@ -581,7 +581,7 @@ async function sendQuestion(send, sort, chatId) {
 async function runSurveys(day) {
   await db.query(`SELECT * FROM care.plan_day($1::date)`, [day]);
   const r = await db.query(
-    `SELECT s.*, w.telegram_chat_id, COALESCE(w.lang::text, w.session_data->>'lang', 'uk') AS wlang, sv.intro
+    `SELECT s.*, w.telegram_chat_id, COALESCE(w.session_data->>'lang', w.lang::text, 'uk') AS wlang, sv.intro
        FROM care.survey_sends s
        JOIN public.workers w ON w.id = s.worker_id
        JOIN care.surveys sv ON sv.code = s.survey_code

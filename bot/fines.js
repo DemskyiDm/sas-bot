@@ -293,6 +293,8 @@ const MSG = {
     date: "Дата", note: "Комментарий", ask: "Если есть вопросы — обратитесь к своему координатору." },
   pl: { new: "⚠️ <b>Otrzymujesz karę</b>", edit: "✏️ <b>Kara została zmieniona</b>", cancel: "✅ <b>Kara została anulowana</b>",
     date: "Data", note: "Uwagi", ask: "W razie pytań skontaktuj się ze swoim koordynatorem." },
+  en: { new: "⚠️ <b>You have received a fine</b>", edit: "✏️ <b>Your fine has been changed</b>", cancel: "✅ <b>Your fine has been cancelled</b>",
+    date: "Date", note: "Comment", ask: "If you have any questions, please contact your coordinator." },
 };
 let BOT = null;
 async function notify(kind, id) {

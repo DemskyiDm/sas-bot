@@ -437,6 +437,12 @@ const REMIND_TX = {
     ask: "Sprawdź pocztę (także folder „Spam”) i otwórz linki z wiadomości.",
     list: "Jeszcze niepodpisane:", survey: "ankieta", none: "Jeśli nie ma wiadomości — napisz do swojego koordynatora.",
   },
+  en: {
+    hi: "👋 Hello!",
+    body: "We have sent documents from SAS (HRappka) to your e-mail for signing, and not everything is signed / filled in yet.",
+    ask: "Please check your mailbox (including the Spam folder) and open the links in the messages.",
+    list: "Not signed yet:", survey: "survey", none: "If there are no messages, write to your coordinator.",
+  },
 };
 let BOT = null;
 async function reminders() {

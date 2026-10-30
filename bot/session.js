@@ -9,10 +9,14 @@ async function getSession(chatId) {
   return res.rows[0].session_data || {};
 }
 
+// Мова, обрана в боті, — і в workers.lang: з неї пишуть працівнику штрафи, рішення, нагадування, розсилки
+const LANGS = ['uk', 'pl', 'en', 'ru'];
+const langOf = (session) => (session && LANGS.includes(session.lang) ? session.lang : null);
+
 async function saveSession(chatId, session) {
   await db.query(
-    `UPDATE workers SET session_data = $1 WHERE telegram_chat_id = $2`,
-    [JSON.stringify(session), chatId]
+    `UPDATE workers SET session_data = $1, lang = COALESCE($3::worker_lang, lang) WHERE telegram_chat_id = $2`,
+    [JSON.stringify(session), chatId, langOf(session)]
   );
 }
 
@@ -44,4 +48,4 @@ async function clearSessionSafe(chatId) {
   try { await clearSession(chatId); } catch (e) {}
 }
 
-module.exports = { getSessionSafe, saveSessionSafe, clearSessionSafe };
+module.exports = { getSessionSafe, saveSessionSafe, clearSessionSafe, langOf };

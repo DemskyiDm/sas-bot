@@ -40,6 +40,7 @@ const I18N = {
     avans_confirmed: (dt) => `Заявку прийнято. Виплата у п'ятницю ${dt}.`,
     btn_advances: "Аванс",
     advances_disabled: "Модуль авансів вимкнено",
+    wolne_disabled: "Модуль вихідних вимкнено",
     advances_already_pending: "У вас вже є заявка на аванс",
     advances_requested:
       "✅ Заявку на аванс подано! Координатор розгляне її найближчим часом.",
@@ -107,6 +108,7 @@ const I18N = {
     avans_confirmed: (dt) => `Wniosek przyjety. Wyplata w piatek ${dt}.`,
     btn_advances: "Zaliczka",
     advances_disabled: "Moduł zaliczek jest wyłączony",
+    wolne_disabled: "Moduł dni wolnych jest wyłączony",
     advances_already_pending: "Masz już złożony wniosek o zaliczkę",
     advances_requested:
       "✅ Wniosek o zaliczkę został złożony! Koordynator rozpatrzy go wkrótce.",
@@ -173,6 +175,7 @@ const I18N = {
     avans_confirmed: (dt) => `Request accepted. Payment on Friday ${dt}.`,
     btn_advances: "Advance",
     advances_disabled: "Advance module is disabled",
+    wolne_disabled: "Days-off module is disabled",
     advances_already_pending: "You already have a pending advance request",
     advances_requested:
       "✅ Advance request submitted! Coordinator will review it soon.",
@@ -243,6 +246,7 @@ const I18N = {
     avans_confirmed: (dt) => `Заявка принята. Выплата в пятницу ${dt}.`,
     btn_advances: "Аванс",
     advances_disabled: "Модуль авансов отключён",
+    wolne_disabled: "Модуль выходных отключён",
     advances_already_pending: "У вас уже есть заявка на аванс",
     advances_requested:
       "✅ Заявка на аванс подана! Координатор рассмотрит её в ближайшее время.",

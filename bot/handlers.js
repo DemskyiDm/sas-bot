@@ -5,6 +5,7 @@ const {
   getSessionSafe,
   saveSessionSafe,
   clearSessionSafe,
+  langOf,
 } = require("./session");
 const {
   langKeyboard,
@@ -28,10 +29,12 @@ async function findWorker(login) {
   return res.rows[0] || null;
 }
 
-async function linkTelegram(workerId, chatId) {
-  await db.query("UPDATE workers SET telegram_chat_id = $1 WHERE id = $2", [
+// lang — мова, обрана в боті до входу (сесія ще не записана в цього працівника)
+async function linkTelegram(workerId, chatId, lang) {
+  await db.query("UPDATE workers SET telegram_chat_id = $1, lang = COALESCE($3::worker_lang, lang) WHERE id = $2", [
     chatId,
     workerId,
+    lang || null,
   ]);
 }
 
@@ -292,7 +295,7 @@ async function handleUpdate(bot, update) {
           session.workerId = worker.id;
           session.workerLogin = worker.login;
           await saveSessionSafe(chatId, session);
-          await linkTelegram(worker.id, chatId);
+          await linkTelegram(worker.id, chatId, langOf(session));
           await sendMessage(
             bot,
             chatId,
@@ -358,7 +361,7 @@ async function handleUpdate(bot, update) {
 
     if (payload === "CMD_WOLNE") {
       if (!settings?.enable_wolne) {
-        await sendMessage(bot, chatId, "Modul wolne wylaczony");
+        await sendMessage(bot, chatId, T(session, "wolne_disabled"));
         return;
       }
 
@@ -988,7 +991,7 @@ async function handleUpdate(bot, update) {
     session.workerLogin = worker.login;
     if (!session.lang) session.lang = worker.lang || "uk";
     await saveSessionSafe(chatId, session);
-    await linkTelegram(worker.id, chatId);
+    await linkTelegram(worker.id, chatId, langOf(session));
     await sendMessage(bot, chatId, T(session, "id_saved", worker.full_name));
     await sendDayKeyboard(bot, chatId, session, settings);
     // «Poleć znajomego»: історія Telegram-ID і анкета для нових

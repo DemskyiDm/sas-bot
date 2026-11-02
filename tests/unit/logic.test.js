@@ -177,6 +177,10 @@ test("hr_reason.decide: новий період, перенесення, ста�
   assert.equal(reason.decide({ ...old, next_bhp: "2025-08-01" }, { ...dis, state: "Pracuje" }, [{ reason: "Редукция", baseline: true, d: "2026-10-25" }], ctx).value, "Редукция");
   // …але не для періоду, після якого було ще одне звільнення
   assert.deepEqual(reason.decide({ ...old, later_dis: true }, dis, [{ reason: "Редукция", baseline: true, d: "2026-10-25" }], ctx), { problem: "stale" });
+  // звільнення в перші 35 днів журналу, останній період: причину внесли заздалегідь, договір у HRappka ще не закрили
+  const fresh = { status: "zwolniony", bhp: "2026-04-13", lwd: "2026-10-30", next_bhp: null };
+  assert.equal(reason.decide(fresh, { state: "Pracuje", reason: "Переезд в другой город" },
+    [{ reason: "Переезд в другой город", baseline: true, d: "2026-10-26" }], { ...ctx, jstart: "2026-10-26" }).value, "Переезд в другой город");
   // звільнення вже після початку журналу з новим періодом — значення з першого знімка не беремо
   assert.deepEqual(reason.decide({ status: "zwolniony", bhp: "2026-08-01", lwd: "2026-10-28", next_bhp: "2026-11-02" }, { ...dis, state: "Pracuje" },
     [{ reason: "Редукция", baseline: true, d: "2026-10-25" }], ctx), { problem: "next_period" });

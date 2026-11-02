@@ -4,7 +4,8 @@
 //   • щодня о 5:00 (Варшава) — знімок усіх працівників HRappka (3 запити по 5000, ~30 с); зміну причини пишемо
 //     в журнал hrz.reason_log з датою; потім розставляємо причини по закритих періодах за останні 60 днів;
 //   • у понеділок о 5:00 — те саме по всіх періодах + підсумок тижня в Telegram;
-//   • перший запуск (журнал порожній) — повний імпорт уже звільнених.
+//   • перший запуск (журнал порожній) — повний імпорт уже звільнених;
+//   • після кожного імпорту таблиць (catchUp) — лише запис причин за вже зібраним журналом, без HRappka.
 // Причина належить періоду zwolniony, якщо змінилася після BHP і не пізніше 10 днів після останнього дня
 // (і до BHP наступного періоду). Записуємо перше значення й більше не чіпаємо.
 // przeniesiony → «przeniesienie» (auto); якщо статус потім виправили на zwolniony — auto замінюється причиною з HRappka.
@@ -26,8 +27,6 @@ const RECENT_DAYS = 60;      // щоденний прохід — періоди
 const FALLBACK_DAYS = 35;    // звільнення до початку журналу + стільки днів — беремо поточне значення HRappka
 const REPORT_DAYS = 35;      // тижневий звіт — проблеми періодів за стільки днів
 const AUTO = "przeniesienie";
-// Статуси HRappka, за яких людина вже не працює (для старих звільнень)
-const DISMISSED = /zwolnion|umowa zamkni|czarna lista|nie zatrudnia/i;
 const normPass = (s) => String(s || "").replace(/\s+/g, "").toUpperCase();
 const normText = (s) => (String(s || "").trim() || null);
 const addDays = (iso, n) => { const d = new Date(`${iso}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
@@ -103,9 +102,10 @@ function decide(p, emp, log, { today, jstart }) {
   // значення з першого знімка (коли внесли — невідомо), після BHP причина не мінялась:
   //  • звільнення до початку журналу — HRappka не стирає причину при поверненні, тож це причина ОСТАННЬОГО
   //    звільнення людини: беремо, якщо пізніших періодів zwolniony немає (статус у HRappka не важливий);
-  //  • звільнення в перші 35 днів журналу — якщо в HRappka людина звільнена і в нас це останній період.
+  //  • звільнення в перші 35 днів журналу — якщо в нас це останній період. Статус HRappka не перевіряємо:
+  //    договір там закривають із запізненням (ще «Pracuje»), а причину вносять заздалегідь.
   if (emp.reason && !p.later_dis && !log.some((x) => !x.baseline && x.d > from)
-      && (p.lwd < jstart || !p.next_bhp && DISMISSED.test(emp.state || "") && p.lwd < addDays(jstart, FALLBACK_DAYS))) {
+      && (p.lwd < jstart || !p.next_bhp && p.lwd < addDays(jstart, FALLBACK_DAYS))) {
     return { value: emp.reason, source: "hrappka" };
   }
   if (today <= to) return { wait: true };
@@ -121,7 +121,8 @@ const PROBLEM_TX = {
 };
 
 // ── Розставляємо причини ──────────────────────────────────────────────
-async function assign(client, { full, today }) {
+// valuesOnly — лише записати знайдені причини (проблеми й «чекаємо» не чіпаємо: їх веде щоденний прохід і звіт)
+async function assign(client, { full, today, valuesOnly = false }) {
   const per = await client.query(
     `SELECT h.id, h.worker_id, h.status::text AS status, h.przyczyna_zwolnienia AS cur, h.przyczyna_zrodlo AS src, h.przyczyna_problem AS problem,
             to_char(h.bhp_date, 'YYYY-MM-DD') AS bhp, to_char(h.last_work_date, 'YYYY-MM-DD') AS lwd,
@@ -178,7 +179,7 @@ async function assign(client, { full, today }) {
          FROM unnest($1::int[], $2::text[], $3::text[]) AS v(id, val, src)
         WHERE h.id = v.id`, [set.map((x) => x[0]), set.map((x) => x[1]), set.map((x) => x[2])]);
   }
-  if (clear.length) {
+  if (clear.length && !valuesOnly) {
     await client.query(
       `UPDATE public.worker_facility_history h
           SET przyczyna_problem = v.problem,
@@ -265,6 +266,25 @@ async function run({ full = false, dry = false, notify = true } = {}) {
 }
 
 let RUNNING = false;
+// Після кожного імпорту таблиць (bot/hr_import.js): статус zwolniony і останній день з'являються вдень, а знімок HRappka —
+// о 5:00; причину за вже зібраним журналом пишемо одразу, без запиту до HRappka
+async function catchUp() {
+  if (RUNNING) return null;
+  const client = await db.pool.connect();
+  try {
+    await client.query("BEGIN");
+    const r = await assign(client, { full: false, today: todayWarsaw(), valuesOnly: true });
+    await client.query("COMMIT");
+    if (r.stats.hrappka || r.stats.auto) console.log(`[hr reason] після імпорту: з HRappka ${r.stats.hrappka}, przeniesienie ${r.stats.auto}`);
+    return r.stats;
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 function schedule(bot) {
   BOT = bot || null;
   const cron = require("node-cron");
@@ -277,7 +297,7 @@ function schedule(bot) {
   }, { timezone: "Europe/Warsaw" });
 }
 
-module.exports = { run, schedule, decide, PROBLEM_TX, _test: { setBot: (b) => { BOT = b; }, fetchAll, snapshot, assign, todayWarsaw } };
+module.exports = { run, catchUp, schedule, decide, PROBLEM_TX, _test: { setBot: (b) => { BOT = b; }, fetchAll, snapshot, assign, todayWarsaw } };
 
 if (require.main === module) {
   require("dotenv").config();

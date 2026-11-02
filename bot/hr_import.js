@@ -30,6 +30,11 @@
 // У HRappka останнього дня немає — лишаємо наш. Решту розбіжностей періодів, що закінчились до 31.07.2026, не показуємо (IGNORE_TO).
 // Przeniesienie / Przeniesienie – czekamy — останній день не порівнюємо (при переведенні HRappka його стирає).
 // Rezygnacja — людина не почала працювати: останній день і BHP не порівнюємо (і в ротації такі періоди не рахуються — reg.v_periods).
+// Закритий «zwolniony», а за ≤ 14 днів людина вже працює на іншому об'єкті і справжньої причини звільнення немає
+// (причина «przeniesienie» або порожня після очікування — przyczyna_problem = next_period, bot/hr_reason.js) — це переведення:
+// статус przeniesiony, причина «przeniesienie» (markMoved, після кожного імпорту). Так буває, коли період закрила таблиця
+// чи попередній імпорт, а новий договір з'явився пізніше: закриті періоди apply() не переписує. Зі справжньою причиною
+// (Эффективность, Другая работа…) — справжнє звільнення з об'єкта, не чіпаємо.
 // Останній день — attrdef_id_58419, одне значення на людину: до поточного періоду належить, лише якщо >= BHP.
 // Людину шукаємо за паспортом, потім за PESEL, потім за ПІБ (лише якщо таке ПІБ одне з обох боків — тоді «Паспорт»).
 // PERLIK не чіпаємо. Імпорт о 6, 8, 10, 12, 16, 20 (Варшава): таблиці → HRappka; лист — о 8:00; schedule() з index.js. Панель (hrappka.html, api/hr_import.js) рахує те саме зі знімка — current().
@@ -58,6 +63,7 @@ const MAP_DAYS = 31;      // відділ HRappka → об'єкт (facilityMap) 
 const LWD_DAYS = 20;      // останній день різниться не більше — беремо HRappka
 const LWD_SMALL = `до ${LWD_DAYS} днів — беремо HRappka`, LWD_BIG = `понад ${LWD_DAYS} днів — перевірити`;
 const IGNORE_TO = "2026-07-31";   // розбіжності періодів, що закінчились до цієї дати включно, не показуємо (останній день до 20 днів — беремо з HRappka)
+const MOVED_DAYS = 14;    // zwolniony, а новий період на іншому об'єкті не пізніше стількох днів — переведення (markMoved)
 
 const STATE = {
   "Pracuje": "pracuje", "Dotarł": "dotarl",
@@ -545,6 +551,22 @@ async function syncWorkerStatus(client) {
   return r.rowCount;
 }
 
+// Закриті «zwolniony» без справжньої причини, після яких за ≤ MOVED_DAYS людина працює на іншому об'єкті, → przeniesiony.
+// Причина — «przeniesienie» (джерело лишаємо, порожнє → auto, як ставить bot/hr_reason.js). Повертає кількість змінених.
+async function markMoved(client) {
+  const r = await client.query(
+    `UPDATE public.worker_facility_history h
+        SET status = 'przeniesiony', przyczyna_zwolnienia = 'przeniesienie', przyczyna_zrodlo = COALESCE(h.przyczyna_zrodlo, 'auto'),
+            przyczyna_at = COALESCE(h.przyczyna_at, now()), przyczyna_problem = NULL
+      WHERE h.status = 'zwolniony' AND h.last_work_date IS NOT NULL
+        AND (h.przyczyna_zwolnienia = 'przeniesienie' OR (h.przyczyna_zwolnienia IS NULL AND h.przyczyna_problem = 'next_period'))
+        AND EXISTS (SELECT 1 FROM public.worker_facility_history n
+                     WHERE n.worker_id = h.worker_id AND n.id <> h.id AND n.facility_id <> h.facility_id
+                       AND n.bhp_date > h.bhp_date AND n.bhp_date <= h.last_work_date + $1::int
+                       AND n.status NOT IN ('rezygnacja', 'do_zatrudnienia', 'unknown'))`, [MOVED_DAYS]);
+  return r.rowCount;
+}
+
 // знімок → поточні періоди в базі. people — свіжі з HRappka або зі знімка
 async function apply(client, people, today, { dry = false, prev = null, objectOnly = false } = {}) {
   const sheets = await loadSheets(client);
@@ -702,6 +724,8 @@ async function run({ full = false, dry = false, notify = false } = {}) {
       // перший знімок — лише точка відліку: те, що вже було в HRappka, у базі не міняємо
       applied = { update: 0, insert: 0, close: 0, create: 0, skip: {}, ops: [], pending: new Set() };
     }
+    // zwolniony без причини, а людина вже працює на іншому об'єкті, — переведення (і для періодів, закритих раніше)
+    applied.moved = await movedSync(client);
     // записане (і без змін) — нова точка відліку; не записане з причини, що може зникнути, — спробуємо знову
     await snapshot(client, people.filter((p) => !applied.pending.has(p.id)), "hrz.people_applied");
     // статус студента: «Student od / do» → wapp.student (після apply — нові працівники вже пов'язані з карткою HRappka)
@@ -749,10 +773,25 @@ async function studentSync(client, people, today) {
   }
 }
 
+// окремою точкою збереження: збій не скасовує імпорт людей і періодів
+async function movedSync(client) {
+  await client.query("SAVEPOINT moved");
+  try {
+    const n = await markMoved(client);
+    await client.query("RELEASE SAVEPOINT moved");
+    return n;
+  } catch (e) {
+    await client.query("ROLLBACK TO SAVEPOINT moved");
+    console.error("[hr import] звільнення → переведення:", e.message);
+    return 0;
+  }
+}
+
 function applySummary(a) {
   const sk = Object.entries(a.skip).map(([k, v]) => `${k}: ${v}`).join("; ");
   return `HRappka → база: оновлено періодів ${a.update}, нових ${a.insert}, закрито попередніх ${a.close}, нових людей ${a.create}` +
-    (a.lwd ? `, останній день з HRappka ${a.lwd}` : "") + (a.errors ? `, помилок ${a.errors.length}` : "") + (sk ? ` (пропущено — ${sk})` : "");
+    (a.lwd ? `, останній день з HRappka ${a.lwd}` : "") + (a.moved ? `, звільнення → переведення ${a.moved}` : "") +
+    (a.errors ? `, помилок ${a.errors.length}` : "") + (sk ? ` (пропущено — ${sk})` : "");
 }
 
 // Одразу після імпорту таблиць (import_sheets.js): імпорт HRappka на той самий момент. sheetsAt — коли почався
@@ -853,13 +892,15 @@ function schedule() {
     } catch (e) { err("таблиці", e); }
     // таблиці не дійшли до HRappka (пропуск, помилка) — HRappka все одно
     try { if (!LAST || LAST.at < started) await exclusive(() => run()); } catch (e) { err("HRappka", e); }
+    // причина звільнення для щойно звільнених — за журналом bot/hr_reason.js (без запиту до HRappka)
+    try { await require("./hr_reason").catchUp(); } catch (e) { err("причина звільнення", e); }
     try { if (notify) await report({ full: monday }); } catch (e) { err("лист", e); }
   }, { timezone: "Europe/Warsaw" });
   // щопонеділка о 5:00 — хто в Do zatrudnienia понад 30 днів (лист на STUCK_TO)
   cron.schedule("0 5 * * 1", () => harmonogram().catch((e) => console.error("[hr import] Do zatrudnienia:", e.message)), { timezone: "Europe/Warsaw" });
 }
 
-module.exports = { run, schedule, compare, current, refresh, afterSheets, report, harmonogram, toCsv, STATE, TYPES, LWD_SMALL, LWD_BIG, _test: { fetchAll, toPerson, match, plan, started, facilityMap, loadPeople, takeLastDays, stale, stuck, expected, closeBy, notClosed } };
+module.exports = { run, schedule, compare, current, refresh, afterSheets, report, harmonogram, toCsv, STATE, TYPES, LWD_SMALL, LWD_BIG, _test: { fetchAll, toPerson, match, plan, started, facilityMap, loadPeople, takeLastDays, stale, stuck, expected, closeBy, notClosed, markMoved } };
 
 if (require.main === module) {
   require("dotenv").config();

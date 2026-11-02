@@ -69,6 +69,7 @@
         <div class="nav-gb">
           <div id="boardLink" class="nav-item" onclick="location.href='zarzad.html'" style="display: none">📊 Pulpit kierownika</div>
           <div id="regionLink" class="nav-item" onclick="location.href='region.html'" style="display: none">🚦 Region</div>
+          <div id="premieLink" class="nav-item" onclick="location.href='premie.html'" style="display: none">🏆 Premie koordynatorów</div>
           <div class="nav-item" onclick="location.href='raporty.html'">📑 Raporty</div>
           <div class="nav-item" onclick="location.href='hrappka.html'">🔀 Rozbieżności HRappka</div>
           <div class="nav-item" onclick="window.location='/analytics.html'">📈 Analityka</div>
@@ -1152,6 +1153,11 @@ fetch('/api/regional/me', { headers: { 'x-session': localStorage.getItem('sas_se
 fetch('/api/board/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
   .then(function (r) { return r.ok ? r.json() : null; })
   .then(function (d) { if (d && d.has_access) { document.getElementById('boardLink').style.display = ''; document.getElementById('startBoard').hidden = false; } })
+  .catch(function () {});
+// «Premie koordynatorów» — admin, head i ті, кому ввімкнено доступ (Premie → Dostęp)
+fetch('/api/premie/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (d) { if (d && d.has_access) document.getElementById('premieLink').style.display = ''; })
   .catch(function () {});
 fetch('/api/flow/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
   .then(function (r) { return r.ok ? r.json() : null; })

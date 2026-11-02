@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SAS Logistic — Premie koordynatorów</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <!-- xlsx-js-style: eksport do Excela z kolorami (jak w polecenia.html) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+  <style>
+    /* ── tylko dla sekcji Premie koordynatorów ── */
+    .pv { display: none; }
+    .pv.active { display: block; }
+    .nav-sec { padding: 10px 10px 4px; font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+      color: var(--text3); font-family: var(--mono); user-select: none; }
+    .nav-badge { margin-left: auto; background: var(--accent2); color: #111; font-size: 10px; font-weight: 700;
+      border-radius: 9px; padding: 1px 7px; font-family: var(--mono); }
+    .nav-badge:empty { display: none; }
+    input[type="number"], input[type="text"].inp, input[type="search"].inp, textarea, select.inp {
+      background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-size: 12px;
+      padding: 5px 8px; border-radius: 5px; outline: none; font-family: inherit; color-scheme: dark; }
+    input[type="number"] { width: 78px; text-align: right; font-family: var(--mono); }
+    input.inp:focus, select.inp:focus, textarea:focus, input[type="number"]:focus { border-color: var(--accent); }
+
+    .mbar { display: flex; gap: 6px; align-items: center; }
+    .mbar select { min-width: 150px; }
+    .mbar .arr { width: 28px; padding: 4px 0; }
+    .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 3px 10px; border-radius: 12px;
+      border: 1px solid var(--border); color: var(--text2); white-space: nowrap; }
+    .pill.live { border-color: var(--accent); color: var(--accent); }
+    .pill.ok { border-color: var(--green); color: var(--green); }
+    .pill.paid { background: var(--green); border-color: var(--green); color: #fff; }
+    .pill.draft { border-color: var(--accent2); color: var(--accent2); }
+
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+    .kpi .l { font-size: 11px; color: var(--text2); }
+    .kpi .v { font-size: 24px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .kpi .v small { font-size: 13px; color: var(--text3); font-weight: 400; }
+    .kpi .s { font-size: 11px; color: var(--text3); margin-top: 2px; }
+    .kpi.hero { border-color: rgba(59, 130, 246, 0.45); background: linear-gradient(135deg, rgba(59,130,246,.12), var(--surface) 70%); }
+    .good { color: var(--green); } .warn { color: var(--accent2); } .bad { color: var(--red); } .dim { color: var(--text3); }
+
+    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+    .section-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border);
+      font-size: 13px; font-weight: 600; flex-wrap: wrap; }
+    .section-head .cnt { font-size: 11px; color: var(--text2); font-weight: 400; }
+    .section-head .spacer { margin-left: auto; }
+    .filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 14px; border-bottom: 1px solid var(--border); font-size: 11px; color: var(--text2); }
+    .note { padding: 8px 14px; font-size: 11px; color: var(--text3); border-top: 1px solid var(--border); line-height: 1.55; }
+    .banner { padding: 9px 14px; font-size: 12px; border-radius: 8px; margin-bottom: 12px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--text2); line-height: 1.55; }
+    .banner.warn { border-color: var(--accent2); color: var(--text); }
+    .banner.ok { border-color: var(--green); color: var(--text); }
+    .banner.info { border-color: var(--accent); color: var(--text); }
+    .banner b { color: var(--text); }
+    .banner a, .note a { color: var(--accent); }
+    .banner .act { margin-left: 8px; }
+
+    .tblwrap { overflow-x: auto; }
+    table.pt { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.pt th { text-align: right; padding: 7px 8px; font-size: 10px; letter-spacing: .6px; color: var(--text3);
+      border-bottom: 1px solid var(--border); font-family: var(--mono); text-transform: uppercase; white-space: nowrap;
+      user-select: none; vertical-align: bottom; }
+    table.pt th[data-k] { cursor: pointer; }
+    table.pt th[data-k]:hover { color: var(--text); }
+    table.pt th.l, table.pt td.l { text-align: left; }
+    table.pt th.c, table.pt td.c { text-align: center; }
+    table.pt th.sep, table.pt td.sep { border-left: 1px solid var(--border); }
+    table.pt td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap;
+      font-family: var(--mono); font-variant-numeric: tabular-nums; vertical-align: top; }
+    table.pt td.l { font-family: inherit; white-space: normal; }
+    table.pt td .sub { font-size: 10px; color: var(--text3); font-family: inherit; margin-top: 1px; }
+    table.pt tr.tot td { font-weight: 700; background: var(--surface2); border-bottom: none; }
+    table.pt tbody tr:hover td { background: var(--surface2); }
+    table.pt tr.rowlink { cursor: pointer; }
+    table.pt tr.off td { opacity: .55; }
+    table.pt td.big { font-size: 13px; font-weight: 700; color: var(--text); }
+    .z { color: var(--text3); }
+    .tag { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--border);
+      color: var(--text2); font-family: inherit; white-space: nowrap; margin: 1px 2px 1px 0; }
+    .tag.ok { border-color: var(--green); color: var(--green); }
+    .tag.warn { border-color: var(--accent2); color: var(--accent2); }
+    .tag.bad { border-color: var(--red); color: var(--red); }
+    .tag.acc { border-color: var(--accent); color: var(--accent); }
+    .tag.pur { border-color: var(--purple); color: var(--purple); }
+    .step { display: inline-block; min-width: 38px; text-align: center; font-size: 11px; padding: 1px 6px; border-radius: 4px; font-family: var(--mono); }
+    .step.s0 { background: rgba(239, 68, 68, .14); color: #fca5a5; }
+    .step.s1 { background: rgba(245, 158, 11, .14); color: #fcd34d; }
+    .step.s2 { background: rgba(34, 197, 94, .16); color: #86efac; }
+    .chip { padding: 4px 10px; font-size: 11px; border-radius: 12px; border: 1px solid var(--border);
+      background: transparent; color: var(--text2); cursor: pointer; white-space: nowrap; }
+    .chip.active { background: var(--surface2); color: var(--text); border-color: var(--accent); }
+    .chip .n { font-family: var(--mono); color: var(--text3); margin-left: 4px; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .btn-ok { background: var(--green); color: #fff; }
+    .btn-ok:hover { filter: brightness(1.08); }
+    .ico { background: transparent; border: none; color: var(--text3); cursor: pointer; font-size: 13px; padding: 0 4px; }
+    .ico:hover { color: var(--text); }
+    .msg { font-size: 11px; } .msg.err { color: var(--red); } .msg.ok { color: var(--green); }
+    .empty, .loading { padding: 26px; text-align: center; color: var(--text3); font-size: 12px; }
+    .error { padding: 14px; color: var(--red); font-size: 12px; }
+    .noaccess { max-width: 560px; margin: 60px auto; text-align: center; color: var(--text2); font-size: 13px; line-height: 1.65; }
+
+    /* skale bloków A / B */
+    .blocks { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+    .blk { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+    .blk h3 { font-size: 12px; font-weight: 600; color: var(--text2); display: flex; gap: 8px; align-items: baseline; }
+    .blk h3 .amt { margin-left: auto; font-size: 20px; color: var(--text); font-family: var(--mono); }
+    .blk .big { font-size: 13px; margin: 6px 0 2px; }
+    .blk .big b { font-size: 18px; font-family: var(--mono); }
+    .blk .hint { font-size: 11px; color: var(--text2); margin-top: 8px; line-height: 1.5; }
+    .ladder { position: relative; margin: 26px 0 4px; }
+    .ladder .sgs { display: flex; gap: 3px; }
+    .ladder .sg { flex: 1; min-width: 0; border-radius: 5px; padding: 5px 2px 4px; text-align: center; font-size: 10px; line-height: 1.35;
+      background: var(--surface2); color: var(--text3); border: 1px solid transparent; white-space: nowrap; overflow: hidden; }
+    .ladder .sg b { display: block; font-size: 12px; font-family: var(--mono); color: var(--text2); }
+    .ladder .sg .zl { display: block; font-family: var(--mono); font-size: 10px; }
+    .ladder .sg.p0 { box-shadow: inset 0 -3px 0 rgba(239, 68, 68, .55); }
+    .ladder .sg.p1 { box-shadow: inset 0 -3px 0 rgba(245, 158, 11, .5); }
+    .ladder .sg.p2 { box-shadow: inset 0 -3px 0 rgba(245, 158, 11, .9); }
+    .ladder .sg.p3 { box-shadow: inset 0 -3px 0 rgba(34, 197, 94, .9); }
+    .ladder .sg.cur { color: var(--text); border-color: var(--text2); background: rgba(255, 255, 255, .06); }
+    .ladder .sg.cur b { color: var(--text); }
+    .ladder .sg.cur.p0 { border-color: var(--red); } .ladder .sg.cur.p1, .ladder .sg.cur.p2 { border-color: var(--accent2); }
+    .ladder .sg.cur.p3 { border-color: var(--green); }
+    .ladder .mk { position: absolute; top: -19px; transform: translateX(-50%); font-size: 11px; font-weight: 700; font-family: var(--mono);
+      color: var(--text); white-space: nowrap; line-height: 1; z-index: 1; }
+    .ladder .mk::after { content: ""; display: block; margin: 3px auto 0; width: 0; height: 0;
+      border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid var(--text); }
+    .ladder .range { position: absolute; top: -4px; bottom: -4px; border: 1px dashed var(--blue); background: rgba(96, 165, 250, .08);
+      border-radius: 6px; pointer-events: none; }
+
+    /* szuflada koordynatora */
+    .drawer-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 50; display: none; }
+    .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(1020px, 100vw); background: var(--bg);
+      border-left: 1px solid var(--border); z-index: 51; overflow-y: auto; transform: translateX(100%); transition: transform .2s; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-bg.open { display: block; }
+    .dw-head { position: sticky; top: 0; background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 14px 18px; display: flex; gap: 12px; align-items: flex-start; z-index: 2; }
+    .dw-head h2 { font-size: 16px; font-weight: 700; }
+    .dw-head .sub { font-size: 12px; color: var(--text2); margin-top: 3px; }
+    .dw-head .tot { margin-left: auto; text-align: right; }
+    .dw-head .tot .v { font-size: 22px; font-weight: 700; font-family: var(--mono); }
+    .dw-head .tot .s { font-size: 11px; color: var(--text3); }
+    .dw-close { background: transparent; border: 1px solid var(--border); color: var(--text2);
+      border-radius: 5px; width: 28px; height: 28px; cursor: pointer; font-size: 14px; flex: none; }
+    .dw-body { padding: 14px 18px; }
+    .thr { font-size: 11px; white-space: nowrap; }
+    .thr .d { color: var(--text3); }
+
+    /* okno dialogowe */
+    .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 60; display: none; align-items: center; justify-content: center; }
+    .modal-bg.open { display: flex; }
+    .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; width: min(480px, 94vw); padding: 16px 18px; }
+    .modal h3 { font-size: 15px; margin-bottom: 4px; }
+    .modal .sub { font-size: 12px; color: var(--text2); margin-bottom: 12px; }
+    .modal label.opt { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; padding: 4px 0; cursor: pointer; }
+    .modal textarea { width: 100%; min-height: 64px; margin-top: 8px; resize: vertical; }
+    .modal .acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; align-items: center; }
+
+    /* parametry */
+    .pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .cfg { display: grid; grid-template-columns: 220px 1fr; gap: 8px 14px; padding: 12px 14px; align-items: center; font-size: 12px; }
+    .cfg .k { color: var(--text2); }
+    .cfg .h { grid-column: 2; font-size: 11px; color: var(--text3); margin-top: -4px; line-height: 1.45; }
+    .rows-ed { padding: 10px 14px; font-size: 12px; }
+    .rows-ed .r { display: flex; gap: 8px; align-items: center; padding: 3px 0; color: var(--text2); }
+    .checks { padding: 10px 14px; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px 12px; font-size: 12px; }
+    .checks label { display: flex; gap: 7px; align-items: center; cursor: pointer; padding: 2px 0; }
+    .checks label .c { color: var(--text3); font-family: var(--mono); font-size: 11px; margin-left: auto; }
+    .actions { display: flex; gap: 8px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+    .how { padding: 12px 16px; font-size: 12.5px; line-height: 1.7; color: var(--text2); }
+    .how b { color: var(--text); }
+    .how ul { margin: 4px 0 8px 18px; }
+    .lvl-legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; padding: 12px 14px; font-size: 12px; color: var(--text2); line-height: 1.5; }
+    .lvl-legend b { color: var(--text); display: block; margin-bottom: 2px; }
+
+    @media (max-width: 1000px) { .blocks, .pgrid { grid-template-columns: 1fr; } .cfg { grid-template-columns: 1fr; } .cfg .h { grid-column: 1; } }
+    @media (max-width: 800px) {
+      .topbar { height: auto; flex-wrap: wrap; padding: 10px 16px; gap: 8px; }
+      .topbar-right { display: none; }
+      .content { padding: 12px; }
+      .kpis { grid-template-columns: 1fr 1fr; }
+      .kpi .v { font-size: 20px; }
+      .dw-head { flex-wrap: wrap; }
+    }
+  </style>
+  <link rel="stylesheet" href="/css/mobile.css" />
+</head>
+<body>
+  <div class="sidebar">
+    <button class="sidebar-toggle" onclick="toggleSidebar()" title="Ukryj / Przypnij menu">◀</button>
+    <div class="logo">
+      <div class="logo-tag">SAS LOGISTIC</div>
+      <div class="logo-name">Premie koordynatorów</div>
+    </div>
+    <div class="nav">
+      <div class="nav-item" onclick="location.href='index.html'">⬅️ Panel główny</div>
+      <div class="nav-sec">🏆 Premie</div>
+      <div class="nav-item active" data-view="month" onclick="showView('month')">📊 Miesiąc</div>
+      <div class="nav-item" data-view="coords" id="navCoords" onclick="showView('coords')" style="display:none">👥 Koordynatorzy <span class="nav-badge" id="badgeUnc" title="Obiekty z ludźmi, których nikt nie liczy"></span></div>
+      <div class="nav-item" data-view="excl" id="navExcl" onclick="showView('excl')" style="display:none">🚫 Wykluczenia</div>
+      <div class="nav-item" data-view="params" id="navParams" onclick="showView('params')">📖 Jak liczymy</div>
+      <div class="nav-item" data-view="access" id="navAccess" onclick="showView('access')" style="display:none">🔐 Dostęp</div>
+      <div class="nav-item" data-view="log" id="navLog" onclick="showView('log')" style="display:none">📜 Historia zmian</div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-title" id="topTitle">Premie koordynatorów</div>
+      <div class="mbar" id="monthBar">
+        <button class="btn btn-ghost btn-sm arr" onclick="stepMonth(-1)" title="Poprzedni miesiąc">‹</button>
+        <select class="inp" id="selMonth" onchange="setMonth(this.value)"></select>
+        <button class="btn btn-ghost btn-sm arr" onclick="stepMonth(1)" title="Następny miesiąc">›</button>
+        <span id="monthPill"></span>
+      </div>
+      <div class="topbar-right"><span id="userName" style="font-size: 12px; color: var(--text2)"></span></div>
+    </div>
+
+    <div class="content" id="content">
+      <div id="topBanner"></div>
+
+      <!-- MIESIĄC -->
+      <div class="pv active" id="view-month">
+        <div id="monthBanners"></div>
+        <div class="kpis" id="monthKpis"></div>
+        <div class="section">
+          <div class="section-head">Premie za miesiąc <span class="cnt" id="partCnt"></span>
+            <span class="spacer"></span>
+            <span id="monthActions"></span>
+            <button class="btn btn-ghost btn-sm" onclick="exportMonth()" title="Premie, obiekty, ludzie i parametry">⬇️ Excel</button>
+          </div>
+          <div class="tblwrap" id="partTable"><div class="loading">Ładowanie…</div></div>
+          <div class="note" id="partNote"></div>
+        </div>
+        <div class="section" id="sitesSection">
+          <div class="section-head">Obiekty <span class="cnt" id="siteCnt"></span>
+            <span class="spacer"></span>
+            <input type="search" class="inp" id="fSite" placeholder="Szukaj obiektu lub koordynatora…" oninput="renderSites()" style="width:230px" />
+          </div>
+          <div class="tblwrap" id="siteTable"></div>
+          <div class="note">Obiekt = grupa zakładów (jak w Region). Koordynator i region — przypisanie na ostatni dzień miesiąca
+            (w bieżącym miesiącu — na dziś).</div>
+        </div>
+      </div>
+
+      <!-- KOORDYNATORZY -->
+      <div class="pv" id="view-coords"><div id="coordsBody"><div class="loading">Ładowanie…</div></div></div>
+
+      <!-- WYKLUCZENIA -->
+      <div class="pv" id="view-excl"><div id="exclBody"><div class="loading">Ładowanie…</div></div></div>
+
+      <!-- PARAMETRY / JAK LICZYMY -->
+      <div class="pv" id="view-params"><div id="paramsBody"><div class="loading">Ładowanie…</div></div></div>
+
+      <!-- DOSTĘP -->
+      <div class="pv" id="view-access"><div id="accessBody"><div class="loading">Ładowanie…</div></div></div>
+
+      <!-- HISTORIA -->
+      <div class="pv" id="view-log"><div id="logBody"><div class="loading">Ładowanie…</div></div></div>
+    </div>
+  </div>
+
+  <div class="drawer-bg" id="drawerBg" onclick="closeDrawer()"></div>
+  <div class="drawer" id="drawer" aria-hidden="true"></div>
+  <div class="modal-bg" id="modalBg" onclick="if (event.target === this) closeModal()"><div class="modal" id="modal"></div></div>
+
+  <script src="js/premie.js"></script>
+  <div class="sidebar-hover-zone"
+     onmouseenter="document.querySelector('.sidebar').classList.add('sidebar-peek')"
+     onmouseleave="document.querySelector('.sidebar').classList.remove('sidebar-peek')"></div>
+  <script>
+  function toggleSidebar() {
+    const hidden = document.body.classList.toggle('sidebar-hidden');
+    const btn = document.querySelector('.sidebar-toggle');
+    btn.textContent = hidden ? '▶' : '◀';
+    btn.title = hidden ? 'Przypnij menu' : 'Ukryj menu';
+    try { localStorage.setItem('sas_sidebar_hidden', hidden ? '1' : '0'); } catch (e) {}
+  }
+  if ((function () { try { return localStorage.getItem('sas_sidebar_hidden') === '1'; } catch (e) { return false; } })() || window.innerWidth < 800) {
+    document.body.classList.add('sidebar-hidden');
+    const btn = document.querySelector('.sidebar-toggle');
+    if (btn) { btn.textContent = '▶'; btn.title = 'Przypnij menu'; }
+  }
+  document.querySelector('.sidebar')?.addEventListener('click', (e) => {
+    if (e.target.closest('.nav-item') && document.body.classList.contains('sidebar-hidden')) {
+      document.querySelector('.sidebar').classList.remove('sidebar-peek');
+    }
+  });
+  </script>
+  <script src="/js/mobile.js"></script>  <!-- телефон: меню ☰, таблиці картками (css/mobile.css) -->
+</body>
+</html>

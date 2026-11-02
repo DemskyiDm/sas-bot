@@ -80,6 +80,7 @@ app.use("/api/ref", require("./api/ref").router);
 app.use("/api/broadcast", broadcast.router);
 app.use("/api/hrsign", require("./api/hr_sign").router);
 app.use("/api/hrimport", require("./api/hr_import").router);   // Rozbieżności HRappka (public/hrappka.html)
+app.use("/api/premie", require("./api/premie").router);   // Premie koordynatorów: блоки А і Б (public/premie.html)
 const rec = require("./api/rec");   // Zamówienia · Rekrutacja (поки лише адмін)
 app.use("/api/rec", rec.router);   // підписи документів HRappka (Pracownicy → Dokumenty)
 app.use("/api", apiRoutes);

@@ -1154,7 +1154,7 @@ fetch('/api/board/me', { headers: { 'x-session': localStorage.getItem('sas_sessi
   .then(function (r) { return r.ok ? r.json() : null; })
   .then(function (d) { if (d && d.has_access) { document.getElementById('boardLink').style.display = ''; document.getElementById('startBoard').hidden = false; } })
   .catch(function () {});
-// «Premie koordynatorów» — admin, head i ті, кому ввімкнено доступ (Premie → Dostęp)
+// «Premie koordynatorów» — керівник (head) і ті, кому ввімкнено доступ (Premie → Dostęp)
 fetch('/api/premie/me', { headers: { 'x-session': localStorage.getItem('sas_session') || '' } })
   .then(function (r) { return r.ok ? r.json() : null; })
   .then(function (d) { if (d && d.has_access) document.getElementById('premieLink').style.display = ''; })

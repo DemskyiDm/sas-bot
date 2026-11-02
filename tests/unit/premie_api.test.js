@@ -55,8 +55,20 @@ test("premie api: координатор навіть з «✋ + Wykluczenia» �
   for (const [m, p, b] of admin) {
     const r = await call(m, p, b);
     assert.equal(r.status, 403, `${m} ${p}`);
-    assert.match(r.body.error, /administrator lub kierownik/, `${m} ${p}`);
+    assert.match(r.body.error, /kierownik działu/, `${m} ${p}`);
   }
+});
+
+test("premie api: адміністратор панелі без рівня в «Dostęp» розділу не бачить; з рівнем — лише цей рівень", async () => {
+  Object.assign(ctx, { who: { ...coord(10), is_admin: true }, level: null, regions: [] });
+  const me = await call("GET", "/me");
+  assert.deepEqual([me.body.has_access, me.body.full], [false, false]);
+  assert.equal((await call("GET", "/month/2026-09")).status, 403);
+  assert.equal((await call("GET", "/coordinators")).status, 403);
+  Object.assign(ctx, { level: "people" });
+  const me2 = await call("GET", "/me");
+  assert.deepEqual([me2.body.has_access, me2.body.full, me2.body.level], [true, false, "people"]);
+  assert.equal((await call("POST", "/month/2026-09/approve")).status, 403);
 });
 
 test("premie api: рівні own / people не виключають працівників", async () => {

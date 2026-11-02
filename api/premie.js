@@ -2,9 +2,9 @@
 //  Розділ «Premie koordynatorów» — API панелі.  app.use("/api/premie", require("./api/premie").router)
 //  Розрахунок — bot/premie.js; таблиці — db/migration_premie.sql; опис — docs/PREMIE.md.
 //
-//  Доступ:
-//    адмін / head — усе: параметри, учасники й k-t, виключення, затвердження, виплата, доступ
-//    решта — лише кому увімкнено у вкладці «Dostęp» (prm.access), з рівнем:
+//  Доступ (премії — дані про зарплату):
+//    керівник (coordinators.role = 'head') — усе: параметри, учасники й k-t, виключення, затвердження, виплата, доступ
+//    решта, зокрема адміністратори панелі (is_admin), — лише кому увімкнено у вкладці «Dostęp» (prm.access), з рівнем:
 //      own    — своя премія (блоки, відсотки, сума, об'єкти); регіональний — ще й координатори свого регіону
 //      people — + люди: хто зарахований, хто ні й чому
 //      excl   — + виключення працівників у своїй зоні (з причиною)
@@ -27,13 +27,13 @@ const atLeast = (ps, level) => LEVELS.indexOf(ps.level) >= LEVELS.indexOf(level)
 // ── Доступ ────────────────────────────────────────────────────────────
 async function scopeOf(c) {
   const me = c.coordinator_id;
-  const full = !!c.is_admin || c.role === "head";
+  const full = c.role === "head";
   const r = await db.query(
     `SELECT (SELECT level FROM prm.access WHERE coordinator_id = $1) AS level,
             COALESCE((SELECT array_agg(rl.region_id) FROM reg.region_leads rl JOIN reg.regions rg ON rg.id = rl.region_id
                        WHERE rl.coordinator_id = $1 AND rg.is_active), '{}') AS regions`, [me]);
   const x = r.rows[0];
-  return { me, full, admin: !!c.is_admin, level: full ? "excl" : x.level || null, regionIds: (x.regions || []).map(Number) };
+  return { me, full, level: full ? "excl" : x.level || null, regionIds: (x.regions || []).map(Number) };
 }
 router.use(async (req, res, next) => {
   try { req.ps = await scopeOf(req.coordinator); } catch (e) { return fail(res, e); }
@@ -42,9 +42,9 @@ router.use(async (req, res, next) => {
   next();
 });
 const requireFull = (req, res, next) =>
-  (req.ps.full ? next() : res.status(403).json({ ok: false, error: "Tylko administrator lub kierownik działu" }));
+  (req.ps.full ? next() : res.status(403).json({ ok: false, error: "Tylko kierownik działu" }));
 
-// Що бачить не-адмін: координатор — лише свій рядок; регіональний — ще й учасників з об'єктами його регіонів.
+// Що бачить не-керівник: координатор — лише свій рядок; регіональний — ще й учасників з об'єктами його регіонів.
 // Люди — з рівня people, лише з видимих об'єктів.
 function scoped(ps, res) {
   if (ps.full) return res;
@@ -74,7 +74,7 @@ async function approvedMonths() {
 
 // ── Хто я ─────────────────────────────────────────────────────────────
 router.get("/me", (req, res) => {
-  res.json({ ok: true, has_access: !!req.ps.level, full: req.ps.full, admin: req.ps.admin, level: req.ps.level,
+  res.json({ ok: true, has_access: !!req.ps.level, full: req.ps.full, level: req.ps.level,
     lead: req.ps.regionIds.length > 0, me: req.ps.me, name: req.coordinator.full_name });
 });
 
@@ -106,13 +106,13 @@ router.get("/month/:m", async (req, res) => {
       people: atLeast(req.ps, "people"), exclude: atLeast(req.ps, "excl") && !data.run,
       edit: req.ps.full && !data.run, approve: req.ps.full && !data.run && !data.live,
       unapprove: req.ps.full && !!data.run && data.run.status === "approved",
-      pay: req.ps.full && !!data.run, unpay: req.ps.admin && !!data.run && data.run.status === "paid",
+      pay: req.ps.full && !!data.run, unpay: req.ps.full && !!data.run && data.run.status === "paid",
       notify: req.ps.full && !!data.run,
     } });
   } catch (e) { fail(res, e, /Nieprawidłowy|jeszcze się nie zaczął/.test(e.message) ? 400 : 500); }
 });
 
-// ── Учасники місяця (адмін / head) ───────────────────────────────────
+// ── Учасники місяця (керівник) ───────────────────────────────────────
 // Усі координатори: регіони, де регіональний, і об'єкти, де головний зараз
 router.get("/coordinators", requireFull, async (req, res) => {
   try {
@@ -243,7 +243,7 @@ router.delete("/exclusions/:id", async (req, res) => {
 });
 
 // ── Параметри ─────────────────────────────────────────────────────────
-// Для всіх з доступом (тільки перегляд «Jak liczymy»); змінює адмін / head
+// Для всіх з доступом (тільки перегляд «Jak liczymy»); змінює керівник
 router.get("/params", async (req, res) => {
   const m = prm.isMonth(req.query.month) ? req.query.month : (await prm.today()).slice(0, 7);
   try {
@@ -346,7 +346,6 @@ router.post("/month/:m/unapprove", requireFull, async (req, res) => {
 });
 router.post("/month/:m/paid", requireFull, async (req, res) => {
   const paid = !!(req.body && req.body.paid);
-  if (!paid && !req.ps.admin) return fail(res, new Error("Cofnąć wypłatę może tylko administrator"), 403);
   try {
     const r = await prm.setPaid(req.params.m, paid, req.ps.me);
     if (!r.ok) return fail(res, new Error(r.error), 409);

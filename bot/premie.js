@@ -471,11 +471,11 @@ async function notify(bot, month, byId, force) {
   if (run.notified_at && !force) return { ok: false, error: "Powiadomienia już wysłano" };
   if (!bot) return { ok: false, error: "Bot niedostępny" };
   const parts = run.result.participants.filter((p) => p.total != null && p.kt > 0);
+  // посилання на панель — лише тим, хто бачить розділ (керівник або рівень у «Dostęp»)
   const r = await db.query(
     `SELECT c.id, c.telegram_chat_id AS chat, COALESCE(c.is_active, true) AS active,
-            (ca.is_admin OR c.role = 'head' OR a.coordinator_id IS NOT NULL) AS panel
+            (c.role = 'head' OR a.coordinator_id IS NOT NULL) AS panel
        FROM public.coordinators c
-       LEFT JOIN public.coordinator_auth ca ON ca.coordinator_id = c.id
        LEFT JOIN prm.access a ON a.coordinator_id = c.id
       WHERE c.id = ANY($1::int[])`, [parts.map((p) => p.id)]);
   const who = new Map(r.rows.map((x) => [x.id, x]));

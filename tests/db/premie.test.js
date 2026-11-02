@@ -55,11 +55,15 @@ test("premie: ручне виключення зменшує можливі ва
   const p1 = r2.participants.find((p) => p.id === p0.id);
   assert.equal(p1.poss, p0.poss - same);
   assert.ok(r2.items.filter((i) => i.w === x.w).every((i) => i.ex === "manual"));
+  // розділ уже працює: прибираємо пізніші списки й параметри (лише в цій транзакції) і перевіряємо успадкування
+  await tx.q(`DELETE FROM prm.month_coords WHERE month > '2026-09'`);
+  await tx.q(`DELETE FROM prm.params WHERE valid_from > '2026-09'`);
   assert.equal((await prm.configFor("2026-10")).from, "2026-09");
   assert.equal((await prm.paramsFor("2026-10")).from, "2026-09");
 });
 
 test("premie: затвердження — знімок, повторно не можна, скасування; поточний місяць не затверджується", async () => {
+  await tx.q(`DELETE FROM prm.runs WHERE month = '2026-09'`);           // якщо вже затверджено насправді — лише в цій транзакції
   const a = await prm.approve("2026-09", null);
   assert.equal(a.ok, true);
   assert.equal((await prm.approve("2026-09", null)).ok, false);

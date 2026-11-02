@@ -91,7 +91,7 @@ async function init() {
   if (!me || !me.ok || !me.has_access) {
     document.getElementById("monthBar").style.display = "none";
     document.getElementById("content").innerHTML = `<div class="noaccess">🔒 <b>Brak dostępu do premii koordynatorów.</b><br>
-      ${esc(me && me.error ? me.error : "Dostęp włącza administrator lub kierownik działu w sekcji Premie → Dostęp.")}</div>`;
+      ${esc(me && me.error ? me.error : "Dostęp włącza kierownik działu w sekcji Premie → Dostęp.")}</div>`;
     return;
   }
   ST.me = me;
@@ -662,7 +662,7 @@ async function loadExclusions() {
   h += `<div class="section"><div class="section-head">Pominięci automatycznie <span class="cnt">według parametrów</span></div>
     ${rows.length ? `<div class="tblwrap"><table class="pt"><tbody>${rows.map(([l, n]) => `<tr><td class="l">${esc(l)}</td><td>${n}</td></tr>`).join("")}</tbody></table></div>`
       : '<div class="empty">Nikt.</div>'}
-    <div class="note">Listę pomijanych statusów i ignorowanych przyczyn zwolnienia zmienia administrator w ⚙️ Parametrach.
+    <div class="note">Listę pomijanych statusów i ignorowanych przyczyn zwolnienia zmienia kierownik działu w ⚙️ Parametrach.
       Status i przyczyna liczą się tylko, gdy odejście nastąpiło w tym miesiącu lub wcześniej.</div></div>`;
   document.getElementById("exclBody").innerHTML = h;
 }
@@ -678,7 +678,7 @@ function findWorker() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-//  Koordynatorzy na liście miesiąca (admin / head)
+//  Koordynatorzy na liście miesiąca (kierownik działu)
 // ══════════════════════════════════════════════════════════════════════
 async function loadCoords() {
   const box = document.getElementById("coordsBody");
@@ -928,7 +928,7 @@ async function saveNotify(on) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-//  Dostęp (admin / head)
+//  Dostęp (kierownik działu). Pełny — tylko rola head; administrator panelu — jak wszyscy, według poziomu.
 // ══════════════════════════════════════════════════════════════════════
 async function loadAccess() {
   const box = document.getElementById("accessBody");
@@ -942,11 +942,12 @@ function renderAccess() {
   const q = ST.accQ.trim().toLowerCase();
   const inList = new Set(((ST.data && ST.data.participants) || []).map((p) => p.id));
   const list = ST.coords.filter((c) => c.active && (!q || c.name.toLowerCase().includes(q)));
-  const full = (c) => c.is_admin || c.role === "head";
+  const full = (c) => c.role === "head";
   let h = `<div class="section"><div class="section-head">🔐 Kto widzi premie <span class="cnt">${list.length}</span><span class="spacer"></span>
       <input type="search" class="inp" placeholder="Szukaj…" value="${esc(ST.accQ)}" oninput="ST.accQ=this.value;renderAccess()" style="width:180px" /></div>
     <div class="lvl-legend">${Object.entries(LEVELS).map(([k, [l, t]]) => `<div><b>${l}</b>${esc(t)}</div>`).join("")}
-      <div><b>🛡️ Pełny</b>Administrator i kierownik działu — zawsze: parametry, lista i k-t, zatwierdzanie, wypłata, dostęp.</div></div>
+      <div><b>🛡️ Pełny</b>Kierownik działu (rola head) — zawsze: parametry, lista i k-t, zatwierdzanie, wypłata, dostęp.
+        Administrator panelu — tylko według poziomu ustawionego tutaj.</div></div>
     <div class="filters">Szybko: <button class="chip" onclick="bulkAccess('list','own')">wszyscy z listy premii (${ym(ST.month)}) → 👁 Moja premia</button>
       <button class="chip" onclick="bulkAccess('leads','people')">regionalni → 🔍 + Ludzie</button>
       <button class="chip" onclick="bulkAccess('all',null)">wyłącz wszystkim</button><span class="msg" id="aMsg"></span></div>
@@ -975,7 +976,7 @@ async function setAccess(ids, level) {
   flash("aMsg", "Zapisano", true);
 }
 function bulkAccess(who, level) {
-  const full = (c) => c.is_admin || c.role === "head";
+  const full = (c) => c.role === "head";
   const inList = new Set(((ST.data && ST.data.participants) || []).map((p) => p.id));
   const ids = ST.coords.filter((c) => c.active && !full(c) && (who === "all" || (who === "list" ? inList.has(c.id) : c.regions && c.regions.length)))
     // «wszyscy z listy → Moja premia» nie obniża tym, którzy mają już więcej

@@ -155,7 +155,8 @@
       <div id="navRef">
         <div class="nav-sec">🤝 Poleć znajomego</div>
         <div class="nav-item active" data-view="list" onclick="showView('list')">📋 Odpowiedzi <span class="nav-badge" id="badgeTodo" title="Do zestawienia"></span></div>
-        <div class="nav-item" data-view="ranking" onclick="showView('ranking')">🏆 Polecający <span class="nav-badge g" id="badgeDue" title="Premia należy się"></span></div>
+        <div class="nav-item" data-view="ranking" onclick="showView('ranking')">🏆 Polecający <span class="nav-badge g" id="badgeDue" title="Czeka na naliczenie"></span></div>
+        <div class="nav-item" data-view="payouts" onclick="showView('payouts')">💰 Premie <span class="nav-badge g" id="badgePay" title="Pozycji na liście bieżącego miesiąca"></span></div>
         <div class="nav-item" data-view="sources" onclick="showView('sources')">🧭 Źródła</div>
         <div class="nav-item" data-view="security" id="navSecurity" onclick="showView('security')" style="display:none">🛡️ Bezpieczeństwo</div>
         <div class="nav-item" data-view="settings" id="navSettings" onclick="showView('settings')" style="display:none">⚙️ Ustawienia</div>
@@ -188,7 +189,7 @@
           <div class="section-head">
             Nowi pracownicy i ich odpowiedzi <span class="cnt" id="listCnt"></span>
             <span class="spacer"></span>
-            <button class="btn btn-ghost btn-sm" onclick="exportList()" title="Eksport tabeli z bieżącymi filtrami + arkusz premii">⬇️ Excel</button>
+            <button class="btn btn-ghost btn-sm" onclick="exportList()" title="Eksport tabeli z bieżącymi filtrami">⬇️ Excel</button>
           </div>
           <div class="filters">
             <input type="text" class="inp" id="fQ" placeholder="Szukaj: pracownik, login, polecający, obiekt…" oninput="renderList()" style="width:240px" />
@@ -207,8 +208,9 @@
             </select>
             <span>Premia</span>
             <select class="inp" id="fBonus" onchange="renderList()">
-              <option value="">wszystkie</option><option value="due">należy się</option><option value="pending">w trakcie</option>
-              <option value="paid">wypłacona</option><option value="lost">odszedł przed terminem</option><option value="nomatch">bez zestawienia</option>
+              <option value="">wszystkie</option><option value="due">czeka na naliczenie</option><option value="pending">w trakcie</option>
+              <option value="part">1. naliczona, czeka na 2.</option><option value="done">naliczona</option>
+              <option value="lost">odszedł przed 30 dniami</option><option value="nomatch">bez zestawienia</option>
             </select>
             <span>Na ile</span>
             <select class="inp" id="fStay" onchange="renderList()">
@@ -233,6 +235,22 @@
           </div>
           <div class="tblwrap" id="rankTable"><div class="loading">Ładowanie…</div></div>
           <div class="note">Liczą się tylko odpowiedzi „znajomy”, zestawione z pracownikiem z bazy. Okres — po dacie BHP nowego pracownika.</div>
+        </div>
+      </div>
+
+      <!-- PREMIE -->
+      <div class="fl-view" id="view-payouts">
+        <div class="kpis" id="payKpis"></div>
+        <div class="section">
+          <div class="section-head">Lista premii <select class="inp" id="payPeriod" onchange="loadPayouts(this.value)"></select>
+            <span class="cnt" id="payCnt"></span>
+            <span class="spacer"></span>
+            <span id="payRunBox"></span>
+            <button class="btn btn-ghost btn-sm" onclick="exportPayouts()">⬇️ Excel</button>
+          </div>
+          <div id="payBanner"></div>
+          <div class="tblwrap" id="payTable"><div class="loading">Ładowanie…</div></div>
+          <div class="note" id="payNote"></div>
         </div>
       </div>
 

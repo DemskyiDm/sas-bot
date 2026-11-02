@@ -1,6 +1,6 @@
 // ══════════════════════════════════════════════════════════════════════
 //  Sekcja «Poleć znajomego»: odpowiedzi nowych pracowników z bota,
-//  zestawienie z bazą, premia za polecenie, ranking, źródła,
+//  zestawienie z bazą, premie za polecenie (listy miesiąca), ranking, źródła,
 //  bezpieczeństwo (historia Telegram-ID), ustawienia, Excel.
 // ══════════════════════════════════════════════════════════════════════
 const SESSION = localStorage.getItem("sas_session");
@@ -9,7 +9,7 @@ if (!SESSION) location.href = "/login.html";
 
 const ST = {
   view: "list", me: null, from: null, to: null, preset: "60",
-  list: null, sort: { key: "bhp", dir: -1 }, ranking: null, sources: null, security: null,
+  list: null, sort: { key: "bhp", dir: -1 }, ranking: null, sources: null, security: null, payouts: null,
   item: null, seq: 0, iseq: 0,
   outOnly: false,                        // tylko «poza ankietą» (KPI); domyślnie ukryci
 };
@@ -86,13 +86,17 @@ const STATE = {
   out: ["poza ankietą", "z"],          // obiekt bez Rozmowy — bot nic nie wysyła
 };
 const BONUS = {
-  due: ["należy się", "fill-ok"],
-  paid: ["wypłacona", "ok"],
+  due: ["czeka na naliczenie", "fill-ok"],
+  part: ["1. naliczona", "ok"],
+  done: ["naliczona", "ok"],
   pending: ["w trakcie", "acc"],
-  lost: ["odszedł przed terminem", "bad"],
+  lost: ["odszedł przed 30 dniami", "bad"],
   nomatch: ["bez zestawienia", "warn"],
   na: ["—", ""],
 };
+const PAYN = { 1: "1 płatność", 2: "2 płatność" };          // «Opłata» w liście premii
+const zl = (v) => (v == null || v === "" ? "" : `${Number(v).toLocaleString("pl-PL")} zł`);
+const ym = (p) => (p ? `${p.slice(5, 7)}.${p.slice(0, 4)}` : "");
 const FLAG = {
   coord_tg: (f) => [`⛔ próba z Telegrama koordynatora ×${f.n}`, "bad", "Ktoś próbował wypełnić anketę z Telegrama koordynatora — odpowiedź nie została przyjęta"],
   shared: (f) => [`👥 Telegram ${f.n} pracowników`, "bad", "Z Telegrama, z którego przyszła odpowiedź, logowało się kilku pracowników"],
@@ -107,6 +111,7 @@ const tag = (txt, cls, title) => `<span class="tag ${cls || ""}"${title ? ` titl
 
 // ── Start ─────────────────────────────────────────────────────────────
 window.addEventListener("DOMContentLoaded", init);
+const VIEWS = ["list", "ranking", "payouts", "sources", "security", "settings"];
 async function init() {
   if (CURRENT_USER) document.getElementById("userName").textContent = CURRENT_USER.full_name || "";
   const me = await api("/me");
@@ -141,11 +146,11 @@ async function init() {
   setPreset(store.get("sas_ref_preset") || "60", true);
   renderBanner();
   const h = location.hash.replace("#", "");
-  showView(["list", "ranking", "sources", "security", "settings"].includes(h) ? h : "list");
+  showView(VIEWS.includes(h) ? h : "list");
 }
 window.addEventListener("hashchange", () => {
   const h = location.hash.replace("#", "");
-  if (ST.me && h !== ST.view && ["list", "ranking", "sources", "security", "settings"].includes(h)) showView(h);
+  if (ST.me && h !== ST.view && VIEWS.includes(h)) showView(h);
 });
 // Blok «Rozmowy» w menu — Poleć znajomego jest teraz częścią Rozmowy
 async function careMenu() {
@@ -206,16 +211,17 @@ function showView(v) {
   document.querySelectorAll(".fl-view").forEach((el) => el.classList.toggle("active", el.id === "view-" + v));
   document.querySelectorAll(".nav-item[data-view]").forEach((el) => el.classList.toggle("active", el.dataset.view === v));
   document.getElementById("topTitle").textContent =
-    { list: "Poleć znajomego — odpowiedzi", ranking: "Poleć znajomego — polecający", sources: "Poleć znajomego — źródła",
+    { list: "Poleć znajomego — odpowiedzi", ranking: "Poleć znajomego — polecający", payouts: "Poleć znajomego — premie", sources: "Poleć znajomego — źródła",
       security: "Poleć znajomego — bezpieczeństwo", settings: "Poleć znajomego — ustawienia" }[v];
   const noFilters = v === "settings" || v === "security";
   document.getElementById("toolbar").style.visibility = noFilters ? "hidden" : "";
-  document.getElementById("periodBar").style.display = noFilters ? "none" : "";
+  document.getElementById("periodBar").style.display = noFilters || v === "payouts" ? "none" : "";
   loadView();
 }
 function loadView() {
   if (ST.view === "list") loadList();
   if (ST.view === "ranking") loadRanking();
+  if (ST.view === "payouts") loadPayouts();
   if (ST.view === "sources") loadSources();
   if (ST.view === "security") loadSecurity();
   if (ST.view === "settings") loadSettings();
@@ -257,7 +263,7 @@ function filteredRows() {
   const val = (x) => ({
     bhp: x.bhp, full_name: x.full_name, site_key: x.site_key, state: x.state, source: x.state === "answered" ? x.source : "~",
     referrer: x.referrer_text || "~", match: (x.match && x.match.full_name) || x.match_coordinator_name || "~",
-    bonus: ["due", "pending", "paid", "lost", "nomatch", "na"].indexOf(x.bonus.state) + "", flags: String((x.flags || []).length).padStart(2, "0"),
+    bonus: ["due", "pending", "part", "done", "lost", "nomatch", "na"].indexOf(x.bonus.state) + "", flags: String((x.flags || []).length).padStart(2, "0"),
   })[k] || "";
   return rows.slice().sort((a, b) => (val(a) < val(b) ? -1 : val(a) > val(b) ? 1 : 0) * d || (a.full_name || "").localeCompare(b.full_name || ""));
 }
@@ -292,10 +298,9 @@ function renderKpis() {
   const noTg = all.filter((x) => x.state === "no_tg").length;
   const todo = all.filter(isTodo).length;
   const due = all.filter((x) => x.bonus.state === "due").length;
-  const paid = all.filter((x) => x.bonus.state === "paid").length;
+  const paid = all.filter((x) => x.bonus.state === "done" || x.bonus.state === "part").length;
   const pend = all.filter((x) => x.bonus.state === "pending").length;
   const susp = all.filter(isSuspicious).length;
-  const N = ST.me.settings.bonus_days;
   const k = (l, v, s, click, cls) => `<div class="kpi${click ? " click" : ""}"${click ? ` onclick="quick('${click}')"` : ""}>
     <div class="l">${l}</div><div class="v ${cls || ""}">${v}</div><div class="s">${s || ""}</div></div>`;
   document.getElementById("listKpis").innerHTML = [
@@ -306,7 +311,7 @@ function renderKpis() {
     k("📢 Rekrutacja, reklama, inne", ans.length - bySrc("friend") - bySrc("coord"),
       `rekrutacja ${bySrc("recruit")}${ans.some((x) => ADS.includes(x.source)) ? ` · reklama ${ans.filter((x) => ADS.includes(x.source)).length}` : ""} · inne ${bySrc("other")}`, "recruit"),
     k("Do zestawienia", todo, ST.me.can_match ? "porównaj wpisane imię z bazą" : "czeka na regionalnego", "todo", todo ? "warn" : ""),
-    k("💰 Do wypłaty", due, `premia po ${N} dniach · w trakcie ${pend} · wypłacono ${paid}`, "due", due ? "good" : ""),
+    k("💰 Czeka na naliczenie", due, `minęło 30 / 60 dni · w trakcie ${pend} · naliczono ${paid}`, "due", due ? "good" : ""),
     ST.me.sees_tg ? k("🛡️ Podejrzane", susp, "Telegram koordynatora / wspólny / polecającego", "flag", susp ? "bad" : "") : "",
   ].join("");
   document.getElementById("badgeTodo").textContent = ST.me.can_match && todo ? todo : "";
@@ -344,13 +349,13 @@ function bonusCell(x) {
   if (b.state === "na") return `<span class="z">—</span>`;
   const [l, c] = BONUS[b.state];
   let sub = "";
-  const N = ST.me.settings.bonus_days;
-  if (b.state === "pending") sub = `${b.days}/${N} dni · od ${dd(b.due_date)}`;
-  else if (b.state === "due") sub = `${b.days} dni · od ${dd(b.due_date)}`;
-  else if (b.state === "paid") sub = `${ddy(x.bonus_paid_at)}${x.bonus_note ? " · " + x.bonus_note : ""}`;
+  const next = b.stages.find((s) => !s.payout && !s.old);
+  if (b.state === "nomatch") sub = x.match_state === "not_found" ? "polecający nie znaleziony" : "najpierw zestaw";
   else if (b.state === "lost") sub = `przepracował ${b.days} dni`;
-  else if (b.state === "nomatch") sub = x.match_state === "not_found" ? "polecający nie znaleziony" : "najpierw zestaw";
-  return `${tag(l, c)}${sub ? `<div class="sub">${esc(sub)}</div>` : ""}`;
+  else if (b.state === "pending" || b.state === "part") sub = `${b.days} dni${next ? ` · ${next.stage * 30}. dzień ${dd(next.due_date)}` : ""}`;
+  else if (b.state === "due") sub = `${b.days} dni · na liście ${ST.me.settings.pay_day}. dnia`;
+  const got = b.stages.filter((s) => s.payout).map((s) => `${s.stage}. — lista ${ym(s.payout.period)}`).join(" · ");
+  return `${tag(l, c)}${sub ? `<div class="sub">${esc(sub)}</div>` : ""}${got ? `<div class="sub">${esc(got)}</div>` : ""}`;
 }
 function flagsCell(x) {
   if (!x.flags || !x.flags.length) return "";
@@ -388,7 +393,8 @@ function renderList() {
   document.getElementById("listNote").innerHTML =
     `Nowy pracownik = pierwszy okres w firmie albo powrót po przerwie dłuższej niż 14 dni (przeniesienia między obiektami się nie liczą).
      Odpowiedzieć można do <b>BHP + ${esc(s.window_days)} dni</b>, potem bot nie przyjmuje odpowiedzi.
-     Premia za znajomego należy się, gdy nowy przepracował <b>${esc(s.bonus_days)} dni</b> od BHP${s.bonus_amount ? ` — <b>${esc(s.bonus_amount)} zł</b>` : ""}.
+     Premia: znajomy — <b>${esc(s.pay_friend_1)} zł</b> za 30 dni i <b>${esc(s.pay_friend_2)} zł</b> za 60 dni pracy nowego (+ ${esc(s.pay_coord_month)} zł za każdy z tych miesięcy jego koordynatorowi);
+     koordynator — <b>${esc(s.pay_coord_ref)} zł</b> za 30 dni. Naliczenie — ${esc(s.pay_day)}. dnia miesiąca, zakładka „Premie”.
      Kliknij wiersz — szczegóły, zestawienie z bazą${ST.me.sees_tg ? ", historia Telegrama" : ""}.`;
 }
 
@@ -416,7 +422,6 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawe
 function renderItem() {
   const { row: x, suggestions, tg } = ST.item;
   const me = ST.me;
-  const N = me.settings.bonus_days;
   const named = x.state === "answered" && (x.source === "friend" || x.source === "coord");
   let h = `<div class="dw-head"><div>
       <h2>${esc(x.full_name)}</h2>
@@ -462,8 +467,8 @@ function renderItem() {
       h += `<div class="cand"><span class="nm">${tag("nie ma w bazie", "bad")} <span class="sub">oznaczył ${esc(x.match_by_name || "")} ${ts(x.match_at)}</span></span></div>`;
     }
     if (me.can_match) {
-      if (x.bonus_paid_at) {
-        h += `<div class="note">Premia już wypłacona — żeby zmienić zestawienie, najpierw cofnij wypłatę.</div>`;
+      if (x.bonus.stages.some((s) => s.payout)) {
+        h += `<div class="note">Premia już naliczona — zestawienia nie można zmienić.</div>`;
       } else {
         h += suggestions.length
           ? `<div class="note" style="border-top:none">Podobne ${isCoord ? "nazwiska koordynatorów" : "osoby z bazy (pracujące w ostatnim roku)"}:</div>` +
@@ -481,24 +486,18 @@ function renderItem() {
   }
 
   // Premia
-  if (x.state === "answered" && x.source === "friend") {
+  if (named) {
     const b = x.bonus;
     const [bl, bc] = BONUS[b.state];
+    const S = me.settings;
+    const amt = (n) => (x.source === "coord" ? `koordynatorowi ${S.pay_coord_ref} zł`
+      : `polecającemu ${n === 1 ? S.pay_friend_1 : S.pay_friend_2} zł + jego koordynatorowi ${S.pay_coord_month} zł`);
     h += `<div class="section"><div class="section-head">💰 Premia za polecenie ${tag(bl, bc)}</div><div class="kv">
-      <span class="k">Warunek</span><span>nowy przepracuje ${N} dni od BHP — od ${ddy(b.due_date)}</span>
       <span class="k">Przepracował</span><span>${b.days} dni${b.left ? ` · <span class="bad">zakończył pracę</span>` : ""}${x.emp_end === undefined ? ` · <span class="bad">okresu już nie ma w grafiku</span>` : ""}</span>
-      <span class="k">Dla kogo</span><span>${x.match ? `${esc(x.match.full_name)} (${esc(x.match.login || "")})${x.match.working === false ? ` · <span class="bad">polecający już nie pracuje</span>` : ""}` : `<span class="z">najpierw zestaw polecającego</span>`}</span>
-      ${me.settings.bonus_amount ? `<span class="k">Kwota</span><span>${esc(me.settings.bonus_amount)} zł</span>` : ""}
-      ${x.bonus_paid_at ? `<span class="k">Wypłacono</span><span>${ddy(x.bonus_paid_at)}${x.bonus_note ? " · " + esc(x.bonus_note) : ""}</span>` : ""}
-    </div>`;
-    if (me.can_pay && (b.state === "due" || b.state === "paid")) {
-      h += b.state === "due"
-        ? `<div class="row-in"><span style="font-size:11px;color:var(--text2)">Data wypłaty</span><input type="date" id="pDate" value="${me.today}" />
-           <input type="text" class="inp" id="pNote" placeholder="notatka (np. lista płac 10.2026)" style="flex:1;min-width:160px" />
-           <button class="btn btn-primary btn-sm" onclick="doPaid(true)">Oznacz jako wypłaconą</button><span class="msg" id="pMsg"></span></div>`
-        : `<div class="row-in"><button class="btn btn-ghost btn-sm" onclick="doPaid(false)">Cofnij wypłatę</button><span class="msg" id="pMsg"></span></div>`;
-    }
-    h += `</div>`;
+      ${b.stages.map((s) => `<span class="k">${PAYN[s.stage]} — ${s.stage * 30} dni</span><span>${ddy(s.due_date)} · ${esc(amt(s.stage))}
+        · ${s.payout ? `<span class="good">lista ${ym(s.payout.period)}</span>${s.payout.note ? ` · ${esc(s.payout.note)}` : ""}` : s.old ? `<span class="z">przed startem premii (01.10.2026)</span>` : s.reached ? `<span class="good">czeka na listę ${esc(S.pay_day)}. dnia</span>` : `<span class="z">jeszcze nie</span>`}</span>`).join("")}
+      ${x.source === "friend" ? `<span class="k">Dla kogo</span><span>${x.match ? `${esc(x.match.full_name)} (${esc(x.match.login || "")})${x.match.working === false ? ` · <span class="bad">polecający już nie pracuje</span>` : ""}` : `<span class="z">najpierw zestaw polecającego</span>`}</span>` : ""}
+    </div></div>`;
   }
 
   // Telegram
@@ -578,12 +577,6 @@ async function doMatch(body) {
   const x = ST.item.row;
   afterAction(await api("/match", { method: "POST", body: { worker_id: x.worker_id, bhp: x.bhp, ...body } }), "mMsg");
 }
-async function doPaid(paid) {
-  const x = ST.item.row;
-  const body = { worker_id: x.worker_id, bhp: x.bhp, paid };
-  if (paid) { body.date = document.getElementById("pDate").value; body.note = document.getElementById("pNote").value.trim(); }
-  afterAction(await api("/paid", { method: "POST", body }), "pMsg");
-}
 async function doManual() {
   const x = ST.item.row;
   const body = { worker_id: x.worker_id, bhp: x.bhp, source: document.getElementById("manSrc").value, text: document.getElementById("manText").value.trim(),
@@ -601,22 +594,111 @@ async function loadRanking() {
   if (my !== ST.seq || !r) return;
   if (!r.ok) { document.getElementById("rankTable").innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
   ST.ranking = r;
-  const N = ST.me.settings.bonus_days;
+  const N = 30;
   document.getElementById("rankCnt").textContent = r.rows.length ? `${r.rows.length} osób` : "";
   document.getElementById("rankTable").innerHTML = !r.rows.length
     ? `<div class="empty">W tym okresie nikt nie został zestawiony jako polecający.</div>`
     : `<table class="fl"><thead><tr><th class="l">#</th><th class="l">Polecający</th><th class="l">Obiekt</th>
-        <th>Przyprowadził</th><th>Nadal pracują</th><th>${N} dni</th><th>Premia należy się</th><th>Wypłacono</th><th>Odeszli przed</th><th class="l">Kogo</th></tr></thead><tbody>
+        <th>Przyprowadził</th><th>Nadal pracują</th><th>${N} dni</th><th>Czeka na naliczenie</th><th>Naliczono</th><th>Odeszli przed ${N} dniami</th><th class="l">Kogo</th></tr></thead><tbody>
       ${r.rows.map((x, i) => `<tr>
         <td class="l">${i + 1}</td>
         <td class="l">${esc(x.referrer.full_name)}<div class="sub">${esc(x.referrer.login || "")}${x.referrer.working === false ? ` · <span class="bad">nie pracuje</span>` : ""}</div></td>
         <td class="l">${esc(x.referrer.site_key || "")}</td>
         <td><b>${x.brought}</b></td><td>${x.working}</td><td>${x.reached}</td>
         <td>${x.due ? `<span class="good"><b>${x.due}</b></span>` : `<span class="z">0</span>`}</td>
-        <td>${x.paid || `<span class="z">0</span>`}</td><td>${x.lost ? `<span class="bad">${x.lost}</span>` : `<span class="z">0</span>`}</td>
+        <td>${x.accrued ? `${x.accrued}<div class="sub">${zl(x.amount)}</div>` : `<span class="z">0</span>`}</td><td>${x.lost ? `<span class="bad">${x.lost}</span>` : `<span class="z">0</span>`}</td>
         <td class="l"><details class="ppl"><summary>${x.people.length} os.</summary>${x.people.map((p) =>
           `<div>${esc(p.full_name)} · BHP ${dd(p.bhp)} · ${esc(p.site_key || "")} · ${esc(BONUS[p.bonus] ? BONUS[p.bonus][0] : p.bonus)} (${p.days} dni)</div>`).join("")}</details></td>
       </tr>`).join("")}</tbody></table>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  Premie — lista miesiąca
+// ══════════════════════════════════════════════════════════════════════
+async function loadPayouts(period) {
+  const my = ++ST.seq;
+  document.getElementById("payTable").innerHTML = `<div class="loading">Ładowanie…</div>`;
+  const r = await api("/payouts" + qs({ period: period || (ST.payouts && ST.payouts.period) }));
+  if (my !== ST.seq || !r) return;
+  if (!r.ok) { document.getElementById("payTable").innerHTML = `<div class="error">${esc(r.error)}</div>`; return; }
+  ST.payouts = r;
+  renderPayouts();
+}
+const payTot = (rows) => rows.reduce((a, x) => ({ w: a.w + (x.worker_amount || 0), c: a.c + (x.coord_amount || 0) }), { w: 0, c: 0 });
+function renderPayouts() {
+  const r = ST.payouts;
+  document.getElementById("payPeriod").innerHTML = (r.periods.length ? r.periods : [r.period]).map((p) =>
+    `<option value="${p}" ${p === r.period ? "selected" : ""}>${ym(p)}${p === r.current ? " — bieżący" : ""}</option>`).join("");
+  const t = payTot(r.rows);
+  const k = (l, v, s, cls) => `<div class="kpi"><div class="l">${l}</div><div class="v ${cls || ""}">${v}</div><div class="s">${s || ""}</div></div>`;
+  const nCoord = r.rows.filter((x) => x.kind === "coord").length;
+  const notes = r.rows.filter((x) => x.note).length;
+  document.getElementById("payKpis").innerHTML = [
+    k("Pozycji", r.rows.length, `1 płatność ${r.rows.filter((x) => x.stage === 1).length} · 2 płatność ${r.rows.filter((x) => x.stage === 2).length}`),
+    k("Pracownikom", zl(t.w) || "0 zł", `${r.rows.filter((x) => x.worker_amount).length} premii`),
+    k("Koordynatorom", zl(t.c) || "0 zł", `w tym za własne polecenia: ${nCoord}`),
+    k("Razem", zl(t.w + t.c) || "0 zł", r.preview ? "podgląd — jeszcze nie naliczono" : "naliczono", r.preview ? "warn" : "good"),
+    notes ? k("Z uwagami", notes, "zwolniony / brak koordynatora", "warn") : "",
+  ].join("");
+  document.getElementById("payCnt").textContent = `stan na ${ddy(addDays(r.cutoff, 1))}`;
+  document.getElementById("badgePay").textContent = r.period === r.current && r.rows.length ? r.rows.length : "";
+  document.getElementById("payRunBox").innerHTML = r.can_run
+    ? `<button class="btn btn-primary btn-sm" onclick="runPayouts()">Nalicz teraz</button> <span class="msg" id="payMsg"></span>` : "";
+  document.getElementById("payBanner").innerHTML = r.period < r.first
+    ? `<div class="banner">Pierwsza lista premii — za ${ym(r.first)}.</div>`
+    : r.preview
+      ? `<div class="banner">👀 <b>Podgląd.</b> Lista za ${ym(r.period)} naliczy się automatycznie ${r.pay_day}. dnia miesiąca${r.can_run ? " albo przyciskiem „Nalicz teraz”" : ""}.
+         Do tego czasu może się zmienić (np. po zestawieniu polecających). Po naliczeniu — bez zmian.</div>`
+      : `<div class="banner">✅ Naliczono ${ts(r.run.run_at)}${r.run.run_by_name ? ` — ${esc(r.run.run_by_name)}` : " — automatycznie"}. Pozycji: ${r.run.n}. Lista się już nie zmienia.</div>`;
+  document.getElementById("payTable").innerHTML = !r.rows.length ? `<div class="empty">Brak premii na tej liście.</div>` :
+    `<table class="fl"><thead><tr><th class="l">REG</th><th class="l">Koordynator</th><th class="l">Pracownik (który polecił)</th><th class="l">Zakład</th>
+      <th class="l">Zatrudniony</th><th class="l">Zakład</th><th class="l">Data zatrudnienia</th><th>Premia koordynatora</th><th>Premia pracownika</th>
+      <th class="l">Opłata</th><th class="l">Uwagi</th></tr></thead><tbody>
+      ${r.rows.map((x) => `<tr class="rowlink${x.note ? " hl" : ""}" data-w="${x.worker_id}" data-b="${x.bhp_date}" onclick="openItem(Number(this.dataset.w), this.dataset.b)">
+        <td class="l">${esc(x.region_name || "")}</td>
+        <td class="l">${esc(x.coordinator_name || "")}${x.kind === "coord" ? `<div class="sub">polecił sam</div>` : ""}</td>
+        <td class="l">${x.referrer_name ? `${esc(x.referrer_name)}<div class="sub">${esc(x.referrer_login || "")}</div>` : `<span class="z">—</span>`}</td>
+        <td class="l">${esc(x.referrer_site || "")}</td>
+        <td class="l">${esc(x.worker_name)}<div class="sub">${esc(x.worker_login || "")}</div></td>
+        <td class="l">${esc(x.worker_site || "")}</td>
+        <td class="l">${ddy(x.bhp_date)}<div class="sub">${x.stage * 30}. dzień ${dd(x.due_date)}</div></td>
+        <td>${zl(x.coord_amount) || `<span class="z">—</span>`}</td>
+        <td>${zl(x.worker_amount) || `<span class="z">—</span>`}</td>
+        <td class="l">${PAYN[x.stage]}</td>
+        <td class="l">${x.note ? `<span class="warn">${esc(x.note)}</span>` : ""}</td>
+      </tr>`).join("")}
+      <tr class="tot"><td class="l" colspan="7">Razem</td><td>${zl(t.c)}</td><td>${zl(t.w)}</td><td class="l" colspan="2">${zl(t.w + t.c)}</td></tr>
+      </tbody></table>`;
+  document.getElementById("payNote").innerHTML =
+    `Lista miesiąca — stan na 1. dzień: kto do końca poprzedniego miesiąca przepracował 30 dni (1 płatność) albo 60 dni (2 płatność) od BHP.
+     Koordynator — koordynator obiektu polecającego (albo sam koordynator, jeśli to on polecił). Kliknij wiersz — szczegóły nowego pracownika.`;
+}
+async function runPayouts() {
+  const r = ST.payouts;
+  if (!confirm(`Naliczyć listę premii za ${ym(r.period)}? Po naliczeniu lista się nie zmienia.`)) return;
+  const res = await api("/payouts/run", { method: "POST", body: {} });
+  if (!res || !res.ok) { const m = document.getElementById("payMsg"); if (m) { m.className = "msg err"; m.textContent = (res && res.error) || "Błąd"; } return; }
+  loadPayouts(r.period);
+}
+function exportPayouts() {
+  if (!haveXlsx() || !ST.payouts) return;
+  const r = ST.payouts;
+  const t = payTot(r.rows);
+  const aoa = [[`Poleć znajomego — premie za ${ym(r.period)}`],
+    [`Stan na ${ddy(addDays(r.cutoff, 1))}${scopeLabel() ? " · " + scopeLabel() : ""}${r.preview ? " · PODGLĄD — jeszcze nie naliczono" : ""}`],
+    ["REG", "Koordynator", "Pracownik (który polecił)", "Zakład na jakim pracuje", "Nazwisko Imię pracownika którego zatrudniliśmy", "Zakład na jakim pracuje",
+      "Data zatrudnienia", "Premia koordynatora", "Kwota premii dla pracownika", "Opłata", "Uwagi"]];
+  const styles = {};
+  r.rows.forEach((x) => {
+    if (x.note) styles[aoa.length] = XS.note;
+    aoa.push([x.region_name || "", x.coordinator_name || "", x.referrer_name || "", x.referrer_site || "", x.worker_name || "", x.worker_site || "",
+      xDate(x.bhp_date), x.coord_amount == null ? "" : x.coord_amount, x.worker_amount == null ? "" : x.worker_amount, PAYN[x.stage], x.note || ""]);
+  });
+  aoa.push(["Razem", "", "", "", "", "", "", t.c, t.w, t.w + t.c, ""]);
+  styles[aoa.length - 1] = XS.tot;
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, makeSheet(aoa, 2, styles, [14, 24, 26, 22, 30, 22, 12, 12, 12, 12, 34], [6]), "Premie");
+  XLSX.writeFile(wb, `polec_znajomego_premie_${r.period}.xlsx`);
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -742,12 +824,16 @@ async function loadSettings() {
     </div>
   </div>
   <div class="section">
-    <div class="section-head">Premia za znajomego</div>
+    <div class="section-head">Premie za polecenie</div>
     <div class="cfg">
-      <span class="k">Należy się po</span><span><input type="number" id="s_bonus_days" value="${esc(S.bonus_days)}" min="1" max="365"/> dniach pracy nowego (od BHP)</span>
-      <span class="h">Przeniesienie na inny obiekt i przerwa do 14 dni nie przerywają stażu.</span>
-      <span class="k">Kwota, zł</span><span><input type="text" class="inp" id="s_bonus_amount" value="${esc(S.bonus_amount)}" style="width:90px"/></span>
-      <span class="h">Do Excela. Puste — kolumna kwoty pusta.</span>
+      <span class="k">Polecił pracownik</span><span><input type="text" class="inp" id="s_pay_friend_1" value="${esc(S.pay_friend_1)}" style="width:70px"/> zł za 30 dni,
+        <input type="text" class="inp" id="s_pay_friend_2" value="${esc(S.pay_friend_2)}" style="width:70px"/> zł za 60 dni pracy nowego</span>
+      <span class="k">Jego koordynator</span><span><input type="text" class="inp" id="s_pay_coord_month" value="${esc(S.pay_coord_month)}" style="width:70px"/> zł za każdy z tych miesięcy</span>
+      <span class="h">Koordynator obiektu, na którym pracuje polecający (w dniu naliczenia).</span>
+      <span class="k">Polecił koordynator</span><span><input type="text" class="inp" id="s_pay_coord_ref" value="${esc(S.pay_coord_ref)}" style="width:70px"/> zł za 30 dni, za drugi miesiąc — nic</span>
+      <span class="k">Naliczenie</span><span><input type="number" id="s_pay_day" value="${esc(S.pay_day || "4")}" min="1" max="28"/> dnia miesiąca — automatycznie (albo przyciskiem w „Premie”)</span>
+      <span class="h">Lista miesiąca — stan na 1. dzień: kto do końca poprzedniego miesiąca przepracował 30 / 60 dni (kalendarzowych od BHP; przeniesienie i przerwa do 14 dni nie przerywają stażu).
+        Naliczonej listy się nie zmienia. Zestawione po naliczeniu — trafi na następną listę. Nowe kwoty — od następnej listy.</span>
     </div>
   </div>
   <div class="section">
@@ -761,7 +847,8 @@ async function saveSettings() {
   const body = {
     visible_coords: c("s_visible_coords"), start_date: v("s_start_date"),
     window_days: v("s_window_days"), remind_max: v("s_remind_max"), remind_time: v("s_remind_time"),
-    bonus_days: v("s_bonus_days"), bonus_amount: v("s_bonus_amount"),
+    pay_friend_1: v("s_pay_friend_1"), pay_friend_2: v("s_pay_friend_2"), pay_coord_month: v("s_pay_coord_month"),
+    pay_coord_ref: v("s_pay_coord_ref"), pay_day: v("s_pay_day"),
     start_remind_days: v("s_start_remind_days"),
   };
   const msg = document.getElementById("setMsg");
@@ -782,6 +869,7 @@ const XS = {
     alignment: { vertical: "center", wrapText: true }, border: { bottom: { style: "thin", color: { rgb: "999999" } } } },
   due: { fill: { patternType: "solid", fgColor: { rgb: "E2F0D9" } } },
   paid: { font: { color: { rgb: "548235" } } },
+  note: { fill: { patternType: "solid", fgColor: { rgb: "FFF2CC" } } },
   lost: { font: { color: { rgb: "999999" } } },
   susp: { fill: { patternType: "solid", fgColor: { rgb: "FCE4D6" } } },
   todo: { fill: { patternType: "solid", fgColor: { rgb: "FFF2CC" } } },
@@ -826,21 +914,19 @@ function scopeLabel() {
   return parts.join(" · ");
 }
 function fileName(kind) { return `polec_znajomego_${kind}_${ST.from}_${ST.to}.xlsx`; }
-const amount = () => { const a = ST.me.settings.bonus_amount; return a ? Number(String(a).replace(",", ".")) : ""; };
 const flagsText = (x) => (x.flags || []).map((f) => (FLAG[f.k] ? FLAG[f.k](f)[0] : f.k)).join("; ");
 
 function exportList() {
   if (!haveXlsx() || !ST.list) return;
   const rows = filteredRows();
   const tg = ST.me.sees_tg;
-  const N = ST.me.settings.bonus_days;
-  const info = `BHP ${ddy(ST.from)} – ${ddy(ST.to)}${scopeLabel() ? " · " + scopeLabel() : ""} · stan na ${ddy(ST.me.today)} · premia po ${N} dniach pracy`;
+  const info = `BHP ${ddy(ST.from)} – ${ddy(ST.to)}${scopeLabel() ? " · " + scopeLabel() : ""} · stan na ${ddy(ST.me.today)}`;
   const wb = XLSX.utils.book_new();
 
   // 1) Odpowiedzi
   const head = ["BHP", "Login", "Pracownik", "Obiekt", "Region", "Koordynator obiektu", "Pytanie 1: stan", "Termin odpowiedzi", "Wysłano (razy)",
     "Data odpowiedzi", "Skąd wie o firmie", "Wpisane imię i nazwisko", "Na ile przyjechał", "Zestawiono: login", "Zestawiono: imię i nazwisko", "Zestawiono: obiekt",
-    "Polecający pracuje", "Dni pracy nowego", "Premia: stan", "Premia od dnia", "Kwota, zł", "Wypłacono", "Notatka"];
+    "Polecający pracuje", "Dni pracy nowego", "Premia: stan", "30. dzień", "60. dzień", "Naliczono, zł (polecający)", "Naliczono, zł (koordynator)", "Listy"];
   const pilot = rows.some((x) => x.ext || x.start);         // są pytania 2–6 pakietu startowego
   if (pilot) head.push("Pytania 2–6: stan", ...START_Q.map((q) => q[1]));
   if (tg) head.push("Uwagi (Telegram)");
@@ -860,9 +946,9 @@ function exportList() {
       named && m ? (m.working ? "tak" : "nie") : "",
       x.bonus.days,
       x.bonus.state === "na" ? "" : BONUS[x.bonus.state][0],
-      x.source === "friend" && x.state === "answered" ? xDate(x.bonus.due_date) : "",
-      x.bonus.state === "due" || x.bonus.state === "paid" ? amount() : "",
-      x.bonus_paid_at ? xDate(x.bonus_paid_at) : "", x.bonus_note || "",
+      ...[1, 2].map((n) => { const s = x.bonus.stages.find((y) => y.stage === n); return s ? xDate(s.due_date) : ""; }),
+      ...["worker_amount", "coord_amount"].map((k) => { const ps = x.bonus.stages.filter((y) => y.payout); return ps.length ? ps.reduce((a, y) => a + (y.payout[k] || 0), 0) : ""; }),
+      x.bonus.stages.filter((y) => y.payout).map((y) => `${PAYN[y.stage]} — ${ym(y.payout.period)}`).join("; "),
     ];
     if (pilot) {
       const sv = x.start;
@@ -873,51 +959,28 @@ function exportList() {
     const R = aoa.length;
     if (isSuspicious(x)) styles[R] = XS.susp;
     else if (x.bonus.state === "due") styles[R] = XS.due;
-    else if (x.bonus.state === "paid") styles[R] = XS.paid;
+    else if (x.bonus.state === "done" || x.bonus.state === "part") styles[R] = XS.paid;
     else if (isTodo(x)) styles[R] = XS.todo;
     aoa.push(line);
   });
-  const w1 = [11, 11, 26, 22, 12, 22, 18, 11, 8, 16, 12, 26, 14, 12, 26, 20, 9, 8, 18, 11, 9, 11, 22];
+  const w1 = [11, 11, 26, 22, 12, 22, 18, 11, 8, 16, 12, 26, 14, 12, 26, 20, 9, 8, 18, 11, 11, 12, 12, 24];
   if (pilot) w1.push(14, 12, 12, 16, 10);
   if (tg) w1.push(40);
-  XLSX.utils.book_append_sheet(wb, makeSheet(aoa, 2, styles, w1, [0, 7, 19, 21]), "Odpowiedzi");
-
-  // 2) Premie — dla polecających
-  const order = { due: 0, pending: 1, paid: 2, lost: 3 };
-  const pr = rows.filter((x) => x.state === "answered" && x.source === "friend" && x.match_state === "confirmed" && x.match && order[x.bonus.state] != null)
-    .sort((a, b) => order[a.bonus.state] - order[b.bonus.state] || (a.match.full_name || "").localeCompare(b.match.full_name || ""));
-  const aoa2 = [["Premie za polecenie znajomego"], [info],
-    ["Premia: stan", "Polecający: login", "Polecający", "Obiekt polecającego", "Polecający pracuje", "Nowy: login", "Nowy pracownik",
-      "Obiekt nowego", "BHP nowego", "Dni pracy nowego", "Premia od dnia", "Kwota, zł", "Wypłacono", "Notatka", ...(tg ? ["Uwagi (Telegram)"] : [])]];
-  const st2 = {};
-  pr.forEach((x) => {
-    const R = aoa2.length;
-    st2[R] = isSuspicious(x) ? XS.susp : x.bonus.state === "due" ? XS.due : x.bonus.state === "paid" ? XS.paid : x.bonus.state === "lost" ? XS.lost : null;
-    aoa2.push([BONUS[x.bonus.state][0], x.match.login || "", x.match.full_name || "", x.match.site_key || "", x.match.working ? "tak" : "nie",
-      x.login, x.full_name, x.site_key, xDate(x.bhp), x.bonus.days, xDate(x.bonus.due_date),
-      x.bonus.state === "due" || x.bonus.state === "paid" ? amount() : "", x.bonus_paid_at ? xDate(x.bonus_paid_at) : "", x.bonus_note || "",
-      ...(tg ? [flagsText(x)] : [])]);
-  });
-  const dueN = pr.filter((x) => x.bonus.state === "due").length;
-  const a = amount();
-  aoa2.push([]);
-  aoa2.push([`Do wypłaty: ${dueN}${a ? ` × ${a} zł = ${dueN * a} zł` : ""}`]);
-  st2[aoa2.length - 1] = XS.tot;
-  XLSX.utils.book_append_sheet(wb, makeSheet(aoa2, 2, st2, [18, 11, 26, 22, 9, 11, 26, 22, 11, 8, 11, 9, 11, 24, 40], [8, 10, 12]), "Premie");
+  XLSX.utils.book_append_sheet(wb, makeSheet(aoa, 2, styles, w1, [0, 7, 19, 20]), "Odpowiedzi");
 
   XLSX.writeFile(wb, fileName("odpowiedzi"));
 }
 
 function exportRanking() {
   if (!haveXlsx() || !ST.ranking) return;
-  const N = ST.me.settings.bonus_days;
+  const N = 30;
   const aoa = [["Poleć znajomego — polecający"], [`BHP ${ddy(ST.from)} – ${ddy(ST.to)}${scopeLabel() ? " · " + scopeLabel() : ""} · stan na ${ddy(ST.me.today)}`],
-    ["#", "Login", "Polecający", "Obiekt", "Pracuje", "Przyprowadził", "Nadal pracują", `Przepracowało ${N} dni`, "Premia należy się", "Wypłacono", "Odeszli przed", "Kogo przyprowadził"]];
+    ["#", "Login", "Polecający", "Obiekt", "Pracuje", "Przyprowadził", "Nadal pracują", `Przepracowało ${N} dni`, "Czeka na naliczenie", "Naliczono (płatności)", "Naliczono, zł", "Odeszli przed 30 dniami", "Kogo przyprowadził"]];
   ST.ranking.rows.forEach((x, i) => aoa.push([i + 1, x.referrer.login || "", x.referrer.full_name || "", x.referrer.site_key || "", x.referrer.working ? "tak" : "nie",
-    x.brought, x.working, x.reached, x.due, x.paid, x.lost,
+    x.brought, x.working, x.reached, x.due, x.accrued, x.amount, x.lost,
     x.people.map((p) => `${p.full_name} (BHP ${dd(p.bhp)}, ${BONUS[p.bonus] ? BONUS[p.bonus][0] : p.bonus})`).join("; ")]));
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, makeSheet(aoa, 2, {}, [5, 11, 26, 22, 8, 10, 10, 12, 12, 10, 10, 70]), "Polecający");
+  XLSX.utils.book_append_sheet(wb, makeSheet(aoa, 2, {}, [5, 11, 26, 22, 8, 10, 10, 12, 12, 10, 10, 10, 70]), "Polecający");
   XLSX.writeFile(wb, fileName("polecajacy"));
 }
 

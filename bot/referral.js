@@ -674,7 +674,9 @@ async function tick(opt) {
     await db.query(
       `UPDATE ref.answers SET await_name = false, pending_source = NULL
         WHERE status = 'answered' AND (await_name OR pending_source IS NOT NULL) AND bhp_date + $1::int < ref.today()`, [win]);
-    if (!(await startOn())) return;                    // пакет вимкнений у Rozmowy → Ustawienia
+    // премії за полецення — список місяця pay_day (4) числа
+    await require("./referral_pay").autoRun().catch((e) => console.error("[ref] premie", e.message));
+    if (!(await startOn())) return;                   // пакет вимкнений у Rozmowy → Ustawienia
     const now = await today();
     const nowMin = hm((opt && opt.hm) || now.hm);
     const day = nowMin >= 8 * 60 && nowMin < 20 * 60;           // уночі не пишемо

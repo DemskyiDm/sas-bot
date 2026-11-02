@@ -382,3 +382,59 @@ test("student_policy.TX: «номер оновлено» — з номером �
   const pol = require("../../bot/student_policy");
   for (const l of ["uk", "ru", "pl", "en"]) assert.match(pol.TX[l]("X 2026", "PL/1"), /X 2026: PL\/1$/);
 });
+
+// ── Poleć znajomego: премії за місяць ────────────────────────────────
+const rpay = require("../../bot/referral_pay");
+const refApi = require("../../api/ref")._test;
+const PAY_ST = { pay_friend_1: "400", pay_friend_2: "200", pay_coord_month: "100", pay_coord_ref: "200", pay_from: "2026-10-01" };
+
+test("referral_pay: 30-й / 60-й день від BHP включно, cutoff — останній день попереднього місяця", () => {
+  assert.equal(rpay.dueOf("2026-10-02", 1), "2026-10-31");
+  assert.equal(rpay.dueOf("2026-09-02", 2), "2026-10-31");
+  assert.equal(rpay.cutoffOf("2026-11"), "2026-10-31");
+  assert.equal(rpay.cutoffOf("2027-01"), "2026-12-31");
+  assert.equal(rpay.firstPeriod(PAY_ST), "2026-11");
+  assert.equal(rpay.firstPeriod({ pay_from: "2026-12-01" }), "2027-01");
+});
+
+test("referral_pay.dueStages: лише етапи з днем у межах [pay_from, cutoff] і якщо пропрацював до цього дня", () => {
+  const ds = rpay._test.dueStages;
+  const c = "2026-10-31", f = "2026-10-01";
+  assert.deepEqual(ds({ kind: "friend", bhp: "2026-10-02", emp_end: null }, c, f), [1]);
+  assert.deepEqual(ds({ kind: "friend", bhp: "2026-10-03", emp_end: null }, c, f), []);           // 30-й день — 01.11
+  assert.deepEqual(ds({ kind: "friend", bhp: "2026-09-02", emp_end: null }, c, f), [1, 2]);       // 01.10 і 31.10
+  assert.deepEqual(ds({ kind: "friend", bhp: "2026-08-15", emp_end: null }, c, f), [2]);          // 30-й день у вересні — до старту
+  assert.deepEqual(ds({ kind: "coord", bhp: "2026-09-02", emp_end: null }, c, f), [1]);           // координатору — лише перший місяць
+  assert.deepEqual(ds({ kind: "friend", bhp: "2026-10-02", emp_end: "2026-10-30" }, c, f), []);   // пішов до 30-го дня
+  assert.deepEqual(ds({ kind: "friend", bhp: "2026-10-02", emp_end: "2026-10-31" }, c, f), [1]);  // 30-й день відпрацював
+  assert.deepEqual(ds({ kind: "friend", bhp: "2026-10-02", emp_end: undefined }, c, f), []);      // періоду вже немає
+});
+
+test("referral_pay.stagePay: 400 / 200 + 100 координатору полецаючого; координатор привів — 200", () => {
+  const sp = rpay._test.stagePay;
+  assert.deepEqual(sp({ kind: "friend", coordinator_id: 7 }, 1, PAY_ST), { worker_amount: 400, coord_amount: 100 });
+  assert.deepEqual(sp({ kind: "friend", coordinator_id: 7 }, 2, PAY_ST), { worker_amount: 200, coord_amount: 100 });
+  assert.deepEqual(sp({ kind: "friend", coordinator_id: null }, 1, PAY_ST), { worker_amount: 400, coord_amount: null });
+  assert.deepEqual(sp({ kind: "coord", coordinator_id: 7 }, 1, PAY_ST), { worker_amount: null, coord_amount: 200 });
+  assert.equal(sp({ kind: "coord", coordinator_id: 7 }, 2, PAY_ST), null);
+});
+
+test("ref.bonusOf: стани премії з урахуванням нарахованих етапів", () => {
+  const b = refApi.bonusOf;
+  const row = (o) => ({ bhp: "2026-09-02", state: "answered", source: "friend", match_state: "confirmed", match_worker_id: 5, emp_end: null, ...o });
+  const p = (stage) => ({ stage, period: "2026-11", worker_amount: 400, coord_amount: 100 });
+  assert.equal(b(row({}), "2026-09-20", []).state, "pending");
+  assert.equal(b(row({}), "2026-10-05", []).state, "due");
+  assert.equal(b(row({}), "2026-10-05", [p(1)]).state, "part");
+  assert.equal(b(row({}), "2026-11-05", [p(1)]).state, "due");
+  assert.equal(b(row({}), "2026-11-05", [p(1), p(2)]).state, "done");
+  assert.equal(b(row({ emp_end: "2026-09-20" }), "2026-10-05", []).state, "lost");
+  assert.equal(b(row({ emp_end: "2026-10-10" }), "2026-11-05", [p(1)]).state, "done");      // пішов між 30 і 60 днями
+  assert.equal(b(row({ source: "coord", match_worker_id: null, match_coordinator_id: 3 }), "2026-11-05", [p(1)]).state, "done");
+  assert.equal(b(row({ match_state: "none" }), "2026-10-05", []).state, "nomatch");
+  assert.equal(b(row({ source: "recruit" }), "2026-10-05", []).state, "na");
+  // 30-й день до старту премій: перший етап не нараховується, чекаємо на другий
+  assert.equal(b(row({ bhp: "2026-08-15" }), "2026-10-05", [], "2026-10-01").state, "part");
+  assert.equal(b(row({ bhp: "2026-08-15" }), "2026-10-20", [], "2026-10-01").state, "due");
+  assert.equal(b(row({ bhp: "2026-07-01" }), "2026-10-20", [], "2026-10-01").state, "done");
+});

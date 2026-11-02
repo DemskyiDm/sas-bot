@@ -2,7 +2,7 @@
 //  Розділ «Poleć znajomego» — API панелі.  app.use("/api/ref", ref.router)
 //
 //  Доступ:
-//    адмін / head  — усе, налаштування, позначка «бонус виплачено»
+//    адмін / head  — усе, налаштування, нарахування премій (кнопка)
 //    регіональний  — свої регіони: зіставлення, безпека, Excel
 //    координатор   — лише якщо в налаштуваннях «visible_coords» = 1:
 //                    свої об'єкти, тільки перегляд, без даних про Telegram
@@ -12,6 +12,7 @@ const router = express.Router();
 const db = require("../db");
 const { requireAuth } = require("./admin");
 const refBot = require("../bot/referral");
+const pay = require("../bot/referral_pay");
 
 router.use(requireAuth);
 
@@ -189,33 +190,39 @@ async function suggest(row) {
     .slice(0, 5);
 }
 
-// ── Стаж нового: кінець безперервної роботи від BHP (перерви ≤ 14 днів) ─
-function employmentEnd(periods, bhp) {
-  const ps = periods.filter((p) => p.bhp >= bhp).sort((a, b) => a.bhp.localeCompare(b.bhp));
-  let end; let started = false;
-  for (const p of ps) {
-    if (!started) { if (p.bhp !== bhp) continue; started = true; end = p.lwd; continue; }
-    if (end === null) break;
-    if (p.bhp <= addDays(end, 14)) end = p.lwd === null ? null : (p.lwd > end ? p.lwd : end);
-    else break;
-  }
-  return started ? end : undefined;
-}
-function bonusOf(r, st, today) {
-  const N = Number(st.bonus_days) || 30;
-  // N днів роботи включно з днем BHP: BHP 01.09, N=30 → 30.09
-  const out = { days: null, reached: false, state: "na", due_date: addDays(r.bhp, N - 1) };
+const { employmentEnd } = pay;
+const N1 = pay.STAGE_DAYS;
+
+// Премія рядка: етапи 30 / 60 днів (друг) або 30 днів (координатор) і що вже нараховано.
+// state: na — не «друг / координатор»; nomatch — не зіставлено; pending — ще не дійшов до 30 днів;
+//        lost — пішов до 30 днів; due — етап досягнуто, чекає на список 4-го числа;
+//        part — частину нараховано, наступний етап ще можливий; done — усе можливе нараховано.
+// Етап із днем до pay_from (old: true) не нараховується — до старту премій.
+function bonusOf(r, today, payouts, payFrom) {
+  const out = { days: null, reached: false, state: "na", due_date: pay.dueOf(r.bhp, 1), stages: [] };
   const end = r.emp_end;                                   // undefined: періоду вже немає в графіку
   const stop = end === undefined ? r.bhp : end === null || end > today ? today : end;
   out.days = Math.max(0, daysBetween(r.bhp, stop) + 1);
-  out.reached = today >= out.due_date && (end === null || (end !== undefined && end >= out.due_date));
+  const hit = (due) => today > due && (end === null || (end !== undefined && end >= due));
+  out.reached = hit(out.due_date);
   out.left = end !== null && end !== undefined && end <= today;
-  if (r.state !== "answered" || r.source !== "friend") return out;   // лише записана відповідь «друг»
-  if (r.match_state !== "confirmed" || !r.match_worker_id) { out.state = "nomatch"; return out; }
-  if (r.bonus_paid_at) out.state = "paid";
-  else if (out.reached) out.state = "due";
-  else if (out.left || end === undefined) out.state = "lost";
-  else out.state = "pending";
+  if (r.state !== "answered" || (r.source !== "friend" && r.source !== "coord")) return out;
+  const got = new Map((payouts || []).map((p) => [p.stage, p]));
+  out.stages = pay.stagesOf(r.source).map((s) => {
+    const due = pay.dueOf(r.bhp, s);
+    return { stage: s, due_date: due, reached: hit(due), payout: got.get(s) || null, old: !!payFrom && due < payFrom };
+  });
+  if (r.match_state !== "confirmed" || !(r.match_worker_id || r.match_coordinator_id)) {
+    out.state = got.size ? "part" : "nomatch";
+    return out;
+  }
+  const open = out.stages.filter((x) => !x.payout && !x.old);
+  const any = got.size || out.stages.some((x) => x.old && x.reached);
+  const gone = out.left || end === undefined;
+  if (!open.length) out.state = "done";
+  else if (open.some((x) => x.reached)) out.state = "due";
+  else if (any) out.state = gone ? "done" : "part";
+  else out.state = gone ? "lost" : "pending";
   return out;
 }
 
@@ -261,7 +268,6 @@ async function loadRows(rs, q) {
             a.id AS answer_id, a.status AS a_status, a.source, a.referrer_text, a.answered_at, a.answered_chat_id,
             a.await_name, a.sends, a.first_sent_at, a.last_sent_at, a.blocked_attempts, a.manual_by, a.ext, a.stay_plan, a.stay_at,
             a.match_state, a.match_worker_id, a.match_coordinator_id, a.match_at, a.match_by,
-            to_char(a.bonus_paid_at, 'YYYY-MM-DD') AS bonus_paid_at, a.bonus_note,
             mb.full_name AS match_by_name, mc.full_name AS match_coordinator_name, man.full_name AS manual_by_name
        FROM ref.v_hires h
        JOIN public.workers w ON w.id = h.worker_id
@@ -288,6 +294,15 @@ async function loadRows(rs, q) {
     }
     const w = await db.query(`SELECT id, login, full_name FROM public.workers WHERE id = ANY($1::int[])`, [ids]);
     w.rows.forEach((x) => { const c = cur.get(x.id) || {}; cur.set(x.id, { ...c, login: x.login, full_name: x.full_name }); });
+  }
+  // нараховані премії
+  const paid = new Map();
+  const aids = rows.map((x) => x.answer_id).filter(Boolean);
+  if (aids.length) {
+    const p = await db.query(
+      `SELECT answer_id, stage, period, worker_amount::float AS worker_amount, coord_amount::float AS coord_amount, note
+         FROM ref.payouts WHERE answer_id = ANY($1::int[]) ORDER BY stage`, [aids]);
+    p.rows.forEach((x) => { (paid.get(x.answer_id) || paid.set(x.answer_id, []).get(x.answer_id)).push(x); });
   }
   // Telegram-прапорці
   let tg = null;
@@ -322,7 +337,7 @@ async function loadRows(rs, q) {
     row.state = !x.answer_id
       ? (x.bhp < (st.start_date || "2000-01-01") ? "before" : !s.care_on ? "out" : !x.has_tg ? "no_tg" : row.deadline < td ? "expired" : "queued")
       : x.a_status === "answered" ? "answered" : x.a_status === "expired" ? "expired" : x.source ? "waiting_name" : "waiting";
-    row.bonus = bonusOf(row, st, td);
+    row.bonus = bonusOf(row, td, paid.get(x.answer_id), st.pay_from);
     if (x.match_worker_id) {
       const m = cur.get(x.match_worker_id) || {};
       row.match = { id: x.match_worker_id, login: m.login, full_name: m.full_name, site_key: m.site_key, status: m.status, working: m.working, lwd: m.lwd };
@@ -370,7 +385,8 @@ router.get("/me", async (req, res) => {
       can_match: canMatch(rs), can_pay: canPay(rs), sees_tg: seesTg(rs),
       regions: regs.rows.filter((g) => rs.role === "all" || rs.regionIds.includes(Number(g.id))),
       coordinators: [...coordIds].map(([id, name]) => ({ id, name })).sort((a, b) => String(a.name).localeCompare(String(b.name))),
-      settings: { bonus_days: rs.st.bonus_days, bonus_amount: rs.st.bonus_amount, window_days: rs.st.window_days, start_date: rs.st.start_date,
+      settings: { pay_friend_1: rs.st.pay_friend_1, pay_friend_2: rs.st.pay_friend_2, pay_coord_month: rs.st.pay_coord_month,
+        pay_coord_ref: rs.st.pay_coord_ref, pay_day: rs.st.pay_day, window_days: rs.st.window_days, start_date: rs.st.start_date,
         package_on: await refBot.startOn(), package_sites: sites.filter((s) => s.care_on).length, sites: sites.length },
       today: (await db.query(`SELECT to_char(ref.today(), 'YYYY-MM-DD') AS d`)).rows[0].d,
     });
@@ -469,7 +485,7 @@ router.post("/match", async (req, res) => {
     if (!canMatch(req.rs)) return fail(res, new Error("Brak uprawnień"), 403);
     const row = await actionRow(req, res); if (!row) return;
     if (!row.answer_id || row.state !== "answered" || !["friend", "coord"].includes(row.source)) return fail(res, new Error("Brak odpowiedzi z imieniem"), 400);
-    if (row.bonus_paid_at) return fail(res, new Error("Premia już wypłacona — najpierw cofnij wypłatę"), 400);
+    if (row.bonus.stages.some((x) => x.payout)) return fail(res, new Error("Premia już naliczona — zestawienia nie można zmienić"), 400);
     const b = req.body;
     if (b.state === "reset") {
       await db.query(`UPDATE ref.answers SET match_state = 'none', match_worker_id = NULL, match_coordinator_id = NULL, match_by = $2, match_at = now(), updated_at = now() WHERE id = $1`, [row.answer_id, req.rs.me]);
@@ -490,22 +506,6 @@ router.post("/match", async (req, res) => {
     res.json({ ok: true, row: await oneRow(req.rs, row.worker_id, row.bhp) });
   } catch (e) { fail(res, e); }
 });
-router.post("/paid", async (req, res) => {
-  try {
-    if (!canPay(req.rs)) return fail(res, new Error("Tylko kierownictwo"), 403);
-    const row = await actionRow(req, res); if (!row) return;
-    if (!row.answer_id) return fail(res, new Error("Brak odpowiedzi"), 400);
-    if (req.body.paid) {
-      if (row.bonus.state !== "due" && row.bonus.state !== "paid") return fail(res, new Error("Premia jeszcze się nie należy"), 400);
-      const d = isDate(req.body.date) ? req.body.date : null;
-      await db.query(`UPDATE ref.answers SET bonus_paid_at = COALESCE($2::date, ref.today()), bonus_paid_by = $3, bonus_note = $4, updated_at = now() WHERE id = $1`,
-        [row.answer_id, d, req.rs.me, req.body.note ? String(req.body.note).slice(0, 300) : null]);
-    } else {
-      await db.query(`UPDATE ref.answers SET bonus_paid_at = NULL, bonus_paid_by = NULL, bonus_note = NULL, updated_at = now() WHERE id = $1`, [row.answer_id]);
-    }
-    res.json({ ok: true, row: await oneRow(req.rs, row.worker_id, row.bhp) });
-  } catch (e) { fail(res, e); }
-});
 // Ручне внесення відповіді (лише адміністратор; напр. працівник без Telegram)
 router.post("/manual", async (req, res) => {
   try {
@@ -513,7 +513,7 @@ router.post("/manual", async (req, res) => {
     const row = await actionRow(req, res); if (!row) return;
     const src = req.body.source;
     if (!refBot.SOURCES_X.includes(src)) return fail(res, new Error("source"), 400);
-    if (row.bonus_paid_at) return fail(res, new Error("Premia już wypłacona — najpierw cofnij wypłatę"), 400);
+    if (row.bonus.stages.some((x) => x.payout)) return fail(res, new Error("Premia już naliczona — odpowiedzi nie można zmienić"), 400);
     const text = (src === "friend" || src === "coord") ? String(req.body.text || "").trim().slice(0, 80) : null;
     if ((src === "friend" || src === "coord") && text.length < 3) return fail(res, new Error("Wpisz imię i nazwisko"), 400);
     const stay = req.body.stay ? String(req.body.stay) : null;               // «na ile przyjechał»
@@ -539,13 +539,13 @@ router.get("/ranking", async (req, res) => {
     for (const r of d.rows) {
       if (r.state !== "answered" || r.source !== "friend" || r.match_state !== "confirmed" || !r.match) continue;
       const k = r.match.id;
-      const x = g.get(k) || { referrer: r.match, brought: 0, working: 0, reached: 0, due: 0, paid: 0, lost: 0, people: [] };
+      const x = g.get(k) || { referrer: r.match, brought: 0, working: 0, reached: 0, due: 0, accrued: 0, amount: 0, lost: 0, people: [] };
       x.brought++;
       if (!r.bonus.left && r.emp_end !== undefined) x.working++;
       if (r.bonus.reached) x.reached++;
       if (r.bonus.state === "due") x.due++;
-      if (r.bonus.state === "paid") x.paid++;
       if (r.bonus.state === "lost") x.lost++;
+      r.bonus.stages.forEach((s) => { if (s.payout) { x.accrued++; x.amount += s.payout.worker_amount || 0; } });
       x.people.push({ full_name: r.full_name, login: r.login, bhp: r.bhp, site_key: r.site_key, bonus: r.bonus.state, days: r.bonus.days });
       g.set(k, x);
     }
@@ -557,7 +557,7 @@ router.get("/ranking", async (req, res) => {
 router.get("/sources", async (req, res) => {
   try {
     const d = await loadRows(req.rs, req.query);
-    const N = Number(req.rs.st.bonus_days) || 30;
+    const N = N1;
     const by = new Map();
     const tot = { site_key: "Razem", hires: 0, answered: 0, friend: 0, coord: 0, recruit: 0, ads: 0, other: 0, none: 0, ret: {}, stay: {} };
     const ADS = new Set(["facebook", "instagram", "tiktok", "telegram", "jobsite"]);   // канали реклами (питання 1 пакета)
@@ -568,7 +568,7 @@ router.get("/sources", async (req, res) => {
       x[src]++;
       if (r.state === "answered") { const k = r.stay_plan || "none"; x.stay[k] = (x.stay[k] || 0) + 1; }
       // утримання: серед тих, у кого вже минуло N днів
-      if (d.today >= r.bonus.due_date) {
+      if (d.today > r.bonus.due_date) {
         const e = (x.ret[src] = x.ret[src] || { n: 0, ok: 0 });
         e.n++; if (r.bonus.reached) e.ok++;
       }
@@ -636,15 +636,79 @@ router.get("/security", async (req, res) => {
   } catch (e) { fail(res, e); }
 });
 
+// ── Премії: списки місяця (ref.payouts) ──────────────────────────────
+// Рядок видно, якщо доступний об'єкт нового або полецаючого, або премія — самому координатору
+function payoutVisible(rs, q, sites, x) {
+  if (rs.role === "all" && !q.region && !q.coord) return true;
+  if (rs.role !== "all" && x.coordinator_id === rs.me && !q.region && !q.coord) return true;
+  return [x.worker_site, x.referrer_site].some((k) => k && filterSites(rs, q, sites.get(k)));
+}
+const PAY_COLS = `p.id, p.period, p.answer_id, p.stage, p.kind, to_char(p.due_date, 'YYYY-MM-DD') AS due_date,
+  p.worker_id, w.login AS worker_login, p.worker_name, p.worker_site, to_char(p.bhp_date, 'YYYY-MM-DD') AS bhp_date,
+  p.referrer_worker_id, rw.login AS referrer_login, p.referrer_name, p.referrer_site,
+  p.coordinator_id, p.coordinator_name, p.region_name,
+  p.worker_amount::float AS worker_amount, p.coord_amount::float AS coord_amount, p.note`;
+router.get("/payouts", async (req, res) => {
+  try {
+    const rs = req.rs, q = req.query;
+    const td = (await db.query(`SELECT to_char(ref.today(), 'YYYY-MM-DD') AS d`)).rows[0].d;
+    const current = td.slice(0, 7);
+    const first = pay.firstPeriod(rs.st);
+    const runs = (await db.query(
+      `SELECT r.period, to_char(r.cutoff, 'YYYY-MM-DD') AS cutoff, r.run_at, r.n, c.full_name AS run_by_name
+         FROM ref.payout_runs r LEFT JOIN public.coordinators c ON c.id = r.run_by ORDER BY r.period DESC`)).rows;
+    const period = pay.isPeriod(q.period) ? q.period : (runs.some((r) => r.period === current) || current >= first ? current : (runs[0] && runs[0].period) || current);
+    const run = runs.find((r) => r.period === period) || null;
+    let rows;
+    if (run) {
+      rows = (await db.query(
+        `SELECT ${PAY_COLS} FROM ref.payouts p
+           JOIN public.workers w ON w.id = p.worker_id LEFT JOIN public.workers rw ON rw.id = p.referrer_worker_id
+          WHERE p.period = $1`, [period])).rows;
+    } else {
+      // ще не нараховано — попередній перегляд того, що потрапить у список
+      rows = period >= first ? await pay.compute(period, rs.st) : [];
+      if (rows.length) {
+        const l = await db.query(`SELECT id, login FROM public.workers WHERE id = ANY($1::int[])`,
+          [[...new Set(rows.flatMap((x) => [x.worker_id, x.referrer_worker_id].filter(Boolean)))]]);
+        const lg = new Map(l.rows.map((x) => [x.id, x.login]));
+        rows.forEach((x) => { x.period = period; x.worker_login = lg.get(x.worker_id) || ""; x.referrer_login = lg.get(x.referrer_worker_id) || ""; });
+      }
+    }
+    const sites = await sitesMap();
+    rows = rows.filter((x) => payoutVisible(rs, q, sites, x))
+      .sort((a, b) => String(a.region_name || "~").localeCompare(String(b.region_name || "~"))
+        || String(a.coordinator_name || "~").localeCompare(String(b.coordinator_name || "~"))
+        || String(a.referrer_name || "").localeCompare(String(b.referrer_name || ""))
+        || String(a.worker_name).localeCompare(String(b.worker_name)) || a.stage - b.stage);
+    const periods = [...new Set([...(current >= first ? [current] : []), ...runs.map((r) => r.period)])].sort().reverse();
+    res.json({ ok: true, period, current, first, preview: !run, run, rows, periods, cutoff: pay.cutoffOf(period),
+      can_run: canPay(rs) && !run && period === current && period >= first, pay_day: Number(rs.st.pay_day) || 4 });
+  } catch (e) { fail(res, e); }
+});
+router.post("/payouts/run", async (req, res) => {
+  try {
+    if (!canPay(req.rs)) return fail(res, new Error("Tylko kierownictwo"), 403);
+    const current = (await db.query(`SELECT to_char(ref.today(), 'YYYY-MM') AS p`)).rows[0].p;
+    const r = await pay.run(current, req.rs.me);
+    if (!r.ok) return fail(res, new Error(`Lista za ${current} jest już naliczona`), 400);
+    res.json(r);
+  } catch (e) { fail(res, e, /^Pierwsza lista/.test(e.message) ? 400 : 500); }
+});
+
 // ── Налаштування (адмін) ─────────────────────────────────────────────
+const money = (v) => /^\d+([.,]\d{1,2})?$/.test(v) && parseFloat(v.replace(",", ".")) <= 100000;
 // «enabled» і «start_sites» більше не використовуються: хто отримує стартовий пакет — Rozmowy (Koordynatorzy + Ustawienia)
 const VALID = {
   visible_coords: (v) => v === "0" || v === "1",
   window_days: (v) => /^\d+$/.test(v) && +v >= 1 && +v <= 30,
   remind_max: (v) => /^\d+$/.test(v) && +v >= 0 && +v <= 5,
   remind_time: (v) => /^([01]?\d|2[0-3]):[0-5]\d$/.test(v),
-  bonus_days: (v) => /^\d+$/.test(v) && +v >= 1 && +v <= 365,
-  bonus_amount: (v) => v === "" || (/^\d+([.,]\d{1,2})?$/.test(v) && parseFloat(v.replace(",", ".")) <= 100000),
+  pay_friend_1: (v) => money(v),
+  pay_friend_2: (v) => money(v),
+  pay_coord_month: (v) => money(v),
+  pay_coord_ref: (v) => money(v),
+  pay_day: (v) => /^\d+$/.test(v) && +v >= 1 && +v <= 28,
   start_date: (v) => isDate(v),
   start_remind_days: (v) => /^\d+$/.test(v) && +v >= 0 && +v <= 5,
 };
@@ -685,4 +749,4 @@ router.patch("/settings", async (req, res) => {
   } catch (e) { fail(res, e); }
 });
 
-module.exports = { router, _test: { nameScore, translit, employmentEnd, bonusOf } };
+module.exports = { router, _test: { nameScore, translit, employmentEnd, bonusOf, payoutVisible } };

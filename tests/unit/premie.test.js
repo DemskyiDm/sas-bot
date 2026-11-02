@@ -96,6 +96,24 @@ test("premie.evalRow: статуси й причини зі списку, руч
   assert.deepEqual([m.ex, m.exr], ["manual", "błąd w grafiku"]);
 });
 
+test("premie.evalRow: «zwolniony», а за ≤ 14 днів новий період — переведення, не відхід", () => {
+  const OCT = { d1: "2026-10-01", d2: "2026-10-31", end: "2026-10-31" };
+  // як YELPASHEV ANDRII: Rawa Mazowiecka 26.10–26.10 zwolniony, з 29.10 знову Partners Lowicz
+  const rawa = evalRow(row("2026-10-26", "2026-10-26", { next_s: "2026-10-29" }), P, OCT);
+  assert.deepEqual([rawa.ex, rawa.nx], ["moved", "2026-10-29"]);
+  // і поріг 30 днів цього періоду (25.11) у листопаді теж не рахується
+  assert.equal(evalRow(row("2026-10-26", "2026-10-26", { next_s: "2026-10-29" }), P, { d1: "2026-11-01", d2: "2026-11-30", end: "2026-11-02" }).ex, "moved");
+  assert.equal(evalRow(row("2026-09-01", "2026-09-10", { next_s: "2026-09-24" }), P, SEPT).ex, "moved");        // рівно 14 днів
+  const late = evalRow(row("2026-09-01", "2026-09-10", { next_s: "2026-09-30" }), P, SEPT);                     // через 20 днів — відхід
+  assert.deepEqual([late.ex, late.dep], [undefined, true]);
+  assert.equal(evalRow(row("2026-09-01", "2026-09-10", { next_s: "2026-09-24" }), { ...P, rehire_days: 0 }, SEPT).ex, undefined);
+  assert.equal(evalRow(row("2026-09-01", null, { next_s: "2026-09-05" }), P, SEPT).ex, undefined);             // працює — не чіпаємо
+  // причина «przeniesienie» — теж переведення; справжня причина — справжнє звільнення з об'єкта, хоч людину й узяли на інший
+  assert.equal(evalRow(row("2026-09-01", "2026-09-10", { next_s: "2026-09-12", reason: "przeniesienie" }), P, SEPT).ex, "moved");
+  const fired = evalRow(row("2026-09-01", "2026-09-10", { next_s: "2026-09-12", reason: "Эффективность" }), P, SEPT);
+  assert.deepEqual([fired.ex, fired.dep], [undefined, true]);
+});
+
 test("premie.evalRow: штраф за відхід на 8–15-й день — лише коли увімкнено", () => {
   const on = { ...P, penalty: { ...P.penalty, enabled: true } };
   assert.equal(evalRow(row("2026-09-01", "2026-09-11"), on, SEPT).pen, -50);   // стаж 10
@@ -161,6 +179,7 @@ test("premie.checkParams: стандартні параметри — ok, пом
   assert.match(prm.checkParams({ ...prm.DEFAULTS, scale_b: [{ from: 1.5, pct: 1 }] }), /od 0 do 100/);
   assert.match(prm.checkParams({ ...prm.DEFAULTS, excluded_statuses: ["zwolniony"] }), /odejścia/);
   assert.match(prm.checkParams({ ...prm.DEFAULTS, penalty: { enabled: true, amount: 50, from_days: 8, to_days: 15 } }), /Kara/);
+  assert.match(prm.checkParams({ ...prm.DEFAULTS, rehire_days: -1 }), /Przeniesienie/);
 });
 
 test("premie.message: текст у Telegram", () => {

@@ -215,7 +215,7 @@ function renderMonth() {
   const vB = t.kadr ? t.core / t.kadr : null;
   const withBonus = d.participants.filter((p) => p.total > 0).length;
   const sk = d.skipped || { status: {}, reason: {}, manual: 0 };
-  const nSkip = Object.values(sk.status).reduce((a, x) => a + x, 0) + Object.values(sk.reason).reduce((a, x) => a + x, 0) + (sk.manual || 0);
+  const nSkip = Object.values(sk.status).reduce((a, x) => a + x, 0) + Object.values(sk.reason).reduce((a, x) => a + x, 0) + (sk.manual || 0) + (sk.moved || 0);
   const k = [
     d.range
       ? `<div class="kpi hero" title="min — nikt z progami do końca miesiąca nie dotrwa; max — wszyscy zostaną i wejdą do rdzenia">
@@ -536,6 +536,8 @@ function exclText(x) {
   if (x.ex === "status") return tag(`pominięty: status ${STATUS_PL[x.st] || x.st}`, "", "Status z listy pomijanych (parametry)");
   if (x.ex === "reason") return tag(`pominięty: ${x.rs}`, "", "Przyczyna zwolnienia z listy ignorowanych (parametry)");
   if (x.ex === "manual") return tag(`wykluczony: ${x.exr}`, "bad", "Wykluczony ręcznie");
+  if (x.ex === "moved") return tag(`pominięty: przeniesienie, nowy okres od ${dd(x.nx)}`, "",
+    "Status zwolniony, ale w ciągu kilku dni znowu pracuje — liczy się jak przeniesienie, nie odejście (parametry)");
   return "";
 }
 function peopleTable(p) {
@@ -658,6 +660,7 @@ async function loadExclusions() {
   const rows = [
     ...Object.entries(sk.status).map(([k, n]) => [`status: ${STATUS_PL[k] || k}`, n]),
     ...Object.entries(sk.reason).map(([k, n]) => [`przyczyna zwolnienia: ${k}`, n]),
+    ...(sk.moved ? [[`zwolniony, ale w ciągu ${d.params.rehire_days} dni znowu pracuje — przeniesienie`, sk.moved]] : []),
   ].sort((a, b) => b[1] - a[1]);
   h += `<div class="section"><div class="section-head">Pominięci automatycznie <span class="cnt">według parametrów</span></div>
     ${rows.length ? `<div class="tblwrap"><table class="pt"><tbody>${rows.map(([l, n]) => `<tr><td class="l">${esc(l)}</td><td>${n}</td></tr>`).join("")}</tbody></table></div>`
@@ -809,7 +812,8 @@ function howHtml(P, from) {
       <li>Udział rdzenia → skala: ${sc(P.scale_b)}, niżej — 0.</li></ul>
     ${P.penalty.enabled ? `<b>Kara</b>: ${zl(P.penalty.amount)} za każde odejście (status ${esc(P.exit_status)}) przy stażu ${P.penalty.from_days}–${P.penalty.to_days} dni, dolicza się do bloku A.<br><br>` : ""}
     <b>Nie liczą się</b>: statusy ${P.excluded_statuses.map((s) => esc(STATUS_PL[s] || s)).join(", ")};
-    zwolnienia z przyczyną ${P.ignored_reasons.length ? P.ignored_reasons.map((x) => `„${esc(x)}”`).join(", ") : "—"}; pracownicy wykluczeni ręcznie.
+    zwolnienia z przyczyną ${P.ignored_reasons.length ? P.ignored_reasons.map((x) => `„${esc(x)}”`).join(", ") : "—"}; pracownicy wykluczeni ręcznie;
+    zwolnienia, po których w ciągu <b>${P.rehire_days} dni</b> zaczyna się nowy okres (to przeniesienie, nie odejście).
     <br>Staż liczy się od rozpoczęcia pracy na obiekcie, po przeniesieniu — od daty przeniesienia. Koordynator i region obiektu —
     według przypisania na ostatni dzień miesiąca. Bez ludzi na obiektach (kadr 0) premii nie ma.
   </div>`;
@@ -854,6 +858,9 @@ function renderParams() {
         <span class="k">Status odejścia</span><span><select class="inp" onchange="ST.pedit.exit_status=this.value">${(r.statuses || []).map((s) =>
           `<option value="${s}"${s === P.exit_status ? " selected" : ""}>${esc(STATUS_PL[s] || s)}</option>`).join("")}</select></span>
         <span class="h">Odejście = ostatni dzień w miesiącu i ten status (liczba odejść, kara).</span>
+        <span class="k">Przeniesienie zamiast odejścia</span><span>nowy okres w ciągu ${numIn("rehire_days", P.rehire_days)} dni</span>
+        <span class="h">Status odejścia, a po ostatnim dniu w ciągu tylu dni zaczyna się nowy okres (inny obiekt, nowa umowa) —
+          liczy się jak przeniesienie: ani odejście, ani próg stażu tego okresu.</span>
       </div>
     </div><div>
       <div class="section-head">Skala bloku A — wykonanie</div>${rows("scale_a", "A")}
@@ -1103,7 +1110,8 @@ async function exportMonth() {
       a3.push([x.n, x.lg || "", x.f, x.k, owner.get(x.k) || "", xDate(x.s), xDate(x.l), STATUS_PL[x.st] || x.st, x.rs || "",
         x.ex ? "" : x.staff ? x.tEnd : x.tExit == null ? "" : x.tExit, ...cells,
         x.ex ? "" : x.staff ? "tak" : "", x.ex ? "" : x.core ? "tak" : "", x.ex ? "" : x.dep ? "tak" : "", x.ex ? "" : x.pen || "",
-        x.ex === "manual" ? `wykluczony: ${x.exr}` : x.ex === "status" ? `status ${STATUS_PL[x.st] || x.st}` : x.ex === "reason" ? `przyczyna: ${x.rs}` : ""]);
+        x.ex === "manual" ? `wykluczony: ${x.exr}` : x.ex === "status" ? `status ${STATUS_PL[x.st] || x.st}` : x.ex === "reason" ? `przyczyna: ${x.rs}`
+          : x.ex === "moved" ? `przeniesienie: nowy okres od ${ddy(x.nx)}` : ""]);
       if (x.ex) st3[a3.length - 1] = XS.ex;
       else if ((x.thr || []).some((t) => t.st === "fail")) st3[a3.length - 1] = XS.bad;
     });
@@ -1116,7 +1124,8 @@ async function exportMonth() {
     ["Progi stażu", P.thresholds.map((t) => `${t.days} dni × waga ${t.weight}`).join("; ")], ["Skala bloku A", sc(P.scale_a)],
     ["Próg rdzenia, dni", P.core_days], ["Skala bloku B", sc(P.scale_b)],
     ["Kara za odejście", P.penalty.enabled ? `${P.penalty.amount} zł przy stażu ${P.penalty.from_days}–${P.penalty.to_days} dni` : "wyłączona"],
-    ["Status odejścia", P.exit_status], ["Pomijane statusy", P.excluded_statuses.join(", ")], ["Ignorowane przyczyny", P.ignored_reasons.join(", ")]];
+    ["Status odejścia", P.exit_status], ["Przeniesienie zamiast odejścia: nowy okres w ciągu, dni", P.rehire_days],
+    ["Pomijane statusy", P.excluded_statuses.join(", ")], ["Ignorowane przyczyny", P.ignored_reasons.join(", ")]];
   XLSX.utils.book_append_sheet(wb, makeSheet(a4, 2, {}, [30, 90]), "Parametry");
   XLSX.writeFile(wb, `premie_koordynatorow_${d.month}.xlsx`);
 }

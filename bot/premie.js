@@ -13,6 +13,9 @@
 //  Не рахуються: статуси зі списку (rezygnacja, przeniesiony, unknown, do_zatrudnienia), звільнення
 //  з причиною зі списку ігнорованих (Редукция …), ручні виключення працівників. Статус і причина важать,
 //  лише якщо вихід не пізніше кінця місяця: хто перейшов чи звільнився пізніше, у цьому місяці ще працював.
+//  «zwolniony» без справжньої причини (порожня або «przeniesienie»), а за ≤ rehire_days (14) днів людина знову працює
+//  (новий період на будь-якому об'єкті) — це фактично переведення, а не відхід: рахується як przeniesiony. Зі справжньою
+//  причиною (Эффективность, Другая работа…) — справжнє звільнення з об'єкта, навіть якщо людину одразу взяли на інший.
 //  Переведення: період на новому об'єкті починається з дати переведення — від неї й стаж (як у Excel).
 //
 //  Об'єкт = група закладів (facilities.group_name), як у Region. Головний координатор і регіон — на останній
@@ -26,6 +29,7 @@
 const db = require("../db");
 
 const LOCK = 7_420_533;   // pg_advisory_xact_lock — два затвердження одного місяця одночасно не пройдуть
+const TRANSFER_REASON = "przeniesienie";   // причина переведення (bot/hr_reason.js ставить її для przeniesiony)
 const STATUSES = ["pracuje", "zwolniony", "przeniesiony", "urlop", "rezygnacja", "l4", "unknown", "do_zatrudnienia"];
 const DEFAULTS = {
   base_rate: 6500,
@@ -38,6 +42,7 @@ const DEFAULTS = {
   scale_b: [{ from: 0.8, pct: 1 }, { from: 0.7, pct: 0.9 }, { from: 0.6, pct: 0.85 }, { from: 0.55, pct: 0.7 }, { from: 0.4, pct: 0.2 }],
   penalty: { enabled: false, amount: -50, from_days: 8, to_days: 15 },
   exit_status: "zwolniony",
+  rehire_days: 14,                 // новий період не пізніше стількох днів після останнього — переведення, не відхід
   excluded_statuses: ["rezygnacja", "przeniesiony", "unknown", "do_zatrudnienia"],
   ignored_reasons: ["Редукция", "Лимит 18 месяцев", "Переход напрямую"],
 };
@@ -95,6 +100,7 @@ function checkParams(p, statuses = STATUSES) {
       !Number.isInteger(pen.from_days) || !Number.isInteger(pen.to_days) || pen.from_days < 0 || pen.to_days < pen.from_days || pen.to_days > 400)
     return "Kara: kwota ≤ 0, staż od–do w dniach";
   if (!statuses.includes(p.exit_status)) return "Nieznany status odejścia";
+  if (!Number.isInteger(p.rehire_days) || p.rehire_days < 0 || p.rehire_days > 60) return "Przeniesienie: nowy okres w ciągu 0–60 dni";
   if (!Array.isArray(p.excluded_statuses) || p.excluded_statuses.some((s) => !statuses.includes(s))) return "Nieznany status w pomijanych";
   if (p.excluded_statuses.includes(p.exit_status)) return "Status odejścia nie może być pomijany";
   if (!Array.isArray(p.ignored_reasons) || p.ignored_reasons.length > 50 ||
@@ -119,10 +125,13 @@ function relevant(r, P, w) {
 // manual — причина ручного виключення працівника (або undefined)
 function evalRow(r, P, w, manual) {
   const it = { h: r.id, w: r.worker_id, n: r.name, lg: r.login, f: r.facility, k: r.site_key,
-    s: r.s, l: r.l || null, st: r.status, rs: r.reason || null };
+    s: r.s, l: r.l || null, st: r.status, rs: r.reason || null, nx: r.next_s || null };
   if (manual) return { ...it, ex: "manual", exr: manual };
   if (P.excluded_statuses.includes(r.status) && (!r.l || r.l <= w.end)) return { ...it, ex: "status" };
   if (r.reason && r.l && r.l <= w.end && P.ignored_reasons.includes(r.reason)) return { ...it, ex: "reason" };
+  // звільнений без причини, а за кілька днів знову працює (next_s — початок наступного періоду) — переведення, як przeniesiony
+  if (r.status === P.exit_status && r.l && r.l <= w.end && r.next_s && r.next_s <= addDays(r.l, P.rehire_days)
+      && (!r.reason || r.reason === TRANSFER_REASON)) return { ...it, ex: "moved" };
   const staff = r.s <= w.end && (!r.l || r.l >= w.end);
   const tEnd = daysBetween(r.s, w.end);
   const core = staff && tEnd >= P.core_days;
@@ -203,7 +212,7 @@ function computeMonth({ month, end, rows, owners, leads, config, manual, P, coor
   const { d1, d2 } = monthBounds(month);
   const w = { d1, d2, end };
   const items = [];
-  const skipped = { status: {}, reason: {}, manual: 0 };
+  const skipped = { status: {}, reason: {}, manual: 0, moved: 0 };
   for (const r of rows) {
     if (!relevant(r, P, w)) continue;
     const x = evalRow(r, P, w, manual.get(r.worker_id));
@@ -211,6 +220,7 @@ function computeMonth({ month, end, rows, owners, leads, config, manual, P, coor
     if (x.ex === "status") skipped.status[x.st] = (skipped.status[x.st] || 0) + 1;
     else if (x.ex === "reason") skipped.reason[x.rs] = (skipped.reason[x.rs] || 0) + 1;
     else if (x.ex === "manual") skipped.manual++;
+    else if (x.ex === "moved") skipped.moved++;
   }
   // об'єкти: усі з людьми в місяці + усі з головним на кінець місяця
   const byKey = new Map();
@@ -330,7 +340,11 @@ async function loadRows(d1, end, maxDays) {
     `SELECT h.id, h.worker_id, w.full_name AS name, w.login, f.name AS facility,
             reg.site_key(f.group_name, f.name) AS site_key, h.status::text AS status,
             NULLIF(btrim(h.przyczyna_zwolnienia), '') AS reason,
-            to_char(h.bhp_date, 'YYYY-MM-DD') AS s, to_char(h.last_work_date, 'YYYY-MM-DD') AS l
+            to_char(h.bhp_date, 'YYYY-MM-DD') AS s, to_char(h.last_work_date, 'YYYY-MM-DD') AS l,
+            -- наступний період людини, де вона справді працювала (не rezygnacja / ще не почала)
+            (SELECT to_char(min(n.bhp_date), 'YYYY-MM-DD') FROM public.worker_facility_history n
+              WHERE n.worker_id = h.worker_id AND n.id <> h.id AND n.bhp_date > h.bhp_date
+                AND n.status::text NOT IN ('rezygnacja', 'do_zatrudnienia', 'unknown')) AS next_s
        FROM public.worker_facility_history h
        JOIN public.workers w    ON w.id = h.worker_id
        JOIN public.facilities f ON f.id = h.facility_id

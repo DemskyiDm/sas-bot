@@ -101,7 +101,7 @@ test("premie api: scoped — координатор бачить лише себ
   assert.deepEqual(ppl.items.map((x) => x.w), [1]);
   const lead = _test.scoped({ me: 3, full: false, level: "people", regionIds: [10] }, res);
   assert.deepEqual([lead.participants.map((p) => p.id), lead.sites.map((s) => s.key), lead.items.map((x) => x.w)], [[1, 3], ["s1", "s3"], [1, 3]]);
-  assert.deepEqual(lead.skipped, { status: {}, reason: {}, manual: 1 });
+  assert.deepEqual(lead.skipped, { status: {}, reason: {}, manual: 1, moved: 0 });
   assert.deepEqual([lead.total, lead.range], [400, { min: 0, max: 400 }]);
   assert.equal(_test.scoped({ me: 9, full: true, level: "excl", regionIds: [] }, res), res);
 });

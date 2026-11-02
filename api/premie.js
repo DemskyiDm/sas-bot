@@ -53,11 +53,12 @@ function scoped(ps, res) {
   if (ps.regionIds.length) res.sites.forEach((s) => { if (s.region_id != null && ps.regionIds.includes(s.region_id)) keys.add(s.key); });
   const parts = res.participants.filter((p) => p.id === ps.me || (ps.regionIds.length && p.sites.some((k) => keys.has(k))));
   const items = atLeast(ps, "people") ? res.items.filter((x) => keys.has(x.k)) : [];
-  const skipped = { status: {}, reason: {}, manual: 0 };
+  const skipped = { status: {}, reason: {}, manual: 0, moved: 0 };
   items.forEach((x) => {
     if (x.ex === "status") skipped.status[x.st] = (skipped.status[x.st] || 0) + 1;
     else if (x.ex === "reason") skipped.reason[x.rs] = (skipped.reason[x.rs] || 0) + 1;
     else if (x.ex === "manual") skipped.manual++;
+    else if (x.ex === "moved") skipped.moved++;
   });
   const sum = (f) => Math.round(parts.reduce((a, p) => a + (f(p) || 0), 0) * 100) / 100;
   return {

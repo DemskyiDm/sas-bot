@@ -42,6 +42,11 @@ test("premie: вересень з бази — учасники з Excel, сум
   assert.deepEqual(bry.sites, own.rows.filter((x) => regs.includes(x.region_id)).map((x) => x.site_key).sort((a, b) => a.localeCompare(b, "pl")));
   // ядро не більше кадру, набрані ваги не більше можливих
   for (const p of r.participants) { assert.ok(p.core <= p.kadr, p.name); assert.ok(p.ach <= p.poss, p.name); }
+  // «zwolniony» без причини, а за ≤ 14 днів людина знову працює — не відхід (рахується як переведення)
+  const plus = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 864e5).toISOString().slice(0, 10);
+  for (const x of r.items)
+    if (x.st === "zwolniony" && x.l && x.l <= r.end && x.nx && x.nx <= plus(x.l, 14) && (!x.rs || x.rs === "przeniesienie"))
+      assert.ok(x.ex, `${x.n}: ${x.l} → ${x.nx}`);
 });
 
 test("premie: ручне виключення зменшує можливі ваги координатора; жовтень успадковує список і параметри", async () => {

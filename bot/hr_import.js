@@ -22,6 +22,10 @@
 //     а хто в цьому стані понад 30 днів (від останньої зміни картки або від дня, коли імпорт уперше побачив цей стан — hrz.state_since)
 //     — лист щопонеділка о 5:00 (harmonogram);
 //   Nie dotarł → у базі rezygnacja (такого статусу немає), у звіті — лише проти zwolniony.
+// Працює в HRappka (Pracuje, Dotarł, Urlop, L4), а останній день (не раніше початку договору) минув — у базі вже zwolniony
+//   (наступного ранку, імпорт о 6:00; офіс оформлює звільнення пізніше). Продовжили останній день — знову pracuje.
+//   Офіс має закрити людину в HRappka (Zwolniony / Umowa zamknięta) до кінця наступного робочого дня після останнього
+//   (п'ятниця, субота, неділя → понеділок; свята — closeBy); не закрив — розбіжність «Не закрито в HRappka» (панель, лист о 8:00).
 // Останній день різниться до 20 днів — беремо HRappka: імпорт пише його в поточний період бази; понад 20 — перевірити.
 // У HRappka останнього дня немає — лишаємо наш. Решту розбіжностей періодів, що закінчились до 31.07.2026, не показуємо (IGNORE_TO).
 // Przeniesienie / Przeniesienie – czekamy — останній день не порівнюємо (при переведенні HRappka його стирає).
@@ -202,7 +206,48 @@ function match(people, workers) {
 function expected(state, dbStatus, lastDay, today) {
   if (state === "Umowa zamknięta" || state === "Zwolniony") return dbStatus === "rezygnacja" ? "rezygnacja" : "zwolniony";
   if (state === "Zwolniony, przejście bezpośrednio") return lastDay && today < lastDay ? "pracuje" : "zwolniony";
+  // працює в HRappka, а останній день минув — звільнений, хоч офіс ще не закрив (лише день після останнього)
+  if (HR_WORK.includes(STATE[state]) && lastDay && lastDay < today) return dbStatus === "rezygnacja" ? "rezygnacja" : "zwolniony";
   return STATE[state];
+}
+
+// ── Термін офісу: закрити людину в HRappka ──────────────────────────────
+// Кінець наступного робочого дня після останнього: п'ятниця, субота, неділя → понеділок; свята в Польщі — не робочі
+function easter(y) {
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4, g = Math.floor((8 * b + 13) / 25);
+  const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 19 * l) / 433);
+  const month = Math.floor((h + l - 7 * m + 90) / 25), dd = (h + l - 7 * m + 33 * month + 19) % 32;
+  return `${y}-${String(month).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+}
+const HOLIDAYS = new Map();
+function holidays(y) {
+  if (!HOLIDAYS.has(y)) {
+    const e = easter(y);
+    HOLIDAYS.set(y, new Set(["01-01", "01-06", "05-01", "05-03", "08-15", "11-01", "11-11", "12-24", "12-25", "12-26"].map((x) => `${y}-${x}`)
+      .concat([addDays(e, 1), addDays(e, 60)])));   // Poniedziałek Wielkanocny, Boże Ciało
+  }
+  return HOLIDAYS.get(y);
+}
+const workday = (iso) => { const dow = new Date(`${iso}T12:00:00Z`).getUTCDay(); return dow !== 0 && dow !== 6 && !holidays(+iso.slice(0, 4)).has(iso); };
+function closeBy(lastDay) {
+  let d = addDays(lastDay, 1);
+  while (!workday(d)) d = addDays(d, 1);
+  return d;
+}
+const NOT_CLOSED = "Не закрито в HRappka";
+const dmyIso = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}` : "");
+// Працює в HRappka, а останній день (не раніше початку договору) минув і термін офісу теж; w — працівник у базі
+function notClosed(people, dbw, today) {
+  const byHr = new Map(dbw.filter((w) => w.hr_id).map((w) => [String(w.hr_id), w]));
+  const out = [];
+  for (const p of people) {
+    if (!HR_WORK.includes(STATE[p.state]) || IGNORE.test(p.department || "")) continue;
+    const last = p.lastDay && (!p.start || p.lastDay >= p.start) ? p.lastDay : null;
+    if (!last || closeBy(last) >= today) continue;
+    out.push({ type: NOT_CLOSED, p, w: byHr.get(String(p.id)), closeBy: closeBy(last),
+      note: `останній день ${dmyIso(last)}, закрити до ${dmyIso(closeBy(last))}` });
+  }
+  return out;
 }
 
 function statusOk(dbStatus, hr) {
@@ -275,7 +320,8 @@ function compare(people, workers, today, fmap = null) {
       diffs.push({ type: "Останній день", w, p, note: "у HRappka не внесено" });
   }
   for (const p of people) {
-    if (!seen.has(p.id) && HR_WORK.includes(expected(p.state, null, p.lastDay, today)) && !IGNORE.test(p.department || ""))
+    const last = p.lastDay && (!p.start || p.lastDay >= p.start) ? p.lastDay : null;   // останній день попереднього договору — не цей
+    if (!seen.has(p.id) && HR_WORK.includes(expected(p.state, null, last, today)) && !IGNORE.test(p.department || ""))
       diffs.push({ type: "Немає в таблиці", p });
   }
   return { pairs, diffs };
@@ -381,6 +427,7 @@ function plan(people, dbWorkers, sheets, fmap, today, rows = new Map(), { prev =
     const d = {};
     if (o.state !== p.state) d.state = 1;
     if (p.state === "Zwolniony, przejście bezpośrednio") d.tick = 1;   // pracuje → zwolniony, коли мине останній день
+    if (HR_WORK.includes(STATE[p.state]) && p.lastDay && p.lastDay < today) d.tick = 1;   // працює в HRappka, останній день минув → zwolniony
     if ((o.lastDay || null) !== (p.lastDay || null)) d.lastDay = 1;
     if ((o.start || null) !== (p.start || null)) d.start = 1;
     if (depKey(o) !== depKey(p)) d.dep = 1;
@@ -530,7 +577,7 @@ async function apply(client, people, today, { dry = false, prev = null, objectOn
 }
 
 // ── Звіт ──────────────────────────────────────────────────────────────
-const TYPES = ["Статус", "Останній день", "Об'єкт", "Паспорт", "Немає в таблиці", "Немає в HRappka"];
+const TYPES = ["Статус", NOT_CLOSED, "Останній день", "Об'єкт", "Паспорт", "Немає в таблиці", "Немає в HRappka"];
 function toCsv(diffs) {
   const head = ["Тип", "Примітка", "ПІБ", "Паспорт", "Паспорт HRappka", "PESEL HRappka", "Дата народження", "Об'єкт (таблиця)", "Статус (таблиця)", "BHP",
     "Останній день (таблиця)", "Статус HRappka", "Має бути статус", "Останній день HRappka", "Об'єкт HRappka", "Відділ HRappka", "Фірма HRappka", "Посада HRappka", "Початок договору HRappka"];
@@ -626,6 +673,7 @@ async function diffsFor(client, people, today) {
   const byId = new Map(dbw.map((w) => [w.id, w])), byHr = new Map(dbw.filter((w) => w.hr_id).map((w) => [String(w.hr_id), w]));
   const cur = (d) => (d.w && d.w.id && byId.get(d.w.id)) || (d.p && byHr.get(String(d.p.id))) || null;
   res.diffs = res.diffs.filter((d) => !(d.w && fixedInDb(d, cur(d))));
+  res.diffs.push(...notClosed(people, dbw, today));
   res.cur = cur;
   const names = new Map((await client.query(`SELECT id, name FROM public.facilities`)).rows.map((x) => [x.id, x.name]));
   for (const d of res.diffs) if (d.fac) d.facName = names.get(d.fac) || String(d.fac);
@@ -811,7 +859,7 @@ function schedule() {
   cron.schedule("0 5 * * 1", () => harmonogram().catch((e) => console.error("[hr import] Do zatrudnienia:", e.message)), { timezone: "Europe/Warsaw" });
 }
 
-module.exports = { run, schedule, compare, current, refresh, afterSheets, report, harmonogram, toCsv, STATE, TYPES, LWD_SMALL, LWD_BIG, _test: { fetchAll, toPerson, match, plan, started, facilityMap, loadPeople, takeLastDays, stale, stuck } };
+module.exports = { run, schedule, compare, current, refresh, afterSheets, report, harmonogram, toCsv, STATE, TYPES, LWD_SMALL, LWD_BIG, _test: { fetchAll, toPerson, match, plan, started, facilityMap, loadPeople, takeLastDays, stale, stuck, expected, closeBy, notClosed } };
 
 if (require.main === module) {
   require("dotenv").config();

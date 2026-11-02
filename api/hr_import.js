@@ -18,7 +18,7 @@ const fail = (res, e) => {
 };
 
 // типи й примітки з bot/hr_import.js (українською, для листа) → коди для панелі
-const CODE = { "Статус": "status", "Останній день": "last_day", "Об'єкт": "object", "Паспорт": "passport", "Немає в таблиці": "not_in_db", "Немає в HRappka": "not_in_hr" };
+const CODE = { "Статус": "status", "Не закрито в HRappka": "not_closed", "Останній день": "last_day", "Об'єкт": "object", "Паспорт": "passport", "Немає в таблиці": "not_in_db", "Немає в HRappka": "not_in_hr" };
 const NOTE = {
   "у HRappka є, у таблиці немає": "hr_only",
   "у HRappka не внесено": "hr_missing",
@@ -41,8 +41,10 @@ async function visibleDiffs(c, full) {
 router.get("/diffs", async (req, res) => {
   try {
     const r = await visibleDiffs(req.coordinator, req.query.full === "1");
-    const rows = r.diffs.map(({ type, note, w = {}, p = {}, hr: expected, facName }) => ({
-      code: CODE[type] || type, note: NOTE[note] || note || null, hr_expected: expected || null, hr_facility: facName || null,
+    const rows = r.diffs.map(({ type, note, w = {}, p = {}, hr: expected, facName, closeBy }) => ({
+      // «не закрито в HRappka» — замість тексту примітки термін офісу (close_by)
+      code: CODE[type] || type, note: closeBy ? null : NOTE[note] || note || null, close_by: closeBy || null,
+      hr_expected: expected || null, hr_facility: facName || null,
       worker_id: w.id || null, name: w.full_name || p.name, passport: w.login || p.passport, hr_passport: p.passport || null,
       pesel: p.pesel || null, birth: p.birth || w.birth || null,
       facility_id: w.facility_id || null, facility: w.facility || null, status: w.status || null, bhp: w.bhp || null, lwd: w.lwd || null,

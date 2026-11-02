@@ -10,7 +10,7 @@ const CURRENT_USER = JSON.parse(localStorage.getItem("sas_user") || "null");
 if (!SESSION) location.href = "/login.html";
 
 const TYPES = [
-  ["status", "Status"], ["last_day", "Ostatni dzień"], ["object", "Obiekt"], ["passport", "Paszport"],
+  ["status", "Status"], ["not_closed", "Nie zamknięty w HRappka"], ["last_day", "Ostatni dzień"], ["object", "Obiekt"], ["passport", "Paszport"],
   ["not_in_db", "Brak w tabeli"], ["not_in_hr", "Brak w HRappka"],
 ];
 const TYPE_PL = Object.fromEntries(TYPES);
@@ -56,7 +56,7 @@ async function load() {
   for (const x of r.rows) {
     const k = x.worker_id ? "w" + x.worker_id : x.hr_id ? "h" + x.hr_id : "p" + x.passport;
     if (!by.has(k)) by.set(k, { ...x, items: [] });
-    by.get(k).items.push({ code: x.code, note: x.note });
+    by.get(k).items.push({ code: x.code, note: x.note, close_by: x.close_by });
     if (x.hr_expected) by.get(k).hr_expected = x.hr_expected;
     if (x.hr_facility) by.get(k).hr_facility = x.hr_facility;
   }
@@ -90,7 +90,9 @@ function render() {
     Podział CAINIAO APT / APT 2, Dipico / Dipico 2, Action — z tabel. Import o 6, 8, 10, 12, 16 i 20: najpierw tabele, zaraz po nich HRappka;
     mail z CSV — o 8:00. Tabele: <b>${esc(sheetsAt)}</b>, HRappka: <b>${esc(at)}</b>${apart ? ` <span class="diff">— z różnych chwil, część różnic może zniknąć po następnym imporcie</span>` : ""}.
     ${r.full ? "Pokazane <b>wszystkie okresy</b>." : `Pokazane okresy <b>otwarte i zamknięte w ostatnich ${r.recent_days} dniach</b>.`}
-    Ostatni dzień różny do 20 dni — bierzemy z HRappka; okresów zakończonych do 31.07.2026 nie pokazujemy.</div>
+    Ostatni dzień różny do 20 dni — bierzemy z HRappka; okresów zakończonych do 31.07.2026 nie pokazujemy.
+    Ostatni dzień minął, a w HRappka nadal pracuje — w bazie <b>zwolniony</b> od następnego dnia; <b>Nie zamknięty w HRappka</b> — biuro nie zamknęło
+    (Zwolniony / Umowa zamknięta) do końca następnego dnia roboczego (piątek, sobota, niedziela → poniedziałek).</div>
   <div class="bar">
     <span class="chip ${ST.type ? "" : "on"}" onclick="setType('')">Wszystkie<b>${base.length}</b></span>
     ${TYPES.map(([c, l]) => `<span class="chip ${ST.type === c ? "on" : ""}" onclick="setType('${c}')">${l}<b>${cnt(c)}</b></span>`).join("")}
@@ -134,7 +136,7 @@ function renderTable() {
     </tr></thead>
     <tbody>${slice.map((x) => `
       <tr>
-        <td>${x.items.map((i) => `<div><span class="tag ${i.code}">${esc(TYPE_PL[i.code] || i.code)}</span>${i.note ? `<div class="sub">${esc(NOTE_PL[i.note] || i.note)}</div>` : ""}</div>`).join("")}</td>
+        <td>${x.items.map((i) => `<div><span class="tag ${i.code}">${esc(TYPE_PL[i.code] || i.code)}</span>${i.note ? `<div class="sub">${esc(NOTE_PL[i.note] || i.note)}</div>` : ""}${i.close_by ? `<div class="sub diff">biuro miało zamknąć do ${dmy(i.close_by)}</div>` : ""}</div>`).join("")}</td>
         <td><b>${esc(x.name)}</b><div class="sub">${esc(x.passport || "")}${x.hr_passport && x.hr_passport !== x.passport ? ` → HR: ${esc(x.hr_passport)}` : ""}${x.pesel ? ` · PESEL ${esc(x.pesel)}` : ""}${x.birth ? ` · ur. ${dmy(x.birth)}` : ""}</div></td>
         <td>${has(x, "object") ? cell(x.facility, x.hr_facility) : esc(x.facility || "—")}</td>
         <td>${has(x, "status") ? `${cell(x.status, x.hr_state)}${x.hr_expected ? `<div class="sub">powinno być: <b>${esc(STATUS_PL[x.hr_expected] || x.hr_expected)}</b></div>` : ""}`

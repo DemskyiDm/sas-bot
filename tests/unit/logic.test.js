@@ -279,6 +279,41 @@ test("hr_import.plan: лише зміни HRappka після попереднь�
   ]);
 });
 
+test("hr_import: працює в HRappka, а останній день минув — у базі zwolniony наступного дня; продовжили — знову pracuje", () => {
+  const { plan, facilityMap, expected } = hrImport._test;
+  assert.equal(expected("Pracuje", "pracuje", "2026-10-30", "2026-10-30"), "pracuje");    // сам останній день — ще працює
+  assert.equal(expected("Pracuje", "pracuje", "2026-10-30", "2026-10-31"), "zwolniony");
+  assert.equal(expected("Urlop", "urlop", "2026-10-30", "2026-11-02"), "zwolniony");
+  assert.equal(expected("Pracuje", "rezygnacja", "2026-10-30", "2026-11-02"), "rezygnacja");   // не почав працювати — лишається rezygnacja
+  assert.equal(expected("Pracuje", "pracuje", null, "2026-11-02"), "pracuje");
+  const P = (id, extra = {}) => ({ id, state: "Pracuje", passport: `P${id}`, pesel: null, lastDay: null, department: "D", firm: "F", start: "2026-05-01", position: "x", ...extra });
+  const W = (id, extra = {}) => ({ id, hid: 100 + id, login: `P${id}`, status: "pracuje", bhp: "2026-05-03", lwd: null, facility_id: 1, facility: "A", ...extra });
+  const people = [P(1, { lastDay: "2026-10-30" }), P(2, { lastDay: "2026-11-02" }), P(3, { lastDay: "2026-12-15" }), P(4, { lastDay: "2025-01-04" })];
+  const prev = new Map(people.map((x) => [x.id, x]));   // у HRappka нічого не змінилось
+  const db = [W(1, { lwd: "2026-10-30" }), W(2, { lwd: "2026-11-02" }), W(3, { status: "zwolniony", lwd: "2026-10-30" }), W(4)];
+  const fmap = facilityMap([]);
+  const got = plan(people.map((p) => (p.id === 3 ? { ...p } : p)), db, [], fmap, "2026-11-02", new Map(), { prev: new Map([...prev].map(([k, v]) => [k, k === 3 ? { ...v, lastDay: "2026-10-30" } : v])) })
+    .ops.map((o) => `${o.op}:${o.w.id}:${o.t.status}`);
+  // 1 — останній день 30.10 минув → zwolniony; 2 — сьогодні останній день, ще pracuje; 3 — продовжили до 15.12 → pracuje;
+  // 4 — «останній день» 2025 — з попереднього договору (раніше за початок теперішнього), не чіпаємо
+  assert.deepEqual(got, ["update:1:zwolniony", "update:3:pracuje"]);
+});
+
+test("hr_import: термін офісу — кінець наступного робочого дня; «Не закрито в HRappka» після нього", () => {
+  const { closeBy, notClosed } = hrImport._test;
+  assert.equal(closeBy("2026-11-02"), "2026-11-03");   // понеділок → вівторок
+  assert.equal(closeBy("2026-10-30"), "2026-11-02");   // п'ятниця → понеділок
+  assert.equal(closeBy("2026-10-31"), "2026-11-02");   // субота
+  assert.equal(closeBy("2026-11-10"), "2026-11-12");   // 11.11 — свято
+  assert.equal(closeBy("2027-03-26"), "2027-03-30");   // п'ятниця перед Великоднем → вівторок після Poniedziałek Wielkanocny
+  const P = (id, state, lastDay, start = "2026-05-01") => ({ id, state, lastDay, start, department: "D" });
+  const people = [P(1, "Pracuje", "2026-10-29"), P(2, "Pracuje", "2026-10-30"), P(3, "Zwolniony", "2026-10-20"),
+    P(4, "Pracuje", "2025-01-04", "2026-09-28"), P(5, "Urlop", "2026-10-26")];
+  const got = notClosed(people, [{ id: 7, hr_id: 1, facility: "A" }], "2026-11-02");
+  assert.deepEqual(got.map((d) => [d.p.id, d.closeBy, d.w ? d.w.id : null]), [[1, "2026-10-30", 7], [5, "2026-10-27", null]]);
+  assert.match(got[0].note, /останній день 29\.10\.2026, закрити до 30\.10\.2026/);
+});
+
 test("hr_import.plan: незаписане пробуємо знову, лише за ПІБ не пишемо, закритий період не відкриваємо", () => {
   const { plan, facilityMap } = hrImport._test;
   const P = (id, state, extra = {}) => ({ id, state, name: `N${id} X`, passport: `P${id}`, pesel: null, lastDay: null, department: "D", firm: "F", start: "2026-05-01", position: "x", ...extra });
@@ -287,7 +322,8 @@ test("hr_import.plan: незаписане пробуємо знову, лише
   const now = [
     P(1, "Zwolniony", { passport: "NEW1", lastDay: "2026-10-20" }),         // паспорт інший, знайшли за ПІБ — не пишемо, пробуємо знову
     P(2, "Zwolniony", { department: "Q", lastDay: "2026-10-01" }),          // об'єкт невідомий — пробуємо знову
-    P(3, "Długi urlop", { lastDay: "2026-08-01" }),                         // закритий період — робочий статус не ставимо
+    P(3, "Długi urlop", { lastDay: "2026-08-01" }),                         // останній день давно минув — лишається zwolniony,
+                                                                            //  записуємо лише стан HRappka («Не закрито в HRappka»)
     P(4, "Zwolniony", { start: "2026-09-01", lastDay: "2026-10-20" }),      // договір у HRappka давно новіший, ніж період у базі:
                                                                             //  статус і останній день — так, BHP і об'єкт — ні
     P(5, "Zwolniony", { start: "2025-01-01", lastDay: "2026-10-20" }),      // у базі новіший період — не чіпаємо
@@ -297,9 +333,9 @@ test("hr_import.plan: незаписане пробуємо знову, лише
   const prev = new Map(before.map((x) => [x.id, x]));
   const { ops, skip, pending } = plan(now, db, [], fmap, "2026-10-27", new Map(), { prev });
   const got = ops.map((o) => `${o.op}:${(o.w || o.p).id}:${(o.changed || []).join("+")}:${o.t.facility_id}:${o.t.bhp}:${o.t.lwd || ""}:${o.t.status || ""}`);
-  assert.deepEqual(got, ["update:4:lwd+status+hr_state:2:2026-05-03:2026-10-20:zwolniony"]);
+  assert.deepEqual(got, ["update:3:hr_state:1:2026-05-03:2026-08-01:zwolniony", "update:4:lwd+status+hr_state:2:2026-05-03:2026-10-20:zwolniony"]);
   assert.deepEqual([...pending].sort(), [1, 2]);
-  assert.equal(skip["період закрито, а в HRappka людина працює — перевірити"], 1);
+  assert.equal(skip["період закрито, а в HRappka людина працює — перевірити"], undefined);
   assert.equal(skip["у базі новіший період, ніж договір HRappka"], 1);
 });
 

@@ -11,7 +11,9 @@
 //   POST /api/wapp/advance         заявка на аванс
 //   POST /api/wapp/dayoff          { dates: [YYYY-MM-DD] }
 //   POST /api/wapp/pages           тіло — JPEG (image/jpeg) або PDF (application/pdf), до 12 МБ → { id } (тимчасово, 24 год)
-//   POST /api/wapp/docs            { kinds, pages: [id], cards?: [id], valid_until?, school? } → PDF в офіс (WORKER_DOCS_EMAIL) + статус студента
+//   POST /api/wapp/docs            { kinds, pages: [id], cards?: [id], valid_until?, school?, insurance? } → PDF в офіс (WORKER_DOCS_EMAIL) + статус студента
+//                                  insurance — довідка студента: згода на приватне медичне страхування TAK / NIE (обовʼязково);
+//                                  NIE — повідомлення в боті: бланк відмови прийде на пошту протягом 2 днів
 //                                  копія — координаторам об'єкта, які ввімкнули її в боті (coordCopies)
 //                                  cards — обрізані сторони карти побиту: у PDF у реальному розмірі, дві на аркуш
 //   POST /api/wapp/docs/:id/chat   надіслати PDF працівнику в чат з ботом
@@ -51,6 +53,14 @@ const HOURS_MAX = 16;
 const CODES = ["WZ", "DWZ", "URL", "L4", "NN", "UN"];
 const KINDS = ["student", "passport", "karta", "other"];
 const KIND_PL = { student: "Zaświadczenie studenta", passport: "Paszport", karta: "Karta pobytu", other: "Inny dokument" };
+const INS = ["TAK", "NIE"];
+// Відмова від страхування при відправці довідки студента — повідомлення в боті (те саме — на екрані застосунку)
+const INS_NIE = {
+  uk: "🎓 Ви відмовились від приватного медичного страхування. Протягом 2 днів на вашу електронну пошту прийде бланк відмови від страхування — його треба підписати.",
+  ru: "🎓 Вы отказались от частного медицинского страхования. В течение 2 дней на ваш e-mail придёт бланк отказа от страховки — его нужно подписать.",
+  pl: "🎓 Zrezygnowano z prywatnego ubezpieczenia zdrowotnego. W ciągu 2 dni na Twój e-mail przyjdzie formularz rezygnacji z ubezpieczenia do podpisania.",
+  en: "🎓 You have declined private health insurance. Within 2 days you will receive an insurance waiver form by e-mail to sign.",
+};
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const PAGE_ID = /^[0-9a-f]{16}$/;
 
@@ -336,6 +346,7 @@ async function mailOffice(w, doc, kinds, buf, name) {
     ["Dokumenty", kinds.map((k) => KIND_PL[k]).join(", ")], ["Stron", String(doc.pages)],
     ...(doc.valid_until ? [["Ważne do", dmy(doc.valid_until)]] : []),
     ...(doc.school ? [["Uczelnia / szkoła", doc.school]] : []),
+    ...(doc.insurance ? [["Zgoda na ubezpieczenie", doc.insurance]] : []),
   ];
   const html = `<p>Dokumenty wysłane przez pracownika z aplikacji Telegram (SAS Praca).</p>
     <table cellpadding="6" style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px">
@@ -369,6 +380,8 @@ router.post("/docs", auth, async (req, res) => {
     if (isStudent && (!ISO.test(valid) || valid < today || valid > addDays(today, 2 * 366))) {
       return res.status(400).json({ ok: false, error: "bad_valid_until" });
     }
+    const insurance = isStudent ? String(b.insurance || "").toUpperCase() : null;
+    if (isStudent && !INS.includes(insurance)) return res.status(400).json({ ok: false, error: "no_insurance" });
     const ids = (Array.isArray(b.pages) ? b.pages : []).map(String);
     if (!ids.length || ids.length > PAGES_MAX || ids.some((x) => !PAGE_ID.test(x))) return res.status(400).json({ ok: false, error: "bad_pages" });
     const dir = tmpDir(w.id);
@@ -392,13 +405,17 @@ router.post("/docs", auth, async (req, res) => {
     fs.writeFileSync(full, buf);
     const school = isStudent && b.school ? String(b.school).trim().slice(0, 200) : null;
     const ins = await db.query(
-      `INSERT INTO wapp.docs (worker_id, kinds, pages, file_path, file_size, valid_until, school)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`, [w.id, kinds, pages, full, buf.length, valid, school]);
-    const doc = { id: ins.rows[0].id, pages, valid_until: valid, school };
+      `INSERT INTO wapp.docs (worker_id, kinds, pages, file_path, file_size, valid_until, school, insurance)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`, [w.id, kinds, pages, full, buf.length, valid, school, insurance]);
+    const doc = { id: ins.rows[0].id, pages, valid_until: valid, school, insurance };
     if (isStudent) await student.fromUpload(w.id, doc.id, valid, school);
     for (const x of files) fs.rmSync(x.p, { force: true });
     const m = await mailOffice(w, doc, kinds, buf, `${safeName(w.login)}_${kinds.join("-")}_${today}.pdf`);
-    res.json({ ok: true, id: doc.id, pages, size: buf.length, ...m });
+    if (insurance === "NIE") {
+      const t = await wapp.tg("sendMessage", { chat_id: w.telegram_chat_id, text: INS_NIE[w.lang] || INS_NIE.uk });
+      if (!t || !t.ok) console.error("[wapp] відмова від страхування", w.id, t && t.description);
+    }
+    res.json({ ok: true, id: doc.id, pages, size: buf.length, insurance, ...m });
   } catch (e) { fail(res, e); }
 });
 

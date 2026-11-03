@@ -58,6 +58,9 @@ const L = {
     pol_hint: "Номер полісу змінюється щомісяця — новий зʼявляється тут, як правило, 10 числа.",
     st_hint: "Довідку треба оновлювати щосеместру. За 1,5 місяця до кінця терміну бот нагадуватиме щотижня, а коли офіс прийме нову довідку — повідомить.",
     send_office: "Надіслати в офіс", need_pages: "Додайте фото або файл довідки.", need_valid: "Вкажіть, до якої дати дійсна довідка.",
+    ins_q: "Чи бажаєте ви оформити приватне медичне страхування?", ins_yes: "Так, хочу страховку (122,55 zł на місяць)",
+    ins_no: "Ні, я розумію всю відповідальність, відмовляюсь", need_ins: "Дайте відповідь про медичне страхування.",
+    ins_nie: "Ви відмовились від страхування. Протягом 2 днів на вашу електронну пошту прийде бланк відмови — його треба підписати.",
     pages_n: (n) => `${n} стор.`,
     // документи
     dc_q: "Що надсилаєте? Можна кілька — вийде один PDF.",
@@ -84,7 +87,7 @@ const L = {
       disabled: "На вашому обʼєкті це вимкнено.", dismissed: "Ви більше не працюєте — заявки недоступні.", pending: "Ваша заявка вже на розгляді.",
       no_days: "Не обрано жодного дня.", taken: "На ці дні заявка вже є.", too_big: "Файл завеликий (до 12 МБ).", bad_type: "Потрібне фото або PDF.",
       bad_valid_until: "Дата «дійсна до» — не раніше сьогодні.", bad_pages: "Додайте сторінки.", pages_gone: "Фото застаріли — додайте їх знову.",
-      one_pdf: "PDF можна надіслати лише один, без фото.", send_failed: "Не вдалося надіслати.", not_found: "Не знайдено.",
+      one_pdf: "PDF можна надіслати лише один, без фото.", no_insurance: "Дайте відповідь про медичне страхування.", send_failed: "Не вдалося надіслати.", not_found: "Не знайдено.",
     },
   },
   ru: {
@@ -127,6 +130,9 @@ const L = {
     pol_hint: "Номер полиса меняется каждый месяц — новый появляется здесь, как правило, 10 числа.",
     st_hint: "Справку нужно обновлять каждый семестр. За 1,5 месяца до конца срока бот будет напоминать каждую неделю, а когда офис примет новую справку — сообщит.",
     send_office: "Отправить в офис", need_pages: "Добавьте фото или файл справки.", need_valid: "Укажите, до какой даты действует справка.",
+    ins_q: "Хотите ли вы оформить частное медицинское страхование?", ins_yes: "Да, хочу страховку (122,55 zł в месяц)",
+    ins_no: "Нет, я понимаю всю ответственность, отказываюсь", need_ins: "Ответьте на вопрос о медицинском страховании.",
+    ins_nie: "Вы отказались от страховки. В течение 2 дней на ваш e-mail придёт бланк отказа — его нужно подписать.",
     pages_n: (n) => `${n} стр.`,
     dc_q: "Что отправляете? Можно несколько — получится один PDF.",
     kinds: { passport: "Паспорт", karta: "Карта побыту", other: "Другой документ" },
@@ -151,7 +157,7 @@ const L = {
       disabled: "На вашем объекте это отключено.", dismissed: "Вы больше не работаете — заявки недоступны.", pending: "Ваша заявка уже на рассмотрении.",
       no_days: "Не выбран ни один день.", taken: "На эти дни заявка уже есть.", too_big: "Файл слишком большой (до 12 МБ).", bad_type: "Нужно фото или PDF.",
       bad_valid_until: "Дата «действует до» — не раньше сегодня.", bad_pages: "Добавьте страницы.", pages_gone: "Фото устарели — добавьте их снова.",
-      one_pdf: "PDF можно отправить только один, без фото.", send_failed: "Не удалось отправить.", not_found: "Не найдено.",
+      one_pdf: "PDF можно отправить только один, без фото.", no_insurance: "Ответьте на вопрос о медицинском страховании.", send_failed: "Не удалось отправить.", not_found: "Не найдено.",
     },
   },
   pl: {
@@ -194,6 +200,9 @@ const L = {
     pol_hint: "Numer polisy zmienia się co miesiąc — nowy pojawia się tutaj zwykle 10. dnia miesiąca.",
     st_hint: "Zaświadczenie trzeba odnawiać co semestr. Na 1,5 miesiąca przed końcem ważności bot będzie przypominał co tydzień, a gdy biuro przyjmie nowe zaświadczenie — da znać.",
     send_office: "Wyślij do biura", need_pages: "Dodaj zdjęcie lub plik zaświadczenia.", need_valid: "Podaj, do kiedy zaświadczenie jest ważne.",
+    ins_q: "Czy jest Pan/Pani zainteresowany/a objęciem prywatnym ubezpieczeniem zdrowotnym?", ins_yes: "Tak, chcę ubezpieczenie (122,55 zł miesięcznie)",
+    ins_no: "Nie, rozumiem całą odpowiedzialność, rezygnuję", need_ins: "Odpowiedz na pytanie o ubezpieczenie zdrowotne.",
+    ins_nie: "Zrezygnowano z ubezpieczenia. W ciągu 2 dni na Twój e-mail przyjdzie formularz rezygnacji do podpisania.",
     pages_n: (n) => `${n} str.`,
     dc_q: "Co wysyłasz? Można kilka — powstanie jeden PDF.",
     kinds: { passport: "Paszport", karta: "Karta pobytu", other: "Inny dokument" },
@@ -218,7 +227,7 @@ const L = {
       disabled: "Na Twoim obiekcie jest to wyłączone.", dismissed: "Już nie pracujesz — wnioski są niedostępne.", pending: "Twój wniosek jest już rozpatrywany.",
       no_days: "Nie wybrano żadnego dnia.", taken: "Na te dni wniosek już jest.", too_big: "Plik za duży (do 12 MB).", bad_type: "Potrzebne zdjęcie lub PDF.",
       bad_valid_until: "Data „ważne do” — nie wcześniej niż dziś.", bad_pages: "Dodaj strony.", pages_gone: "Zdjęcia wygasły — dodaj je ponownie.",
-      one_pdf: "Można wysłać tylko jeden PDF, bez zdjęć.", send_failed: "Nie udało się wysłać.", not_found: "Nie znaleziono.",
+      one_pdf: "Można wysłać tylko jeden PDF, bez zdjęć.", no_insurance: "Odpowiedz na pytanie o ubezpieczenie zdrowotne.", send_failed: "Nie udało się wysłać.", not_found: "Nie znaleziono.",
     },
   },
   en: {
@@ -261,6 +270,9 @@ const L = {
     pol_hint: "The policy number changes every month — the new one usually appears here on the 10th.",
     st_hint: "Renew the certificate every semester. From 1.5 months before it expires the bot will remind you every week, and it will let you know when the office accepts the new one.",
     send_office: "Send to the office", need_pages: "Add a photo or file of the certificate.", need_valid: "Enter the date the certificate is valid until.",
+    ins_q: "Would you like to be covered by private health insurance?", ins_yes: "Yes, I want insurance (122.55 zł per month)",
+    ins_no: "No, I understand full responsibility and decline", need_ins: "Answer the health insurance question.",
+    ins_nie: "You have declined insurance. Within 2 days you will receive a waiver form by e-mail to sign.",
     pages_n: (n) => `${n} p.`,
     dc_q: "What are you sending? Several are fine — it becomes one PDF.",
     kinds: { passport: "Passport", karta: "Residence card", other: "Other document" },
@@ -285,7 +297,7 @@ const L = {
       disabled: "This is turned off at your site.", dismissed: "You no longer work here — requests are unavailable.", pending: "Your request is already pending.",
       no_days: "No days selected.", taken: "There is already a request for these days.", too_big: "File too big (up to 12 MB).", bad_type: "A photo or PDF is needed.",
       bad_valid_until: "“Valid until” can't be before today.", bad_pages: "Add pages.", pages_gone: "Photos expired — add them again.",
-      one_pdf: "Only one PDF can be sent, without photos.", send_failed: "Could not send.", not_found: "Not found.",
+      one_pdf: "Only one PDF can be sent, without photos.", no_insurance: "Answer the health insurance question.", send_failed: "Could not send.", not_found: "Not found.",
     },
   },
 };
@@ -299,7 +311,7 @@ const ST = {
   lang: "uk", me: null, view: "home",
   hours: { ym: null, data: null, sel: null, val: null, other: "" },
   dof: { sel: new Set() },
-  stud: { pages: [], valid: "", school: "" },
+  stud: { pages: [], valid: "", school: "", ins: "" },
   docs: { kinds: new Set(), pages: { passport: [], karta: [], other: [] }, bw: false, ok: false },
   done: null, pick: null, busy: false, crop: null,
 };
@@ -1457,25 +1469,30 @@ function renderStudent() {
         <label class="fld"><span>${esc(t.school)}</span><input class="inp" placeholder="${esc(t.optional)}" value="${esc(s.school)}" oninput="ST.stud.school=this.value" /></label>
       </div>
     </section>
+    <section class="card" style="gap:4px">
+      <b style="font-size:15px;line-height:1.35">${esc(t.ins_q)}</b>
+      ${[["TAK", t.ins_yes], ["NIE", t.ins_no]].map(([v, l], i) => `<label class="check"${i ? ' style="border-top:1px solid var(--line)"' : ""}>
+        <input type="radio" name="ins" ${s.ins === v ? "checked" : ""} onchange="ST.stud.ins='${v}';drawStudentBar()" /><span>${esc(l)}</span></label>`).join("")}
+    </section>
     <p class="note">${I.info}<span>${esc(t.st_hint)}</span></p>`;
   drawStudentBar();
 }
 function drawStudentBar() {
   const t = T(), s = ST.stud;
   const up = s.pages.some((p) => p.state === "up");
-  const why = !s.pages.length ? t.need_pages : up ? t.uploading : !s.valid ? t.need_valid : "";
+  const why = !s.pages.length ? t.need_pages : up ? t.uploading : !s.valid ? t.need_valid : !s.ins ? t.need_ins : "";
   bar(`${why ? `<span class="muted">${esc(why)}</span>` : ""}<button class="btn" onclick="sendStudent()" ${why || ST.busy ? "disabled" : ""}>${esc(t.send_office)}</button>`);
 }
 async function sendStudent() {
   const s = ST.stud;
-  if (ST.busy || !s.pages.length || !s.valid) return;
+  if (ST.busy || !s.pages.length || !s.valid || !s.ins) return;
   if (s.pages.some((p) => p.state !== "ok")) return toast(T().uploading, true);
   ST.busy = true;
   drawStudentBar();
-  const r = await api("/docs", { body: { kinds: ["student"], pages: s.pages.map((p) => p.id), valid_until: s.valid, school: s.school } });
+  const r = await api("/docs", { body: { kinds: ["student"], pages: s.pages.map((p) => p.id), valid_until: s.valid, school: s.school, insurance: s.ins } });
   ST.busy = false;
   if (!r.ok) { drawStudentBar(); return toast(errText(r.error), true); }
-  ST.stud = { pages: [], valid: "", school: "" };
+  ST.stud = { pages: [], valid: "", school: "", ins: "" };
   await refreshMe();
   ST.done = r;
   renderDone();
@@ -1567,7 +1584,8 @@ function renderDone() {
   const t = T(), r = ST.done;
   if (TGW) { try { TGW.BackButton.show(); } catch (e) { /* старий клієнт */ } }
   $("view").innerHTML = `<section class="card"><div class="done">${I.sent}<b>${esc(t.done_t)}</b>
-    <span class="muted">${esc(t.pages_n(r.pages))} · ${esc(r.mailed ? t.done_mail : t.done_saved)}</span></div></section>`;
+    <span class="muted">${esc(t.pages_n(r.pages))} · ${esc(r.mailed ? t.done_mail : t.done_saved)}</span></div></section>
+    ${r.insurance === "NIE" ? `<p class="note warn">${I.info}<span>${esc(t.ins_nie)}</span></p>` : ""}`;
   bar(`<button class="btn sec" onclick="toChat(${Number(r.id)})">${esc(t.to_chat)}</button><button class="btn ghost" onclick="onBack()">${esc(t.home)}</button>`);
 }
 async function toChat(id) {
@@ -1837,7 +1855,7 @@ function demoApi(path, o) {
       advance: { enabled: true, amount: 300, pay_date: addDays(t0, [5, 4, 10, 9, 8, 7, 6][dow(t0)]), pending: D.adv.some((x) => x.status === "pending"), history: D.adv },
       dayoff: { enabled: true, horizon: 14, min_days: 3, near: [1, 2, 3].map((n) => addDays(t0, n)), taken, history: D.dof },
       student: st ? { ...st, state: st.valid_until <= addDays(t0, 45) ? "expiring" : "active" } : { state: "none" },
-      policy: { consent: "TAK", number: "PL/NNW/2026/1187", month: t0.slice(0, 7) },
+      policy: D.consent === "NIE" ? { consent: "NIE" } : { consent: "TAK", number: "PL/NNW/2026/1187", month: t0.slice(0, 7) },
       docs: D.docs, office: { email: true },
     });
   }
@@ -1866,7 +1884,8 @@ function demoApi(path, o) {
     const id = D.docs.length + 1;
     D.docs.unshift({ id, kinds: o.body.kinds, pages: o.body.pages.length, created_at: new Date().toISOString(), mailed: true });
     if (o.body.kinds.includes("student")) D.student = { is_student: true, valid_until: o.body.valid_until, status: "sent", doc_at: new Date().toISOString() };
-    return wait({ ok: true, id, pages: o.body.pages.length, mailed: true });
+    if (o.body.insurance) D.consent = o.body.insurance;
+    return wait({ ok: true, id, pages: o.body.pages.length, mailed: true, insurance: o.body.insurance || null });
   }
   if (/^\/docs\/\d+\/chat$/.test(path)) return wait({ ok: true });
   return wait({ ok: false, error: "not_found" });

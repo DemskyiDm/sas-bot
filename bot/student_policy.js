@@ -8,8 +8,9 @@
 //    • /polis — поточний номер і поле, щоб ввести новий; кнопка «Змінити» під підтвердженням.
 //  Новий або змінений номер — повідомлення в боті кожному студенту, який має право (notify): «номер оновлено, ваш номер …».
 //  Кому показуємо (міні-застосунок працівника — api/wapp.js, картка в боті координатора):
-//    в останній анкеті HRappka з питанням «…objęciem prywatnym ubezpieczeniem zdrowotnym?» відповідь TAK
-//    (hrs.surveys, bot/hr_sign.js) і статус студента не закінчився. Показуємо останній внесений номер —
+//    остання відповідь на питання «…objęciem prywatnym ubezpieczeniem zdrowotnym?» — TAK і статус студента не закінчився.
+//    Відповідь — з анкети HRappka (hrs.surveys, bot/hr_sign.js) або з довідки студента в міні-застосунку
+//    (wapp.docs.insurance, api/wapp.js), що пізніше. Показуємо останній внесений номер —
 //    до 10 числа це ще номер минулого місяця (з назвою його місяця).
 "use strict";
 
@@ -54,11 +55,18 @@ const TX = {
 };
 const monthOf = (lang, ym) => `${new Intl.DateTimeFormat(MONTH_LOC[lang] || MONTH_LOC.uk, { month: "long", timeZone: "UTC" })
   .format(new Date(ym + "-15T12:00:00Z"))} ${ym.slice(0, 4)}`;
+// Остання відповідь на питання про страхування: анкета HRappka (hr_created_at — час Варшави) або довідка з застосунку
+const lastAnswer = (where = "") => `SELECT DISTINCT ON (worker_id) worker_id, ins FROM (
+    SELECT worker_id, answers->>'insurance' AS ins, hr_created_at AT TIME ZONE 'Europe/Warsaw' AS at, hr_answer_id AS n
+      FROM hrs.surveys WHERE answers ? 'insurance'
+    UNION ALL
+    SELECT worker_id, insurance, created_at, id FROM wapp.docs WHERE insurance IS NOT NULL) x
+  ${where} ORDER BY worker_id, at DESC NULLS LAST, n DESC`;
+
 async function recipients() {
   const r = await db.query(
     `SELECT w.id, w.login, w.telegram_chat_id, COALESCE(w.session_data->>'lang', w.lang::text) AS lang
-       FROM (SELECT DISTINCT ON (worker_id) worker_id, answers->>'insurance' AS ins FROM hrs.surveys
-              WHERE answers ? 'insurance' ORDER BY worker_id, hr_created_at DESC NULLS LAST, hr_answer_id DESC) a
+       FROM (${lastAnswer()}) a
        JOIN workers w ON w.id = a.worker_id JOIN v_worker_current vc ON vc.id = w.id
        LEFT JOIN wapp.student s ON s.worker_id = w.id
       WHERE a.ins = 'TAK' AND w.telegram_chat_id IS NOT NULL AND vc.status::text NOT IN ('zwolniony', 'rezygnacja')
@@ -81,19 +89,16 @@ async function notify(ym, number) {
   return { sent, total: list.length };
 }
 
-// Відповідь в останній анкеті з питанням про страхування → { [worker_id]: "TAK" | "NIE" }
+// Остання відповідь на питання про страхування (анкета або довідка з застосунку) → { [worker_id]: "TAK" | "NIE" }
 async function consent(ids) {
   const out = {};
   if (!ids || !ids.length) return out;
-  const r = await db.query(
-    `SELECT DISTINCT ON (worker_id) worker_id, answers->>'insurance' AS ins
-       FROM hrs.surveys WHERE worker_id = ANY($1::int[]) AND answers ? 'insurance'
-      ORDER BY worker_id, hr_created_at DESC NULLS LAST, hr_answer_id DESC`, [ids]);
+  const r = await db.query(lastAnswer("WHERE worker_id = ANY($1::int[])"), [ids]);
   for (const x of r.rows) out[x.worker_id] = x.ins;
   return out;
 }
 
-// Для працівника: null — не питали (анкети без цього питання); { consent: "NIE" }; { consent: "TAK", number, month }.
+// Для працівника: null — не питали (ні в анкеті, ні при відправці довідки); { consent: "NIE" }; { consent: "TAK", number, month }.
 // number = null — номера ще не вносили (або статус студента закінчився: studentState зі bot/student.js = expired).
 async function forWorker(workerId, studentState) {
   const ins = (await consent([workerId]))[workerId];

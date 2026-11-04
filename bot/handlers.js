@@ -776,13 +776,16 @@ async function handleUpdate(bot, update) {
 
   // ── ФОТО ТАБЕЛЮ ──────────────────────────────────────────
   if (session.awaitingTabele && session.workerId && update.message.photo) {
+    // Кілька фото одним повідомленням приходять окремими апдейтами одночасно — зберігаємо по черзі,
+    // інакше всі отримують той самий номер і перезаписують один файл
+    const unlock = await lockTabele(session.workerId);
     try {
       const path = require("path");
       const fs = require("fs");
 
       // Отримуємо інфо про працівника і заклад
       const workerRes = await db.query(
-        `SELECT w.login, w.full_name, vc.facility_id, f.name AS facility_name
+        `SELECT w.login, w.full_name, vc.facility_id, vc.last_work_date, f.name AS facility_name
          FROM workers w
          JOIN v_worker_current vc ON vc.id = w.id
          JOIN facilities f ON f.id = vc.facility_id
@@ -792,8 +795,9 @@ async function handleUpdate(bot, update) {
       const worker = workerRes.rows[0];
 
       // Формуємо місяць і папку
-      const now = new Date();
-      const month = `${String(now.getMonth() + 1).padStart(2, "0")}${now.getFullYear()}`;
+      const monthStr = timesheetMonth(new Date(), worker.last_work_date);
+      const [yyyy, mm] = monthStr.split("-");
+      const month = `${mm}${yyyy}`;
       const facilityFolder = (worker.facility_name || "unknown").replace(
         /[\/\\:*?"<>|]/g,
         "_",
@@ -810,10 +814,7 @@ async function handleUpdate(bot, update) {
       // Визначаємо номер файлу (якщо повторна відправка)
       const existing = await db.query(
         `SELECT COUNT(*) FROM timesheets WHERE worker_id = $1 AND month = $2`,
-        [
-          session.workerId,
-          `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`,
-        ],
+        [session.workerId, monthStr],
       );
       const fileNumber = parseInt(existing.rows[0].count) + 1;
 
@@ -844,7 +845,6 @@ async function handleUpdate(bot, update) {
       });
 
       // Зберігаємо в БД
-      const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
       await db.query(
         `INSERT INTO timesheets (worker_id, facility_id, month, file_path, file_number)
          VALUES ($1, $2, $3, $4, $5)`,
@@ -858,8 +858,10 @@ async function handleUpdate(bot, update) {
     } catch (e) {
       console.error("Tabele save error:", e.message);
       await sendMessage(bot, chatId, T(session, "tabele_error"));
+    } finally {
+      unlock();
     }
-    
+
     return;
   }
 
@@ -1071,6 +1073,33 @@ async function sendMissingReminders(bot, facilityIds = null) {
   } catch (e) {
     console.error("sendMissingReminders error:", e.message);
   }
+}
+
+// Табель, надісланий 1–2 числа, — ще за попередній місяць.
+// Поточний — лише якщо останній день роботи вже в цьому місяці (1–2 числа) і не пізніше сьогодні.
+function timesheetMonth(now, lastWorkDate) {
+  const first = new Date(now.getFullYear(), now.getMonth(), 1);
+  const leftThisMonth = lastWorkDate && lastWorkDate >= first && lastWorkDate <= now;
+  const d = now.getDate() <= 2 && !leftThisMonth
+    ? new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    : first;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+// Черга фото табеля для одного працівника: наступне чекає, поки попереднє збережеться.
+// Повертає функцію, що звільняє чергу.
+const tabeleLocks = new Map();
+async function lockTabele(workerId) {
+  const prev = tabeleLocks.get(workerId) || Promise.resolve();
+  let release;
+  const mine = new Promise((r) => (release = r));
+  const tail = prev.then(() => mine);
+  tabeleLocks.set(workerId, tail);
+  await prev;
+  return () => {
+    release();
+    if (tabeleLocks.get(workerId) === tail) tabeleLocks.delete(workerId);
+  };
 }
 
 async function sendTabeleReminders(bot) {
@@ -1300,7 +1329,7 @@ async function sendLong(chatId, text, extra = {}) {
 }
 
 module.exports = {
-  handleUpdate, sendMissingReminders, sendTabeleReminders, sendCoordinatorReports,
+  handleUpdate, sendMissingReminders, sendTabeleReminders, sendCoordinatorReports, timesheetMonth, lockTabele,
   // міні-застосунок працівника (api/wapp.js) — ті самі правила, що й у боті
   writeHoursOn, writeAbsenceOn, isDismissed, splitNearWolne, writeWolne, writeWolneRejected, nextFriday, WOLNE_MIN_DAYS,
 };

@@ -478,3 +478,44 @@ test("ref.bonusOf: стани премії з урахуванням нарах�
   assert.equal(b(row({ bhp: "2026-08-15" }), "2026-10-20", [], "2026-10-01").state, "due");
   assert.equal(b(row({ bhp: "2026-07-01" }), "2026-10-20", [], "2026-10-01").state, "done");
 });
+
+test("handlers.timesheetMonth: 1–2 числа — попередній місяць, крім тих, хто закінчив уже в цьому", () => {
+  const { timesheetMonth } = require("../../bot/handlers");
+  const at = (d, h = 12) => new Date(2026, 10, d, h);   // листопад 2026, місцевий час
+  const day = (y, m, d) => new Date(y, m - 1, d);       // DATE з pg — місцева північ
+  assert.equal(timesheetMonth(at(1, 0)), "2026-10");
+  assert.equal(timesheetMonth(at(2, 23)), "2026-10");
+  assert.equal(timesheetMonth(at(3, 0)), "2026-11");
+  assert.equal(timesheetMonth(at(30)), "2026-11");
+  assert.equal(timesheetMonth(at(2), day(2026, 11, 2)), "2026-11");   // останній день 2.11
+  assert.equal(timesheetMonth(at(2), day(2026, 11, 1)), "2026-11");
+  assert.equal(timesheetMonth(at(1), day(2026, 11, 2)), "2026-10");   // ще працює завтра
+  assert.equal(timesheetMonth(at(1), day(2026, 10, 31)), "2026-10");
+  assert.equal(timesheetMonth(at(2), day(2026, 12, 15)), "2026-10");
+  assert.equal(timesheetMonth(new Date(2027, 0, 1, 9)), "2026-12");   // через Новий рік
+});
+
+test("handlers.lockTabele: фото одного працівника по черзі (номери 1, 2, 3), інший не чекає", async () => {
+  const { lockTabele } = require("../../bot/handlers");
+  const count = new Map();           // як SELECT COUNT(*) … INSERT: прочитали, поки качали фото — записали
+  const order = [];
+  const save = async (workerId, ms) => {
+    const unlock = await lockTabele(workerId);
+    try {
+      const no = (count.get(workerId) || 0) + 1;
+      await new Promise((r) => setTimeout(r, ms));
+      count.set(workerId, no);
+      order.push(`${workerId}#${no}`);
+    } finally {
+      unlock();
+    }
+  };
+  await Promise.all([save(1, 30), save(1, 5), save(2, 1), save(1, 1)]);
+  assert.equal(count.get(1), 3);
+  assert.deepEqual(order.filter((x) => x.startsWith("1#")), ["1#1", "1#2", "1#3"]);
+  assert.equal(order[0], "2#1");     // інший працівник не стоїть у черзі
+  // після помилки черга звільняється
+  await assert.rejects(async () => { const u = await lockTabele(1); try { throw new Error("x"); } finally { u(); } });
+  await save(1, 1);
+  assert.equal(count.get(1), 4);
+});

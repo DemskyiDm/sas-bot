@@ -1115,16 +1115,17 @@ async function loadTabelePage() {
     const monthSel = document.getElementById("tabeleMonth");
     const facSel = document.getElementById("tabeleFacility");
 
-    // Місяці — тільки один раз
+    // Місяці — тільки один раз; 1–2 числа табелі ще за попередній місяць — його й показуємо
     if (!monthSel.options.length) {
       const now = new Date();
+      const current = now.getDate() <= 2 ? 1 : 0;
       for (let i = 0; i < 6; i++) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
         const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
         const label = d.toLocaleString("pl", { month: "long", year: "numeric" });
         const opt = document.createElement("option");
         opt.value = val; opt.textContent = label;
-        if (i === 0) opt.selected = true;
+        if (i === current) opt.selected = true;
         monthSel.appendChild(opt);
       }
     }

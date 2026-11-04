@@ -41,9 +41,9 @@ function renderStart() {
   const week = `${startDm(r.week_from)}–${startDm(r.week_to)}`;
   const tiles = [
     { c: "blue", l: "Pracuje", v: w.total, s: r.company_total != null ? `Cała firma: <b>${startNum(r.company_total)}</b>` : "aktywnych",
-      go: "startWorkers({ status: ['pracuje'] })" },
+      go: "startWorkers({ status: ['pracuje'], bhp: ['', START.today] })" },   // jak liczba: od BHP
     { c: "green", l: "Przyjęcia w tym tygodniu", v: w.new_this_week,
-      s: `podjęli pracę: <a class="start-link" onclick="event.stopPropagation(); startWorkers({ status: ['pracuje'], bhp: [START.week_from, START.week_to] })">${startNum(w.started_this_week)}</a>`,
+      s: `podjęli pracę: <a class="start-link" onclick="event.stopPropagation(); startWorkers({ status: ['pracuje'], bhp: [START.week_from, START.today] })">${startNum(w.started_this_week)}</a>`,
       go: "startWorkers({ status: START_NOT_REZ, bhp: [START.week_from, START.week_to] })" },
     { c: "orange", l: "Zwolnienia w tym tygodniu", v: w.leaving_this_week, s: `ostatni dzień ${week}`,
       go: "startWorkers({ last: [START.week_from, START.week_to] })" },

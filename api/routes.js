@@ -7,6 +7,9 @@ const archiver = require("archiver");
 // Условие исключения TEST-работников из СЧЁТЧИКОВ И СУММ.
 // В списках (workers/all, workers, tabele, advances, history) TEST остаются видимыми.
 const NOT_TEST = `login NOT LIKE 'TEST_%'`;
+// Працює зараз: статус pracuje і BHP уже настав. «Dotarł» з HRappka — у базі pracuje одразу (приїзд підтверджено,
+// bot/hr_import.js), але працюючим рахуємо лише з дня BHP.
+const WORKING_NOW = `w.status = 'pracuje' AND (w.bhp_date IS NULL OR w.bhp_date <= CURRENT_DATE)`;
 
 function requireAuth(req, res, next) {
   const token = req.headers["x-session"] || req.query.session;
@@ -80,7 +83,7 @@ router.get("/facilities", requireAuth, async (req, res) => {
       `SELECT f.*, f.group_name, COUNT(w.id) AS worker_count
        FROM facilities f
        LEFT JOIN v_worker_current w ON w.facility_id = f.id
-         AND w.status = 'pracuje'
+         AND ${WORKING_NOW}
          AND w.${NOT_TEST}
        WHERE f.is_active = true
        GROUP BY f.id
@@ -382,7 +385,7 @@ router.get("/history", requireAuth, async (req, res) => {
 // а під ними — уся фірма (company_total; scope: own | region — є обʼєкти як регіональний).
 async function companyHeadcount(coordinator) {
   const [all, lead] = await Promise.all([
-    db.query(`SELECT COUNT(*)::int AS n FROM v_worker_current w WHERE w.status = 'pracuje' AND w.${NOT_TEST}`),
+    db.query(`SELECT COUNT(*)::int AS n FROM v_worker_current w WHERE ${WORKING_NOW} AND w.${NOT_TEST}`),
     db.query(
       `SELECT EXISTS (SELECT 1 FROM reg.v_access v WHERE v.coordinator_id = $1 AND 'lead' = ANY(v.kinds)) AS lead`,
       [coordinator.coordinator_id],
@@ -400,7 +403,7 @@ async function workerCounts(facIds) {
   const [total, newWeek, leavingWeek, leavingMonth, startedWeek] = await Promise.all([
     db.query(
       `SELECT COUNT(*) FROM v_worker_current w
-   WHERE w.status = 'pracuje' AND w.${NOT_TEST} ${facFilter}`,
+   WHERE ${WORKING_NOW} AND w.${NOT_TEST} ${facFilter}`,
       params,
     ),
     db.query(
@@ -433,7 +436,7 @@ async function workerCounts(facIds) {
       `SELECT COUNT(*) FROM v_worker_current w
    WHERE w.bhp_date >= DATE_TRUNC('week', CURRENT_DATE)
      AND w.bhp_date < DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '7 days'
-     AND w.status = 'pracuje'
+     AND ${WORKING_NOW}
      AND w.${NOT_TEST}
      ${facFilter}`,
       params,

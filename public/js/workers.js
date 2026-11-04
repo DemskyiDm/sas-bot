@@ -23,20 +23,27 @@ const WK_STATUS = {
   przeniesiony: ["Przeniesiony", "badge-orange"], zwolniony: ["Zwolniony", "badge-gray"], rezygnacja: ["Rezygnacja", "badge-red"],
   do_zatrudnienia: ["Do zatrudnienia", "badge-blue"], unknown: ["Brak statusu", "badge-blue"],
 };
-const statusBadge = (s) => { const x = WK_STATUS[s] || [s || "—", "badge-blue"]; return `<span class="badge ${x[1]}"><span class="badge-dot"></span>${escStan(x[0])}</span>`; };
+// «Dotarł» з HRappka: у базі pracuje, але BHP ще не настав — працюючим рахуємо з BHP (api/routes.js → WORKING_NOW)
+const startsLater = (w) => w.status === "pracuje" && w.bhp_date && localDate(w.bhp_date) > localDate(new Date());
+const startLabel = (w) => { const d = localDate(w.bhp_date); return `${d.slice(8, 10)}.${d.slice(5, 7)}`; };
+const statusBadge = (w) => {
+  if (startsLater(w)) return `<span class="badge badge-soon" title="Przyjechał (Dotarł) — liczony jako pracujący od BHP ${escStan(startLabel(w))}"><span class="badge-dot"></span>Pracuje · od ${escStan(startLabel(w))}</span>`;
+  const x = WK_STATUS[w.status] || [w.status || "—", "badge-blue"];
+  return `<span class="badge ${x[1]}"><span class="badge-dot"></span>${escStan(x[0])}</span>`;
+};
 const WORKER_COLS = [
   { key: "login", label: "ID", cell: (w) => `<span class="wk-num">${escStan(w.login)}</span>`, xls: (w) => w.login },
   { key: "name", label: "Imie i Nazwisko", phone: "Pracownik", xls: (w) => w.full_name,
     // na telefonie — kropka statusu przed nazwiskiem (kolumny «Status» domyślnie tam nie ma)
     cell: (w) => (WK_PHONE.matches
-      ? `<span class="wk-nm"><i class="wk-dot st-${escStan(w.status)}" title="${escStan((WK_STATUS[w.status] || [w.status])[0])}"></i><span class="worker-name">${escStan(w.full_name)}</span></span>`
+      ? `<span class="wk-nm"><i class="wk-dot st-${escStan(w.status)}${startsLater(w) ? " wait" : ""}" title="${startsLater(w) ? `Pracuje od ${escStan(startLabel(w))}` : escStan((WK_STATUS[w.status] || [w.status])[0])}"></i><span class="worker-name">${escStan(w.full_name)}</span></span>`
       : `<span class="worker-name">${escStan(w.full_name)}</span>`) },
   { key: "pesel", label: "PESEL", title: "Z HRappka", cell: (w) => `<span class="wk-num">${w.pesel || "—"}</span>`, xls: (w) => w.pesel || "—" },
   { key: "birth", label: "Data ur.", title: "Z HRappka", cell: (w) => `<span class="wk-sec">${plDate(w.birth_date)}</span>`, xls: (w) => plDate(w.birth_date) },
   { key: "group", label: "Grupa", off: true, cell: (w) => `<span class="wk-ell wk-sec" title="${escStan(w.group_name)}">${escStan(w.group_name)}</span>`, xls: (w) => w.group_name || "—" },
   { key: "facility", label: "Obiekt", cell: (w) => `<span class="wk-ell" title="${escStan(w.facility_name)}">${escStan(w.facility_name)}</span>`, xls: (w) => w.facility_name || "—" },
   { key: "stan", label: "Stanowisko", cell: (w) => `<span class="wk-ell wk-sec" title="${escStan(w.stanowisko)}">${escStan(w.stanowisko)}</span>`, xls: (w) => w.stanowisko || "—" },
-  { key: "status", label: "Status", cell: (w) => statusBadge(w.status), xls: (w) => w.status || "—" },
+  { key: "status", label: "Status", cell: (w) => statusBadge(w), xls: (w) => (startsLater(w) ? `pracuje od ${startLabel(w)}` : w.status || "—") },
   { key: "tg", label: "Telegram", short: "TG", cell: (w) => (w.telegram_chat_id ? `<span class="wk-yes" title="Połączony z botem">✓</span>` : `<span class="wk-sec">—</span>`), xls: (w) => (w.telegram_chat_id ? "TAK" : "NIE") },
   { key: "bhp", label: "BHP", phone: "Początek", cell: (w) => `<span class="wk-sec">${wkDate(w.bhp_date)}</span>`, xls: (w) => plDate(w.bhp_date) },
   { key: "last", label: "Ostatni dzień", phone: "Koniec", cell: (w) => `<span class="wk-sec">${wkDate(w.last_work_date)}</span>`, xls: (w) => plDate(w.last_work_date) },
